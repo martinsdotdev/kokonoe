@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
-name = "utt"
+name = "kokonoe-engine"
 version = "0.1.0"
+
+[[package]]
+name = "kokonoe-wasm"
+version = "0.1.0"
+dependencies = [
+ "kokonoe-engine",
+]

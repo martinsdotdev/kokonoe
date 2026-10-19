@@ -1,6 +1,12 @@
-[package]
-name = "utt"
+[workspace]
+resolver = "3"
+members = ["crates/engine", "crates/wasm"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.97"
+repository = "https://github.com/martinsdotdev/kokonoe"
 
-[dependencies]
+[workspace.dependencies]
+kokonoe-engine = { path = "crates/engine" }

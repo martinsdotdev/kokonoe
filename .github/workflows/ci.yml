@@ -25,6 +25,22 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo build -p kokonoe-wasm --target wasm32-unknown-unknown --release --locked
+      # What the server would link: normal and build dependencies, on every target.
+      - name: The engine has no wasm-bindgen
+        run: |
+          if cargo tree -p kokonoe-engine -e normal,build --target all --prefix none --locked | grep wasm-bindgen; then
+            echo "::error::kokonoe-engine depends on wasm-bindgen. Only kokonoe-wasm may know about JavaScript."
+            exit 1
+          fi
+      - name: The bindings match the checked-in ones
+        run: |
+          scripts/bindings.sh
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            git diff
+            echo "::error::The generated bindings differ from the checked-in ones. Run scripts/bindings.sh and commit the result."
+            exit 1
+          fi
 
   web:
     name: Web

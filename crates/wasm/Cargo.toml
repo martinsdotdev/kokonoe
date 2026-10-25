@@ -9,4 +9,10 @@ repository.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+js-sys = "0.3.106"
 kokonoe-engine.workspace = true
+# Only the TypeScript declarations: values convert by hand in src/js.rs, so tsify's serde path
+# never ships. It needs one of its serializer features to build, and `js` matches how js.rs
+# shapes values.
+tsify = { version = "0.5.8", default-features = false, features = ["js"] }
+wasm-bindgen = "0.2.129"

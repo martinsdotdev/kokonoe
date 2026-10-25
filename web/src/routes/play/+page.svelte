@@ -12,6 +12,8 @@
 		const { name, ruleset } = presets()[0];
 		return { name, game: new Game(ruleset, newSeed()) };
 	});
+	// The page only says it failed, so say why where a developer can see it.
+	start.catch((error: unknown) => console.error('The engine failed to load.', error));
 </script>
 
 <main class="mx-auto flex min-h-svh max-w-xl flex-col justify-center gap-3 px-4">

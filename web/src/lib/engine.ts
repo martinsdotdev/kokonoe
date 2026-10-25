@@ -1,5 +1,5 @@
 /**
- * The rules engine, compiled to WASM by `scripts/bindings.sh` into `./engine/`. The app imports
+ * The rules engine, compiled to WASM by `scripts/bindings.mjs` into `./engine/`. The app imports
  * it from here: the page and every Worker share this one module.
  */
 import init, { type Seed } from './engine/kokonoe_wasm.js';

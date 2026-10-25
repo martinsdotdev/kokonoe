@@ -18,7 +18,8 @@ export type Cell = number;
 export type IllegalMove = "GameOver" | "WrongDepth" | "Occupied" | { BeneathDecided: { board: Board } } | { OutsideActiveBoards: { within: Board } };
 
 /**
- * A Seed as 16 hex digits, since a JSON number can't hold a u64 exactly in JavaScript.
+ * A Seed as 16 lowercase hex digits, since a JSON number can't hold a u64 exactly in
+ * JavaScript.
  */
 export type Seed = string;
 
@@ -72,7 +73,7 @@ export interface Ruleset {
 }
 
 /**
- * What `play` did: the move went in (`Now`), was already at that ply (`Already`), or was
+ * What `play` did: the move went in (`Now`), was already made at that ply (`Already`), or was
  * refused, as an illegal move or a ply out of order.
  */
 export type PlayResult = { Now: Status } | "Already" | { Illegal: IllegalMove } | { OutOfOrder: { want: Ply; got: Ply } };
@@ -130,8 +131,8 @@ export class Game {
      */
     opening(): Cell[];
     /**
-     * Plays `cell` as the move at ply `at`. A resend of the last move is `"Already"`, so a
-     * retry is harmless.
+     * Plays `cell` as the move at ply `at`. A move already made at `at`, a dealt one included,
+     * is `"Already"`, so a resend is harmless. Any other ply but the next is `OutOfOrder`.
      */
     play(at: Ply, cell: Cell): PlayResult;
     ply(): Ply;
@@ -143,7 +144,8 @@ export class Game {
      */
     undo(): Cell | undefined;
     /**
-     * How many children of the Global board `player` has won.
+     * How many children of the Global board count as won for `player`: the ones it won, plus
+     * the drawn ones when drawn Boards count for both. FirstTo and MostWon compare this.
      */
     wonCount(player: Player): number;
 }

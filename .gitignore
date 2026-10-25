@@ -1,4 +1,4 @@
 /target
 
-# The engine as WASM. scripts/bindings.sh builds it, and only its JS glue and types are checked in.
+# The engine as WASM. scripts/bindings.mjs builds it, and only its JS glue and types are checked in.
 /web/src/lib/engine/*.wasm

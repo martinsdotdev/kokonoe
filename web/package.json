@@ -5,16 +5,17 @@
 	"type": "module",
 	"packageManager": "pnpm@11.21.0",
 	"scripts": {
-		"dev": "vite dev",
-		"build": "vite build",
+		"bindings": "node ../scripts/bindings.mjs",
+		"dev": "pnpm bindings && vite dev",
+		"build": "pnpm bindings && vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
-		"test:unit": "vitest",
-		"test": "playwright install chromium && vitest run && playwright test",
+		"test:unit": "pnpm bindings && vitest",
+		"test": "pnpm bindings && playwright install chromium && vitest run && playwright test",
 		"test:e2e": "playwright install chromium && playwright test"
 	},
 	"devDependencies": {

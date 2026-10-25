@@ -103,8 +103,8 @@ const DEPTH_THREE: u16 = 1 << 15;
 /// search tree stores one per node. `Ord` is address order (`d1` first), the order
 /// [`LegalMoves`](crate::LegalMoves) iterates in.
 ///
-/// Invariant: in range for its own depth. Only [`Cell::from_digits`], [`Board::child`], and
-/// `LegalMoves` make Cells.
+/// Invariant: in range for its own depth. Only [`Cell::from_digits`], [`Cell::from_index`],
+/// [`Board::child`], and `LegalMoves` make Cells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Cell(u16);
 
@@ -135,6 +135,16 @@ impl Cell {
         Ok(Cell::new(depth, index))
     }
 
+    /// The parse boundary for a move on the wire: its base-9 index (see [`Cell::index`]), read
+    /// under the game's depth.
+    pub fn from_index(depth: Depth, index: u16) -> Result<Cell, ParseError> {
+        if index < pow9(depth as u8) {
+            Ok(Cell::new(depth, index))
+        } else {
+            Err(ParseError::CellIndex(index))
+        }
+    }
+
     pub const fn depth(self) -> Depth {
         if self.0 & DEPTH_THREE == 0 {
             Depth::Two
@@ -143,8 +153,9 @@ impl Cell {
         }
     }
 
-    /// The base-9 path as a number, below `9^depth`. Also this Cell's bit in a LegalMoves.
-    pub(crate) const fn index(self) -> u16 {
+    /// The base-9 path as a number, below `9^depth`, with `d1` the most significant digit: the
+    /// form a move takes on the wire and in storage. Also this Cell's bit in a LegalMoves.
+    pub const fn index(self) -> u16 {
         self.0 & !DEPTH_THREE
     }
 

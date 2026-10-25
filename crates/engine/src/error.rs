@@ -14,6 +14,8 @@ pub enum ParseError {
     Space(u8),
     /// An address with a digit count other than 2 or 3.
     AddressLength(usize),
+    /// A Cell index of `9^depth` or more.
+    CellIndex(u16),
     /// Not 1 to 9.
     Goal(u8),
     /// Not 1 to 8.
@@ -26,6 +28,7 @@ impl fmt::Display for ParseError {
             ParseError::Depth(n) => write!(f, "depth {n} is not 2 or 3"),
             ParseError::Space(n) => write!(f, "space {n} is not 0 to 8"),
             ParseError::AddressLength(n) => write!(f, "an address has 2 or 3 spaces, not {n}"),
+            ParseError::CellIndex(n) => write!(f, "cell index {n} is past the last Cell"),
             ParseError::Goal(n) => write!(f, "FirstTo({n}) is outside 1 to 9"),
             ParseError::RandomPlies(n) => write!(f, "Random({n}) is outside 1 to 8"),
         }

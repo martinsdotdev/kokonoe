@@ -2,6 +2,9 @@
 //! sharing no code with the engine: arrays and loops, no masks, no relaxation walk. Tests play it
 //! beside the engine and ask for the first disagreement after every ply.
 
+// Each test crate compiles its own copy and uses only part of it.
+#![allow(dead_code)]
+
 use kokonoe_engine::{
     Board, BoardStatus, Cell, Child, Continuation, Depth, DrawnOwner, Fallback, Goal, Objective,
     Opening, Outcome, Player, Ruleset, Sent, Space, State, Status,

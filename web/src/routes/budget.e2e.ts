@@ -2,8 +2,8 @@ import { appendFileSync } from 'node:fs';
 import { brotliCompressSync, constants } from 'node:zlib';
 import { expect, test } from '@playwright/test';
 
-/** The route of the game screen. Home stands in until the game screen exists (KOK-37). */
-const GAME_SCREEN = '/';
+/** The route of the game screen. A stub that loads the engine stands in until KOK-37. */
+const GAME_SCREEN = '/play';
 
 /** ADR-0001's startup budget for the game screen's JS plus WASM, in brotli bytes. */
 const BUDGET = 100_000;
@@ -42,5 +42,9 @@ test('the game screen loads at most 100 kB brotli of JS and WASM', async ({ page
 	const total = [...files.values()].reduce((sum, size) => sum + size, 0);
 	report(files, total);
 	expect(files.size, 'the screen loaded some JS').toBeGreaterThan(0);
+	expect(
+		[...files.keys()].some((path) => path.endsWith('.wasm')),
+		'the engine counts'
+	).toBe(true);
 	expect(total).toBeLessThanOrEqual(BUDGET);
 });

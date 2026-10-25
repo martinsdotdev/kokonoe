@@ -5,9 +5,13 @@ import {
 	newSeed,
 	presets,
 	type Cell,
+	type Continuation,
+	type DrawnOwner,
+	type Fallback,
 	type Objective,
 	type Opening,
 	type PlayResult,
+	type Player,
 	type Ruleset
 } from './engine.js';
 
@@ -18,6 +22,22 @@ const cells = (text: string): Cell[] =>
 		.filter(Boolean)
 		.map((digits) => [...digits].reduce((index, digit) => index * 9 + Number(digit), 0));
 const cell = (digits: string) => cells(digits)[0];
+
+const range = (n: number) => [...Array(n).keys()];
+
+/** A variant's name: the string itself, or the one key of `{ Variant: data }`. */
+type Tag<T> = T extends string ? T : keyof T;
+
+/**
+ * Holds a list to every member of a union. Leaving one out is a type error, so when the engine
+ * gains a variant, `pnpm check` fails here until these tests cover it.
+ */
+const every =
+	<T extends string>() =>
+	<const L extends readonly T[]>(
+		list: L & ([Exclude<T, L[number]>] extends [never] ? unknown : never)
+	) =>
+		list;
 
 /** X takes Local boards 0, 1 and 2, each with a row, while O sends X wherever it needs to go. */
 const TOP_ROW = '03 30 04 40 05 51 13 31 14 41 15 52 26 62 27 72 28';
@@ -45,7 +65,7 @@ const illegal = (game: Game, digits: string): PlayResult => game.play(game.ply()
 describe('a Standard game through the bindings', () => {
 	it('starts anywhere, with X to move', () => {
 		expect(standard('').status()).toEqual({
-			ToMove: { player: 'X', sent: 'FirstMove', moves: [...Array(81).keys()] }
+			ToMove: { player: 'X', sent: 'FirstMove', moves: range(81) }
 		});
 	});
 
@@ -62,8 +82,8 @@ describe('a Standard game through the bindings', () => {
 		expect(game.boardStatus([])).toEqual({ Won: 'X' });
 		expect(game.boardStatus([0])).toEqual({ Won: 'X' });
 		expect(game.boardStatus([3])).toBe('Open');
-		expect(game.wonCount('X')).toBe(3);
-		expect(game.wonCount('O')).toBe(0);
+		const players = every<Player>()(['X', 'O']);
+		expect(players.map((player) => game.wonCount(player))).toEqual([3, 0]);
 		expect([game.mark(cell('03')), game.mark(cell('30')), game.mark(cell('88'))]).toEqual([
 			'X',
 			'O',
@@ -97,6 +117,9 @@ describe('a Standard game through the bindings', () => {
 		expect(game.play(1, cell('24'))).toBe('Already');
 		expect(game.play(1, cell('25'))).toEqual({ OutOfOrder: { want: 2, got: 1 } });
 		expect(game.play(3, cell('40'))).toEqual({ OutOfOrder: { want: 2, got: 3 } });
+		expect(game.play(70_000, cell('40')), 'past the engine’s plies').toEqual({
+			OutOfOrder: { want: 2, got: 70_000 }
+		});
 		expect(game.ply()).toBe(2);
 	});
 
@@ -131,29 +154,32 @@ describe('a Standard game through the bindings', () => {
 	it('deals a Random opening from the Seed, outside the Record', () => {
 		const rules: Ruleset = { ...STANDARD, opening: { Random: 4 } };
 		const game = new Game(rules, SEED);
-		expect(game.opening()).toHaveLength(4);
+		const opening = game.opening();
+		expect(opening).toHaveLength(4);
 		expect(game.ply()).toBe(4);
 		expect(game.record().moves).toEqual([]);
-		expect(new Game(rules, SEED).opening()).toEqual(game.opening());
+		expect(new Game(rules, SEED).opening()).toEqual(opening);
+		expect(game.play(0, opening[0]), 'a dealt ply resent').toBe('Already');
 
 		const opened = Game.open(game.record());
-		expect(opened instanceof Game && opened.opening()).toEqual(game.opening());
+		expect(opened instanceof Game && opened.opening()).toEqual(opening);
 	});
 });
 
 describe('values crossing the boundary', () => {
 	it('round-trips all 1,440 Rulesets', () => {
-		const objectives: Objective[] = [
-			'Line',
-			...[...Array(9).keys()].map((n) => ({ FirstTo: n + 1 }))
-		];
-		const openings: Opening[] = ['Free', ...[...Array(8).keys()].map((k) => ({ Random: k + 1 }))];
+		const objectives = every<Tag<Objective>>()(['Line', 'FirstTo']).flatMap((tag): Objective[] =>
+			tag === 'Line' ? [tag] : range(9).map((n) => ({ FirstTo: n + 1 }))
+		);
+		const openings = every<Tag<Opening>>()(['Free', 'Random']).flatMap((tag): Opening[] =>
+			tag === 'Free' ? [tag] : range(8).map((k) => ({ Random: k + 1 }))
+		);
 		let count = 0;
 		for (const depth of [2, 3] as const)
-			for (const continuation of ['Off', 'On'] as const)
-				for (const drawn_owner of ['Neither', 'Both'] as const)
+			for (const continuation of every<Continuation>()(['Off', 'On']))
+				for (const drawn_owner of every<DrawnOwner>()(['Neither', 'Both']))
 					for (const objective of objectives)
-						for (const fallback of ['Draw', 'MostWon'] as const)
+						for (const fallback of every<Fallback>()(['Draw', 'MostWon']))
 							for (const opening of openings) {
 								const rules = { depth, continuation, drawn_owner, objective, fallback, opening };
 								expect(new Game(rules, SEED).ruleset()).toEqual(rules);
@@ -183,7 +209,8 @@ describe('values crossing the boundary', () => {
 			[() => new Game({ ...STANDARD, depth: 4 as 2 }, SEED), /depth 4 is not 2 or 3/],
 			[() => new Game({ ...STANDARD, objective: { FirstTo: 10 } }, SEED), /FirstTo\(10\)/],
 			[() => new Game({ ...STANDARD, extra: 1 } as Ruleset, SEED), /a Ruleset is/],
-			[() => new Game(STANDARD, '5eed'), /a Seed is 16 hex digits/],
+			[() => new Game(STANDARD, '5eed'), /a Seed is 16 lowercase hex digits/],
+			[() => new Game(STANDARD, SEED.toUpperCase()), /a Seed is 16 lowercase hex digits/],
 			[() => game.play(0, 81), /cell index 81/],
 			[() => game.play(0, 1.5), /a Cell is its index/],
 			[() => game.boardStatus([4, 2]), /names no Board/],
@@ -193,18 +220,62 @@ describe('values crossing the boundary', () => {
 		];
 		for (const [call, message] of malformed) expect(call).toThrow(message);
 	});
+
+	it('reads only own data properties', () => {
+		const inherited = Object.assign(Object.create(STANDARD), {
+			a: 1,
+			b: 2,
+			c: 3,
+			d: 4,
+			e: 5,
+			f: 6
+		});
+		const getter = Object.defineProperty({ ...STANDARD }, 'depth', {
+			get: () => 2,
+			enumerable: true
+		});
+		const { rules_version, ruleset, seed } = standard('').record();
+		const inheritedMoves = Object.assign(Object.create({ moves: [] }), {
+			...{ rules_version, ruleset, seed, extra: 1 }
+		});
+		expect(() => new Game(inherited, SEED)).toThrow(/a Ruleset is/);
+		expect(() => new Game(getter, SEED)).toThrow(/a Ruleset is/);
+		expect(() => Game.open(inheritedMoves)).toThrow(/a Record is/);
+	});
+
+	it('stays usable after a value that throws when read', () => {
+		const game = standard('42');
+		const { proxy: revoked, revoke } = Proxy.revocable([4], {});
+		revoke();
+		const trapped = new Proxy(
+			{ ...STANDARD },
+			{
+				ownKeys: () => {
+					throw new Error('trap');
+				}
+			}
+		);
+		expect(() => game.boardStatus(revoked)).toThrow(/a Board is/);
+		expect(() => new Game(trapped, SEED)).toThrow(/a Ruleset is/);
+		// A JS exception thrown through the WASM frames would have left the Game borrowed.
+		expect(game.play(1, cell('24'))).toHaveProperty('Now');
+		expect(game.undo()).toBe(cell('24'));
+	});
 });
 
 it('loads the same module inside a Worker', async () => {
 	const worker = new Worker(new URL('./engine-test.worker.ts', import.meta.url), {
 		type: 'module'
 	});
-	const reply = new Promise((resolve, reject) => {
-		worker.addEventListener('message', (event) => resolve(event.data));
-		worker.addEventListener('error', reject);
-	});
-	const game = standard('42 24');
-	worker.postMessage(game.record());
-	expect(await reply).toEqual(game.status());
-	worker.terminate();
+	try {
+		const reply = new Promise((resolve, reject) => {
+			worker.addEventListener('message', (event) => resolve(event.data));
+			worker.addEventListener('error', reject);
+		});
+		const game = standard('42 24');
+		worker.postMessage(game.record());
+		expect(await reply).toEqual(game.status());
+	} finally {
+		worker.terminate();
+	}
 });

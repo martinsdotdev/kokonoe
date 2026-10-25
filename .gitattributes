@@ -1,4 +1,4 @@
 * text=auto eol=lf
 
-# Written by scripts/bindings.sh. Collapsed in diffs.
+# Written by scripts/bindings.mjs. Collapsed in diffs.
 web/src/lib/engine/** linguist-generated

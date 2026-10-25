@@ -89,8 +89,8 @@ export class Game {
         return v1;
     }
     /**
-     * Plays `cell` as the move at ply `at`. A resend of the last move is `"Already"`, so a
-     * retry is harmless.
+     * Plays `cell` as the move at ply `at`. A move already made at `at`, a dealt one included,
+     * is `"Already"`, so a resend is harmless. Any other ply but the next is `OutOfOrder`.
      * @param {Ply} at
      * @param {Cell} cell
      * @returns {PlayResult}
@@ -139,7 +139,8 @@ export class Game {
         return ret;
     }
     /**
-     * How many children of the Global board `player` has won.
+     * How many children of the Global board count as won for `player`: the ones it won, plus
+     * the drawn ones when drawn Boards count for both. FirstTo and MostWon compare this.
      * @param {Player} player
      * @returns {number}
      */
@@ -179,6 +180,10 @@ function __wbg_get_imports() {
             const ret = arg0 === undefined;
             return ret;
         },
+        __wbg___wbindgen_jsval_eq_02babf21faa37971: function(arg0, arg1) {
+            const ret = arg0 === arg1;
+            return ret;
+        },
         __wbg___wbindgen_number_get_2e0e7dee9f701a71: function(arg0, arg1) {
             const obj = arg1;
             const ret = typeof(obj) === 'number' ? obj : undefined;
@@ -200,22 +205,18 @@ function __wbg_get_imports() {
             const ret = Game.__wrap(arg0);
             return ret;
         },
+        __wbg_getOwnPropertyDescriptor_6f8590055297310c: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.getOwnPropertyDescriptor(arg0, arg1);
+            return ret;
+        }, arguments); },
         __wbg_get_31af05bd4842a84f: function() { return handleError(function (arg0, arg1) {
             const ret = Reflect.get(arg0, arg1);
             return ret;
         }, arguments); },
-        __wbg_get_unchecked_288889d017702237: function(arg0, arg1) {
-            const ret = arg0[arg1 >>> 0];
-            return ret;
-        },
-        __wbg_isArray_e15a2ff68ffdbef2: function(arg0) {
+        __wbg_isArray_45ffe64a440c3fd5: function() { return handleError(function (arg0) {
             const ret = Array.isArray(arg0);
             return ret;
-        },
-        __wbg_keys_440be172f17c0265: function(arg0) {
-            const ret = Object.keys(arg0);
-            return ret;
-        },
+        }, arguments); },
         __wbg_length_d4bdea10311bd9cf: function(arg0) {
             const ret = arg0.length;
             return ret;
@@ -228,6 +229,10 @@ function __wbg_get_imports() {
             const ret = new Array();
             return ret;
         },
+        __wbg_ownKeys_7f46b96dc7311fe8: function() { return handleError(function (arg0) {
+            const ret = Reflect.ownKeys(arg0);
+            return ret;
+        }, arguments); },
         __wbg_push_2baf45db356cf468: function(arg0, arg1) {
             const ret = arg0.push(arg1);
             return ret;

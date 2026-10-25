@@ -11,7 +11,7 @@ repository = "https://github.com/martinsdotdev/kokonoe"
 [workspace.dependencies]
 kokonoe-engine = { path = "crates/engine" }
 
-# The browser module, built by scripts/bindings.sh: small over fast, for the 100 KB game-screen
+# The browser module, built by scripts/bindings.mjs: small over fast, for the 100 KB game-screen
 # budget. Native builds, the server's included, keep the plain release profile.
 [profile.wasm]
 inherits = "release"

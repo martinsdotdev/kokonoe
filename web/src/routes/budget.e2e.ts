@@ -28,11 +28,13 @@ const report = (files: Map<string, number>, total: number) => {
 
 test('the game screen loads at most 100 kB brotli of JS and WASM', async ({ page }) => {
 	const loads = new Map<string, Promise<number>>();
+	const failed: string[] = [];
 	page.on('response', (response) => {
 		const path = new URL(response.url()).pathname;
-		if (/\.(m?js|wasm)$/.test(path) && !loads.has(path)) {
-			loads.set(path, response.body().then(brotli));
-		}
+		if (!/\.(m?js|wasm)$/.test(path) || loads.has(path)) return;
+		// A 404 body is not the file, so it mustn't count as it.
+		if (response.ok()) loads.set(path, response.body().then(brotli));
+		else failed.push(`${path}: ${response.status()}`);
 	});
 	await page.goto(GAME_SCREEN);
 	await page.waitForLoadState('networkidle');
@@ -41,6 +43,7 @@ test('the game screen loads at most 100 kB brotli of JS and WASM', async ({ page
 	for (const [path, size] of loads) files.set(path, await size);
 	const total = [...files.values()].reduce((sum, size) => sum + size, 0);
 	report(files, total);
+	expect(failed, 'every JS and WASM file loaded').toEqual([]);
 	expect(files.size, 'the screen loaded some JS').toBeGreaterThan(0);
 	expect(
 		[...files.keys()].some((path) => path.endsWith('.wasm')),

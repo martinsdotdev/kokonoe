@@ -13,7 +13,7 @@ if [ -z "$version" ]; then
 	exit 0
 fi
 
-cargo build -p kokonoe-wasm --target "$target" --release --locked
+cargo build -p kokonoe-wasm --target "$target" --profile wasm --locked
 
 # The CLI must match the crate's wasm-bindgen exactly, or it refuses the module.
 if [ "$(wasm-bindgen --version 2>/dev/null)" != "wasm-bindgen $version" ]; then
@@ -21,6 +21,7 @@ if [ "$(wasm-bindgen --version 2>/dev/null)" != "wasm-bindgen $version" ]; then
 	cargo install wasm-bindgen-cli --version "$version" --locked
 fi
 
-wasm-bindgen --target web --out-dir web/src/lib/engine \
-	"target/$target/release/kokonoe_wasm.wasm"
+# The name section only helps debugging, and it was a fifth of the module's brotli size.
+wasm-bindgen --target web --remove-name-section --remove-producers-section \
+	--out-dir web/src/lib/engine "target/$target/wasm/kokonoe_wasm.wasm"
 echo "Wrote the bindings for wasm-bindgen $version to web/src/lib/engine."

@@ -1,0 +1,27 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_game_free: (a: number, b: number) => void;
+export const game_boardStatus: (a: number, b: any) => [number, number, number];
+export const game_mark: (a: number, b: any) => [number, number, number];
+export const game_moves: (a: number) => [number, number];
+export const game_new: (a: any, b: any) => [number, number, number];
+export const game_open: (a: any) => [number, number, number];
+export const game_opening: (a: number) => [number, number];
+export const game_play: (a: number, b: any, c: any) => [number, number, number];
+export const game_ply: (a: number) => any;
+export const game_record: (a: number) => any;
+export const game_ruleset: (a: number) => any;
+export const game_status: (a: number) => any;
+export const game_undo: (a: number) => any;
+export const game_wonCount: (a: number, b: any) => [number, number, number];
+export const presets: () => [number, number];
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __externref_table_dealloc: (a: number) => void;
+export const __externref_drop_slice: (a: number, b: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __wbindgen_start: () => void;

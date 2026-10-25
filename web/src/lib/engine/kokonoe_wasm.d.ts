@@ -145,7 +145,7 @@ export class Game {
     /**
      * How many children of the Global board `player` has won.
      */
-    wonCount(player: Player): number;
+    wonCount(player: Player): string;
 }
 
 /**

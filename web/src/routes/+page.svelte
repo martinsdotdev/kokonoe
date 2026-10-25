@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { probe } from '#lib/probe';
+	import { probe } from '#lib/probe.js';
 </script>
 
 <main class="mx-auto flex min-h-svh max-w-xl flex-col justify-center gap-3 px-4">

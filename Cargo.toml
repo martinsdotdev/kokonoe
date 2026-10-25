@@ -18,3 +18,8 @@ inherits = "release"
 opt-level = "z"
 lto = true
 codegen-units = 1
+
+# The property test plays thousands of games through the engine: optimized, it takes about a
+# second instead of twenty. Overflow checks and debug assertions stay on.
+[profile.test.package.kokonoe-engine]
+opt-level = 2

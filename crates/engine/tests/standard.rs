@@ -256,6 +256,27 @@ fn addresses_parse_at_the_boundary() {
 }
 
 #[test]
+fn cells_round_trip_through_their_index() {
+    for (depth, count) in [(Depth::Two, 81), (Depth::Three, 729)] {
+        for index in 0..count {
+            let c = Cell::from_index(depth, index).unwrap();
+            assert_eq!((c.depth(), c.index()), (depth, index));
+            let digits: Vec<u8> = c.spaces().iter().map(|space| space.index()).collect();
+            assert_eq!(Cell::from_digits(&digits), Ok(c), "{index} at {depth:?}");
+        }
+        assert_eq!(
+            Cell::from_index(depth, count),
+            Err(ParseError::CellIndex(count))
+        );
+    }
+    assert_eq!(
+        cell("42").index(),
+        4 * 9 + 2,
+        "the first Space is the most significant digit"
+    );
+}
+
+#[test]
 fn boards_and_cells_round_trip_through_parent_and_child() {
     let global = Board::global(Depth::Two);
     assert_eq!(global.parent(), None);

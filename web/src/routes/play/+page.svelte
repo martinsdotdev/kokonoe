@@ -8,12 +8,12 @@
 	import { replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { loadEngine } from '#lib/engine.js';
+	import { loadEngine, parseRulesetCode, type Ruleset } from '#lib/engine.js';
 	import GameScreen from '#lib/game/GameScreen.svelte';
 	import { gameQuery, playQuery, readLaunch } from '#lib/game/launch.js';
 	import { rulesetCode } from '#lib/game/rules.js';
 	import { loadGame } from '#lib/game/saved.js';
-	import { OfflineGame, UnplayableGame } from '#lib/game/session.svelte.js';
+	import { OfflineGame, UnplayableGame, type Variant } from '#lib/game/session.svelte.js';
 	import { presetByCode } from '#lib/game/shelf.js';
 
 	let session: OfflineGame | null = $state(null);
@@ -55,11 +55,24 @@
 		}
 		const launch = readLaunch(page.url.searchParams);
 		if ('error' in launch) throw new Problem(launch.error);
-		const preset = presetByCode(launch.code);
-		if (!preset) throw new Problem(`Kokonoe doesn’t know the variant “${launch.code}”.`);
-		if (!preset.playable) throw new Problem(`${preset.name} arrives soon.`);
 		await loadEngine().catch(failed(ENGINE));
-		return left ? null : new OfflineGame(preset, launch.opponent);
+		const variant = variantOf(launch.code);
+		return left ? null : new OfflineGame(variant, launch.opponent);
+	};
+
+	/** The variant a Ruleset code names: a Preset by its name, or any other Ruleset. */
+	const variantOf = (code: string): Variant => {
+		let ruleset: Ruleset;
+		try {
+			ruleset = parseRulesetCode(code);
+		} catch (error) {
+			throw new Problem(`Kokonoe doesn’t know the variant “${code}”: ${(error as Error).message}.`);
+		}
+		const preset = presetByCode(code);
+		const name = preset?.name ?? 'Custom variant';
+		// The board steps into three levels on phones first (KOK-38, KOK-39).
+		if (ruleset.depth === 3) throw new Problem(`${name} arrives soon.`);
+		return { name, ruleset };
 	};
 
 	open().then(

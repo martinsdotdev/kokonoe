@@ -96,7 +96,24 @@ test('resigning asks first, then ends the game', async ({ page }) => {
 
 test('a link naming no variant says so, and points to a new game', async ({ page }) => {
 	await page.goto('/play?rules=nonsense');
-	await expect(page.getByText('Kokonoe doesn’t know the variant “nonsense”.')).toBeVisible();
+	await expect(page.getByText('Kokonoe doesn’t know the variant “nonsense”')).toBeVisible();
 	await page.getByRole('link', { name: 'Choose a new game' }).click();
 	await expect(page).toHaveURL(/\/new-game$/);
+});
+
+test('any Ruleset code plays, as a Custom variant when it names no Preset', async ({ page }) => {
+	await page.goto('/play?rules=both+first3');
+	await expect(page.locator('[data-variant]')).toHaveText('Custom variant');
+	await expect(page.locator('[data-score]')).toHaveText('X 0 · O 0 · first to 3');
+	await cell(page, '42').click();
+	await expect(marked(page)).toHaveCount(1);
+});
+
+test('a Ruleset code in the wrong order says why', async ({ page }) => {
+	await page.goto('/play?rules=most+cont');
+	await expect(
+		page.getByText(
+			"“most+cont”: a Ruleset code's settings go in the order d3, cont, both, first, most, rand."
+		)
+	).toBeVisible();
 });

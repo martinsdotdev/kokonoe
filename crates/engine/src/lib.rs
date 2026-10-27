@@ -18,6 +18,7 @@
 extern crate alloc;
 
 mod address;
+mod encoding;
 mod error;
 mod play;
 mod repr;
@@ -26,7 +27,8 @@ mod ruleset;
 mod search;
 
 pub use address::{Board, Cell, Child, Space, Spaces};
-pub use error::{IllegalMove, ParseError, PlayError, ReplayError};
+pub use encoding::NotatedMove;
+pub use error::{CodeError, IllegalMove, ParseError, PlayError, ReplayError};
 pub use play::{
     BoardStatus, Game, LegalIter, LegalMoves, Outcome, Played, Player, Ply, Record, Seed, Sent,
     State, Status,

@@ -1,9 +1,9 @@
 //! The engine's JavaScript bindings, the only crate that knows about the browser.
 //!
 //! One module serves the page and the AI Worker alike. [`Game`] wraps the engine's Game in WASM
-//! memory, and [`think`] is the computer's search. The values it takes and returns are plain JavaScript values: [`types`] declares them
-//! for the `.d.ts` as Rust mirrors, [`convert`] maps the mirrors to and from the engine, and
-//! [`js`] builds and parses them. They cross as `Ts<T>`, a JS handle carrying its declared type,
+//! memory, and [`think`] is the computer's search. The values they take and return are plain
+//! JavaScript values: [`types`] declares them for the `.d.ts` as Rust mirrors, [`convert`] maps
+//! the mirrors to and from the engine, and [`js`] builds and parses them. They cross as `Ts<T>`, a JS handle carrying its declared type,
 //! and are parsed inside each method, so a value of the wrong shape is an ordinary error rather
 //! than a throw from the ABI boundary.
 //!

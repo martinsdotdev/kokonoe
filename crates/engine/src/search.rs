@@ -204,6 +204,19 @@ struct Node {
     next_sibling: u32,
 }
 
+impl Node {
+    const fn new(cell: Cell, next_sibling: u32) -> Node {
+        Node {
+            cell,
+            visits: 0,
+            score: 0,
+            children: 0,
+            first_child: NONE,
+            next_sibling,
+        }
+    }
+}
+
 struct Tree {
     root: State,
     /// The side to move at the root.
@@ -220,14 +233,7 @@ impl Tree {
     fn new(root: State, player: Player, moves: LegalMoves, iterations: u32) -> Tree {
         // One node per iteration, plus the root.
         let mut nodes = Vec::with_capacity((iterations as usize).saturating_add(1));
-        nodes.push(Node {
-            cell: moves.nth(0),
-            visits: 0,
-            score: 0,
-            children: 0,
-            first_child: NONE,
-            next_sibling: NONE,
-        });
+        nodes.push(Node::new(moves.nth(0), NONE));
         Tree {
             root,
             player,
@@ -237,41 +243,44 @@ impl Tree {
         }
     }
 
-    /// One UCT iteration: select down the tree, add one untried move, play randomly to the end,
-    /// and score the path.
+    /// One UCT iteration.
     fn iterate(&mut self, rng: &mut Rng) {
+        if let Some(outcome) = self.descend(rng) {
+            self.backpropagate(outcome);
+        }
+    }
+
+    /// Selects down the tree, adds one untried move, and plays randomly to the end of the game,
+    /// leaving the nodes it passed in `path`. `None` only if a legal move failed to play, which
+    /// can't happen.
+    fn descend(&mut self, rng: &mut Rng) -> Option<Outcome> {
         let mut state = self.root;
         let mut node = 0;
         self.path.clear();
         self.path.push(node);
-        let outcome = loop {
+        loop {
             let moves = match state.status() {
-                Status::Over(outcome) => break outcome, // a finished game scores as it stands
+                Status::Over(outcome) => return Some(outcome), // scores as it stands
                 Status::ToMove { .. } if node == 0 => self.moves,
                 Status::ToMove { moves, .. } => moves,
             };
             let expanded = self.node(node).map_or(0, |node| usize::from(node.children));
             if expanded < moves.len() {
-                let Some(cell) = self.untried(node, moves, rng) else {
-                    return; // unreachable: fewer children than moves
-                };
-                if state.play(cell).is_err() {
-                    return; // unreachable: `cell` came from `moves`
-                }
+                let cell = self.untried(node, moves, rng)?;
+                state.play(cell).ok()?;
                 let child = self.add(node, cell);
                 self.path.push(child);
-                break playout(state, rng);
+                return Some(playout(state, rng));
             }
             node = self.select(node);
-            let Some(cell) = self.node(node).map(|node| node.cell) else {
-                return; // unreachable: `select` returns a child
-            };
-            if state.play(cell).is_err() {
-                return; // unreachable: every child was a legal move
-            }
+            state.play(self.node(node)?.cell).ok()?;
             self.path.push(node);
-        };
-        // Turns alternate, so the movers along the path do too. The root's score is never read.
+        }
+    }
+
+    /// Scores the path. Turns alternate, so the movers along it do too. The root's score is
+    /// never read.
+    fn backpropagate(&mut self, outcome: Outcome) {
         let mut mover = self.player.opponent();
         for &index in &self.path {
             if let Some(node) = self.nodes.get_mut(index as usize) {
@@ -312,14 +321,7 @@ impl Tree {
             parent.first_child = index;
             parent.children = parent.children.saturating_add(1);
         }
-        self.nodes.push(Node {
-            cell,
-            visits: 0,
-            score: 0,
-            children: 0,
-            first_child: NONE,
-            next_sibling,
-        });
+        self.nodes.push(Node::new(cell, next_sibling));
         index
     }
 

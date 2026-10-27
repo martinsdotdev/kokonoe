@@ -4,7 +4,8 @@
 mod model;
 
 use kokonoe_engine::{
-    Cell, Choice, Depth, Game, Level, ParseError, Preset, Ruleset, Seed, State, Status, think,
+    Cell, Choice, Depth, Game, Level, ParseError, Player, Preset, Ruleset, Seed, State, Status,
+    think,
 };
 
 const DEPTH_TWO: [Preset; 4] = [
@@ -33,12 +34,17 @@ fn cells(text: &str) -> Vec<Cell> {
         .collect()
 }
 
+/// Plays `cell` as the next move.
+fn advance(game: &mut Game, cell: Cell) {
+    let at = game.state().ply();
+    game.play(at, cell).unwrap();
+}
+
 /// A game under `rules` with `moves` played in order.
 fn game(rules: Ruleset, moves: &str) -> Game {
     let mut game = Game::new(rules, Seed(0));
     for cell in cells(moves) {
-        let at = game.state().ply();
-        game.play(at, cell).unwrap();
+        advance(&mut game, cell);
     }
     game
 }
@@ -50,16 +56,20 @@ fn legal(state: &State) -> Vec<Cell> {
     }
 }
 
-/// The moves that win the game at once for the side to move.
-fn wins(state: &State) -> Vec<Cell> {
-    let mover = state.ply().player();
+/// The moves that end the game at once with `winner` winning.
+fn ending_with(state: &State, winner: Player) -> Vec<Cell> {
     legal(state)
         .into_iter()
         .filter(|&cell| {
             let mut next = *state;
-            matches!(next.play(cell), Ok(Status::Over(outcome)) if outcome.winner() == Some(mover))
+            matches!(next.play(cell), Ok(Status::Over(outcome)) if outcome.winner() == Some(winner))
         })
         .collect()
+}
+
+/// The moves that win the game at once for the side to move.
+fn wins(state: &State) -> Vec<Cell> {
+    ending_with(state, state.ply().player())
 }
 
 /// Whether `cell` hands the opponent the game: it wins on this move, or has a winning reply.
@@ -92,8 +102,7 @@ fn positions(rules: Ruleset) -> impl Iterator<Item = State> {
         let mut states = Vec::new();
         while let Status::ToMove { moves, .. } = game.state().status() {
             states.push(*game.state());
-            let at = game.state().ply();
-            game.play(at, moves.nth(rng.below(moves.len()))).unwrap();
+            advance(&mut game, moves.nth(rng.below(moves.len())));
         }
         states
     })
@@ -171,8 +180,7 @@ fn games_at_levels_one_to_four_finish_under_every_depth_two_preset() {
             let mut game = Game::new(preset.ruleset(), Seed(n.into()));
             let mut seed = u64::from(n);
             while let Some(cell) = think(game.state(), level(n), seed, frozen) {
-                let at = game.state().ply();
-                game.play(at, cell).unwrap();
+                advance(&mut game, cell);
                 seed += 1;
             }
             assert!(
@@ -279,14 +287,7 @@ fn from_level_three_it_never_ends_the_game_in_its_own_loss() {
     // A move can lose at once: deciding the last Board while behind on count, or, when drawn
     // Boards count for both, drawing one that completes the opponent's line.
     let positions = sample(1, |state| {
-        let mover = state.ply().player();
-        let suicidal: Vec<Cell> = legal(&state)
-            .into_iter()
-            .filter(|&cell| {
-                let mut next = state;
-                matches!(next.play(cell), Ok(Status::Over(outcome)) if outcome.winner() == Some(mover.opponent()))
-            })
-            .collect();
+        let suicidal = ending_with(&state, state.ply().player().opponent());
         if suicidal.is_empty() {
             return None;
         }

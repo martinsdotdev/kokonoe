@@ -52,7 +52,7 @@ describe('the display formatters, held to the engine', () => {
 
 	it('hear why a code is refused', () => {
 		expect(() => parseRulesetCode('most+cont')).toThrow(/go in the order d3, cont, both/);
-		expect(() => parseRulesetCode('first10')).toThrow(/FirstTo\(10\) is outside 1 to 9/);
-		expect(() => parseRulesetCode('Cont')).toThrow(/settings are std, d3, cont/);
+		expect(() => parseRulesetCode('first10')).toThrow(/first takes a number from 1 to 9/);
+		expect(() => parseRulesetCode('Cont')).toThrow(/are std, d3, cont, both, first1 to first9/);
 	});
 });

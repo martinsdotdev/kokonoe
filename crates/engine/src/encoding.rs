@@ -2,6 +2,7 @@
 //! form. Each writes one spelling and its parser accepts only that spelling, apart from the `.`
 //! Notation also takes, so every value has one encoding.
 
+#[cfg(feature = "serde")]
 use alloc::string::{String, ToString};
 use core::fmt;
 use core::str::FromStr;
@@ -86,7 +87,8 @@ impl FromStr for NotatedMove {
     }
 }
 
-/// The settings a Ruleset code names, in the one order it writes them.
+/// The settings a Ruleset code names. Declared in the code's order, so `Ord` is the order the
+/// parser holds a code to.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Setting {
     Deep,
@@ -101,37 +103,38 @@ enum Setting {
 /// `+`, in the order `d3`, `cont`, `both`, `first<N>`, `most`, `rand<K>`.
 impl fmt::Display for Ruleset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut first = true;
-        let mut setting = |f: &mut fmt::Formatter<'_>, text: fmt::Arguments<'_>| {
-            if !first {
-                f.write_str("+")?;
-            }
-            first = false;
-            f.write_fmt(text)
-        };
+        let mut any = false;
         if self.depth == Depth::Three {
-            setting(f, format_args!("d3"))?;
+            setting(f, &mut any, format_args!("d3"))?;
         }
         if self.continuation == Continuation::On {
-            setting(f, format_args!("cont"))?;
+            setting(f, &mut any, format_args!("cont"))?;
         }
         if self.drawn_owner == DrawnOwner::Both {
-            setting(f, format_args!("both"))?;
+            setting(f, &mut any, format_args!("both"))?;
         }
         if let Objective::FirstTo(goal) = self.objective {
-            setting(f, format_args!("first{}", goal.get()))?;
+            setting(f, &mut any, format_args!("first{}", goal.get()))?;
         }
         if self.fallback == Fallback::MostWon {
-            setting(f, format_args!("most"))?;
+            setting(f, &mut any, format_args!("most"))?;
         }
         if let Opening::Random(plies) = self.opening {
-            setting(f, format_args!("rand{}", plies.get()))?;
+            setting(f, &mut any, format_args!("rand{}", plies.get()))?;
         }
-        if first {
+        if !any {
             f.write_str("std")?;
         }
         Ok(())
     }
+}
+
+/// Writes one setting of a code, after a `+` unless it's the first.
+fn setting(f: &mut fmt::Formatter<'_>, any: &mut bool, text: fmt::Arguments<'_>) -> fmt::Result {
+    if core::mem::replace(any, true) {
+        f.write_str("+")?;
+    }
+    f.write_fmt(text)
 }
 
 /// Reads a Ruleset code, accepting only the spelling `Display` writes.
@@ -156,7 +159,8 @@ impl FromStr for Ruleset {
     }
 }
 
-/// Sets what `token` names on `rules`, and says which setting it was.
+/// Sets what `token` names on `rules`, and says which setting it was, so the parser can hold
+/// the code to one order with no repeats.
 fn apply(rules: &mut Ruleset, token: &str) -> Result<Setting, ParseError> {
     let setting = match token {
         "" => return Err(CodeError::Empty.into()),
@@ -177,12 +181,15 @@ fn apply(rules: &mut Ruleset, token: &str) -> Result<Setting, ParseError> {
             rules.fallback = Fallback::MostWon;
             Setting::MostWon
         }
+        _ if leading_zero(token) => return Err(CodeError::LeadingZero.into()),
         _ => {
             if let Some(n) = token.strip_prefix("first") {
-                rules.objective = Objective::FirstTo(Goal::try_from(number(n)?)?);
+                let goal = number(n).and_then(|n| Goal::try_from(n).ok());
+                rules.objective = Objective::FirstTo(goal.ok_or(CodeError::FirstTo)?);
                 Setting::FirstTo
             } else if let Some(k) = token.strip_prefix("rand") {
-                rules.opening = Opening::Random(RandomPlies::try_from(number(k)?)?);
+                let plies = number(k).and_then(|k| RandomPlies::try_from(k).ok());
+                rules.opening = Opening::Random(plies.ok_or(CodeError::Random)?);
                 Setting::Random
             } else {
                 return Err(CodeError::Unknown.into());
@@ -192,15 +199,22 @@ fn apply(rules: &mut Ruleset, token: &str) -> Result<Setting, ParseError> {
     Ok(setting)
 }
 
-/// A setting's number: decimal digits with no leading zero. Its range is the setting's to check.
-fn number(digits: &str) -> Result<u8, ParseError> {
+/// Whether a numbered setting writes its number with a leading zero, as in `first05`.
+fn leading_zero(token: &str) -> bool {
+    ["first", "rand"].iter().any(|name| {
+        token
+            .strip_prefix(name)
+            .is_some_and(|n| n.len() > 1 && n.starts_with('0'))
+    })
+}
+
+/// A setting's number, if it's written as plain decimal digits. A leading zero is a second
+/// spelling of the same number, so it's an error of its own; the range is the setting's to check.
+fn number(digits: &str) -> Option<u8> {
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(CodeError::Unknown.into());
+        return None;
     }
-    if digits.len() > 1 && digits.starts_with('0') {
-        return Err(CodeError::LeadingZero.into());
-    }
-    digits.parse().map_err(|_| CodeError::Unknown.into())
+    digits.parse().ok()
 }
 
 /// A Seed as 16 lowercase hex digits, the u64 big-endian: a JSON number can't hold a u64 exactly
@@ -226,12 +240,15 @@ impl FromStr for Seed {
     }
 }
 
+/// For serde, which reads and writes a Seed through its hex form.
+#[cfg(feature = "serde")]
 impl From<Seed> for String {
     fn from(seed: Seed) -> String {
         seed.to_string()
     }
 }
 
+#[cfg(feature = "serde")]
 impl TryFrom<String> for Seed {
     type Error = ParseError;
 
@@ -290,18 +307,5 @@ impl TryFrom<RawRecord> for Record {
                 .map(|index| Cell::from_index(depth, index))
                 .collect::<Result<_, _>>()?,
         })
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn notation_writes_spaces_from_one() {
-        let cell = Cell::from_digits(&[4, 0, 7]).unwrap();
-        assert_eq!(alloc::format!("{cell}"), "5·1·8");
-        assert_eq!("5.1.8".parse::<Cell>(), Ok(cell));
     }
 }

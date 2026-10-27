@@ -40,10 +40,6 @@ fn every_ruleset() -> Vec<Ruleset> {
     all
 }
 
-fn code(rules: &Ruleset) -> String {
-    rules.to_string()
-}
-
 mod ruleset_codes {
     use super::*;
 
@@ -53,7 +49,7 @@ mod ruleset_codes {
         assert_eq!(all.len(), 1_440);
         let mut codes = std::collections::HashSet::new();
         for rules in &all {
-            let written = code(rules);
+            let written = rules.to_string();
             assert_eq!(written.parse::<Ruleset>(), Ok(*rules), "{written}");
             assert!(codes.insert(written), "one code per Ruleset");
         }
@@ -61,7 +57,10 @@ mod ruleset_codes {
 
     #[test]
     fn the_presets_and_the_spec_example_read_as_written() {
-        let presets: Vec<String> = Preset::ALL.iter().map(|p| code(&p.ruleset())).collect();
+        let presets: Vec<String> = Preset::ALL
+            .iter()
+            .map(|p| p.ruleset().to_string())
+            .collect();
         assert_eq!(presets, ["std", "cont", "cont+first5+most", "most", "d3"]);
         let example: Ruleset = "cont+both+first5+most+rand4".parse().unwrap();
         assert_eq!(
@@ -75,7 +74,7 @@ mod ruleset_codes {
                 ..Preset::Standard.ruleset()
             }
         );
-        assert_eq!(code(&example), "cont+both+first5+most+rand4");
+        assert_eq!(example.to_string(), "cont+both+first5+most+rand4");
     }
 
     #[test]
@@ -89,9 +88,11 @@ mod ruleset_codes {
             ("STD", CodeError::Unknown.into()),
             ("Cont", CodeError::Unknown.into()),
             ("d2", CodeError::Unknown.into()),
-            ("first", CodeError::Unknown.into()),
-            ("first5x", CodeError::Unknown.into()),
-            ("rand-1", CodeError::Unknown.into()),
+            ("first", CodeError::FirstTo.into()),
+            ("first5x", CodeError::FirstTo.into()),
+            ("first300", CodeError::FirstTo.into()),
+            ("rand", CodeError::Random.into()),
+            ("rand-1", CodeError::Random.into()),
             ("cont first5", CodeError::Unknown.into()),
             ("std+cont", CodeError::StdCombined.into()),
             ("cont+std", CodeError::StdCombined.into()),
@@ -102,10 +103,10 @@ mod ruleset_codes {
             ("first3+first5", CodeError::Duplicate.into()),
             ("first05", CodeError::LeadingZero.into()),
             ("rand08", CodeError::LeadingZero.into()),
-            ("first0", ParseError::Goal(0)),
-            ("first10", ParseError::Goal(10)),
-            ("rand0", ParseError::RandomPlies(0)),
-            ("rand9", ParseError::RandomPlies(9)),
+            ("first0", CodeError::FirstTo.into()),
+            ("first10", CodeError::FirstTo.into()),
+            ("rand0", CodeError::Random.into()),
+            ("rand9", CodeError::Random.into()),
         ];
         for (code, error) in refused {
             assert_eq!(code.parse::<Ruleset>(), Err(error), "{code:?}");
@@ -117,7 +118,7 @@ mod ruleset_codes {
         let error = "most+cont".parse::<Ruleset>().unwrap_err();
         assert_eq!(
             error.to_string(),
-            "a Ruleset code's settings go in the order d3, cont, both, first, most, rand"
+            "the settings of a Ruleset code go in the order d3, cont, both, first, most, rand"
         );
     }
 }

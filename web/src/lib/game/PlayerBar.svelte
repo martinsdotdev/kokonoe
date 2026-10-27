@@ -1,9 +1,10 @@
-<!-- One player's bar: their mark, their name, and whether it's their move. -->
+<!-- One player's bar: their mark, who they are, and whether it's their move. -->
 <script lang="ts">
 	import type { Player } from '#lib/engine.js';
 	import Mark from './Mark.svelte';
+	import type { Seat } from './session.svelte.js';
 
-	let { player, name, toMove }: { player: Player; name: string; toMove: boolean } = $props();
+	let { player, seat, toMove }: { player: Player; seat: Seat; toMove: boolean } = $props();
 
 	const ink = $derived(player === 'X' ? 'var(--x)' : 'var(--o-text)');
 </script>
@@ -16,13 +17,13 @@
 >
 	<Mark {player} class="size-8.5 shrink-0" />
 	<div class="min-w-0 flex-1">
-		<div class="font-semibold">{name}</div>
+		<div class="font-semibold">{seat.name}</div>
 		<div
 			class="text-sm"
 			style:color={toMove ? ink : 'var(--muted-foreground)'}
 			style:font-weight={toMove ? 600 : 400}
 		>
-			{toMove ? 'To move' : 'Waiting'}
+			{[seat.detail, toMove ? 'To move' : 'Waiting'].filter(Boolean).join(' · ')}
 		</div>
 	</div>
 	<span class="font-mono text-[13px] text-muted-foreground">{player}</span>

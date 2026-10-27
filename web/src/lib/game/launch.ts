@@ -33,7 +33,8 @@ export const playQuery = ({ code, opponent }: Launch): `?${string}` => {
 
 /** The game a `/play` URL asks for, or what's wrong with it. */
 export const readLaunch = (params: Pick<URLSearchParams, 'get'>): Launch | { error: string } => {
-	const code = params.get('rules') ?? 'std';
+	// A `+` typed into a query reads back as a space, and a Ruleset code never holds one.
+	const code = (params.get('rules') ?? 'std').replaceAll(' ', '+');
 	const vs = params.get('vs') ?? 'hotseat';
 	if (vs === 'hotseat') return { code, opponent: { kind: 'hotseat' } };
 	if (vs !== 'computer') return { error: `“${vs}” isn’t an opponent.` };

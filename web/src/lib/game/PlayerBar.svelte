@@ -4,7 +4,15 @@
 	import Mark from './Mark.svelte';
 	import type { Seat } from './session.svelte.js';
 
-	let { player, seat, toMove }: { player: Player; seat: Seat; toMove: boolean } = $props();
+	interface Props {
+		player: Player;
+		seat: Seat;
+		toMove: boolean;
+		/** What the computer is doing on its move, in place of "To move": "Thinking…". */
+		doing?: string | null;
+	}
+
+	let { player, seat, toMove, doing = null }: Props = $props();
 
 	const ink = $derived(player === 'X' ? 'var(--x)' : 'var(--o-text)');
 </script>
@@ -23,7 +31,7 @@
 			style:color={toMove ? ink : 'var(--muted-foreground)'}
 			style:font-weight={toMove ? 600 : 400}
 		>
-			{[seat.detail, toMove ? 'To move' : 'Waiting'].filter(Boolean).join(' · ')}
+			{[seat.detail, toMove ? (doing ?? 'To move') : 'Waiting'].filter(Boolean).join(' · ')}
 		</div>
 	</div>
 	<span class="font-mono text-[13px] text-muted-foreground">{player}</span>

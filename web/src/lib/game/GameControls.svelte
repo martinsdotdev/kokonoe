@@ -4,17 +4,20 @@
 
 	interface Props {
 		canUndo: boolean;
-		/** The player to move, who would resign. Null once the game is over. */
-		toMove: Player | null;
+		/**
+		 * Who would resign: the player to move, or the player against the computer. Null once the
+		 * game is over.
+		 */
+		resigner: Player | null;
 		onundo: () => void;
 		onresign: () => void;
 	}
 
-	let { canUndo, toMove, onundo, onresign }: Props = $props();
+	let { canUndo, resigner, onundo, onresign }: Props = $props();
 
-	/** Who asked to resign. A move in the meantime changes who's to move and drops the question. */
+	/** Who asked to resign. In pass and play a move changes who would, and drops the question. */
 	let asked: Player | null = $state(null);
-	const confirming = $derived(asked !== null && asked === toMove);
+	const confirming = $derived(asked !== null && asked === resigner);
 
 	const button =
 		'min-h-11 flex-1 rounded-md border-[1.5px] bg-card px-4 font-semibold disabled:opacity-40';
@@ -22,7 +25,7 @@
 
 <div class="flex flex-wrap items-center gap-2.5">
 	{#if confirming}
-		<span class="flex-[1_1_100%] font-semibold">Resign as {toMove}?</span>
+		<span class="flex-[1_1_100%] font-semibold">Resign as {resigner}?</span>
 		<button
 			type="button"
 			class={button}
@@ -45,8 +48,8 @@
 			class={button}
 			style:border-color="var(--o-text)"
 			style:color="var(--o-text)"
-			disabled={!toMove}
-			onclick={() => (asked = toMove)}
+			disabled={!resigner}
+			onclick={() => (asked = resigner)}
 		>
 			Resign
 		</button>

@@ -12,6 +12,7 @@
 	import ResultBanner from './ResultBanner.svelte';
 	import RulesCard from './RulesCard.svelte';
 	import Scoreboard from './Scoreboard.svelte';
+	import { againstLabel } from './launch.js';
 	import { resultText, winner } from './result.js';
 	import type { OfflineGame } from './session.svelte.js';
 	import TurnCard from './TurnCard.svelte';
@@ -21,9 +22,7 @@
 	const played = $derived(session.moves.filter((move) => !move.dealt).length);
 	const opponent = $derived(session.opponent);
 	const variant = $derived(session.variant);
-	const against = $derived(
-		opponent.kind === 'computer' ? `vs Computer · Level ${opponent.level}` : 'Pass and play'
-	);
+	const against = $derived(againstLabel(opponent));
 	const counted = $derived(
 		variant.ruleset.objective !== 'Line' || variant.ruleset.fallback === 'MostWon'
 	);

@@ -2,10 +2,27 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadEngine, type Cell, type Record } from '#lib/engine.js';
 import type { Computer } from './computer.js';
 import type { Opponent } from './launch.js';
+import type { GameStore, SavedGame } from './saved.js';
 import { OfflineGame } from './session.svelte.js';
 import { SHELF } from './shelf.js';
 
 beforeAll(() => loadEngine());
+
+/** Keeps every save, cloned the way IndexedDB clones it. */
+class FakeStore implements GameStore {
+	saves: SavedGame[] = [];
+
+	get last(): SavedGame {
+		return this.saves.at(-1)!;
+	}
+
+	async save(game: SavedGame) {
+		this.saves.push(structuredClone(game));
+	}
+}
+
+const hotseat = (store = new FakeStore()) =>
+	new OfflineGame(SHELF[0], { kind: 'hotseat' }, { store });
 
 /** Cells written as engine digit pairs: `"42"` is Space 4, then Space 2. */
 const cells = (moves: string): Cell[] =>
@@ -14,8 +31,8 @@ const cells = (moves: string): Cell[] =>
 /** X takes Local boards 0, 1 and 2, each with a row, while O sends X wherever it needs to go. */
 const TOP_ROW = '03 30 04 40 05 51 13 31 14 41 15 52 26 62 27 72 28';
 
-const after = (moves: string) => {
-	const session = new OfflineGame(SHELF[0], { kind: 'hotseat' });
+const after = (moves: string, store = new FakeStore()) => {
+	const session = hotseat(store);
 	for (const cell of cells(moves)) session.play(cell);
 	return session;
 };
@@ -77,14 +94,14 @@ describe('a hot-seat game', () => {
 
 describe('the opponent and the variant', () => {
 	it('names the seats for pass and play, and for the computer', () => {
-		expect(new OfflineGame(SHELF[0], { kind: 'hotseat' }).seats).toEqual({
+		expect(hotseat().seats).toEqual({
 			X: { name: 'Player 1', detail: null },
 			O: { name: 'Player 2', detail: null }
 		});
 		const computer = new OfflineGame(
 			SHELF[0],
 			{ kind: 'computer', level: 4, seat: 'O' },
-			{ computer: new FakeComputer() }
+			{ computer: new FakeComputer(), store: new FakeStore() }
 		);
 		expect(computer.seats).toEqual({
 			X: { name: 'Computer', detail: 'Level 4' },
@@ -94,7 +111,7 @@ describe('the opponent and the variant', () => {
 
 	it('plays the variant it was given, and restarts it', () => {
 		const tictacku = SHELF.find((preset) => preset.name === 'Tic-Tac-Ku')!;
-		const session = new OfflineGame(tictacku, { kind: 'hotseat' });
+		const session = new OfflineGame(tictacku, { kind: 'hotseat' }, { store: new FakeStore() });
 		for (const cell of cells('03 30 04 40 05')) session.play(cell);
 		expect(session.won).toEqual({ X: 1, O: 0 });
 		expect(session.end, 'first to 5, not 1').toBeNull();
@@ -134,8 +151,13 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const against = (seat: 'X' | 'O', pace = 0) => {
 	const computer = new FakeComputer();
+	const store = new FakeStore();
 	const opponent: Opponent = { kind: 'computer', level: 3, seat };
-	return { computer, session: new OfflineGame(SHELF[0], opponent, { computer, pace }) };
+	return {
+		computer,
+		store,
+		session: new OfflineGame(SHELF[0], opponent, { computer, pace, store })
+	};
 };
 
 const [C42, C24, C40, C03] = cells('42 24 40 03');
@@ -256,5 +278,99 @@ describe('a game against the computer', () => {
 		session.dispose();
 		expect(computer.asks[0].signal.aborted).toBe(true);
 		expect(computer.disposed).toBe(true);
+	});
+});
+
+describe('saving and resuming', () => {
+	it('saves from the first move, after every change', () => {
+		const store = new FakeStore();
+		const session = hotseat(store);
+		expect(store.saves, 'nothing to keep yet').toHaveLength(0);
+		expect(session.stored).toBe(false);
+		session.play(C42);
+		expect(session.stored).toBe(true);
+		expect(store.last).toMatchObject({
+			id: session.id,
+			record: { moves: [C42] },
+			variant: { name: 'Standard', code: 'std' },
+			opponent: { kind: 'hotseat' },
+			toMove: 'O',
+			result: null,
+			plies: 1
+		});
+		session.play(C24);
+		session.undo();
+		expect(store.saves.map((saved) => saved.record.moves)).toEqual([[C42], [C42, C24], [C42]]);
+		session.resign();
+		expect(store.last).toMatchObject({
+			resigned: 'O',
+			toMove: null,
+			result: 'O resigned. X wins.'
+		});
+		expect(new Set(store.saves.map((saved) => saved.id)).size, 'one game').toBe(1);
+		expect(store.last.started).toBe(store.saves[0].started);
+	});
+
+	it('counts the computer’s opening move as the first', async () => {
+		const { computer, store, session } = against('O');
+		expect(store.saves).toHaveLength(0);
+		computer.asks[0].answer(C42);
+		await settle();
+		expect(session.stored).toBe(true);
+		expect(store.last.record.moves).toEqual([C42]);
+	});
+
+	it('restarts as a new game, unsaved until its first move', () => {
+		const store = new FakeStore();
+		const session = after('42', store);
+		const first = session.id;
+		session.restart();
+		expect(session.id).not.toBe(first);
+		expect(session.stored).toBe(false);
+		expect(store.saves).toHaveLength(1);
+		session.play(C40);
+		expect(store.last.id).toBe(session.id);
+	});
+
+	it('resumes where the game stopped, with its move list and notes', () => {
+		const store = new FakeStore();
+		const session = after('03 30 04 40 05 50', store);
+		const resumed = OfflineGame.resume(store.last, { store });
+		expect(resumed.id).toBe(session.id);
+		expect(resumed.stored).toBe(true);
+		expect(resumed.moves).toEqual(session.moves);
+		expect(resumed.view).toEqual(session.view);
+		expect(resumed.status).toEqual(session.status);
+		resumed.play(C24);
+		expect(store.last.id, 'still the same game').toBe(session.id);
+		expect(store.last.started).toBe(store.saves[0].started);
+	});
+
+	it('resumes a resignation as finished', () => {
+		const store = new FakeStore();
+		after('42', store).resign();
+		const resumed = OfflineGame.resume(store.last, { store });
+		expect(resumed.end).toEqual({ resigned: 'O' });
+		expect(resumed.canUndo).toBe(false);
+	});
+
+	it('resumes against the computer, which answers if it is to move', async () => {
+		const { store, session } = against('X');
+		session.play(C42);
+		session.dispose();
+		const computer = new FakeComputer();
+		const resumed = OfflineGame.resume(store.last, { computer, pace: 0, store });
+		expect(resumed.thinking).toBe(true);
+		expect(computer.asks[0].record.moves).toEqual([C42]);
+		computer.asks[0].answer(C24);
+		await settle();
+		expect(resumed.moves.map((move) => move.player)).toEqual(['X', 'O']);
+	});
+
+	it('refuses a saved game the rules don’t accept', () => {
+		const store = new FakeStore();
+		after('42', store);
+		const broken = { ...store.last, record: { ...store.last.record, moves: [0, 0] } };
+		expect(() => OfflineGame.resume(broken, { store })).toThrow('Its move 2 isn’t legal.');
 	});
 });

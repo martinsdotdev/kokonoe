@@ -1,7 +1,8 @@
 /**
- * What game `/play` starts, carried in its URL so a reload restarts the same game:
- * `?rules=<Ruleset code>` for pass and play, plus `&vs=computer&level=N&seat=X|O` against the
- * computer. The New game sheet and Home write these links; `/play` reads them.
+ * What game `/play` shows, carried in its URL. A new game is `?rules=<Ruleset code>` for pass and
+ * play, plus `&vs=computer&level=N&seat=X|O` against the computer; the New game sheet and Home
+ * write these links. Once a game is saved, its address becomes `?game=<id>`, so a reload resumes
+ * it.
  */
 import type { Player } from '#lib/engine.js';
 
@@ -31,7 +32,14 @@ export const playQuery = ({ code, opponent }: Launch): `?${string}` => {
 	return `?${params}`;
 };
 
-/** The game a `/play` URL asks for, or what's wrong with it. */
+/** The query string of `/play` for the saved game `id`. */
+export const gameQuery = (id: string): `?${string}` => `?${new URLSearchParams({ game: id })}`;
+
+/** Who the game is against, for headers and lists: "vs Computer · Level 3", "Pass and play". */
+export const againstLabel = (opponent: Opponent): string =>
+	opponent.kind === 'computer' ? `vs Computer · Level ${opponent.level}` : 'Pass and play';
+
+/** The new game a `/play` URL asks for, or what's wrong with it. */
 export const readLaunch = (params: Pick<URLSearchParams, 'get'>): Launch | { error: string } => {
 	// A `+` typed into a query reads back as a space, and a Ruleset code never holds one.
 	const code = (params.get('rules') ?? 'std').replaceAll(' ', '+');

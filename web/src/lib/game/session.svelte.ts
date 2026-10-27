@@ -11,7 +11,9 @@ import {
 import { WorkerComputer, type Computer } from './computer.js';
 import type { Level, Opponent } from './launch.js';
 import { boardLabel, notation } from './notation.js';
-import type { End } from './result.js';
+import { resultText, type End } from './result.js';
+import { rulesetCode } from './rules.js';
+import { browserStore, type GameStore, type SavedGame } from './saved.js';
 import { boardView, type BoardView } from './view.js';
 
 /** One row of the move list. */
@@ -93,7 +95,12 @@ export interface Options {
 	computer?: Computer;
 	/** The least time between the player's move and the computer's, in milliseconds. */
 	pace?: number;
+	/** Where the game keeps itself: IndexedDB unless a test brings its own. */
+	store?: GameStore;
 }
+
+/** The message for a saved game the rules no longer accept. */
+const unplayable = (index: number) => `Its move ${index + 1} isn’t legal.`;
 
 const dealt = (game: Game): Move[] =>
 	game.opening().map((cell, i) => ({
@@ -113,6 +120,9 @@ const dealt = (game: Game): Move[] =>
  * Against the computer it asks for a move whenever the computer is to move, and plays the answer
  * no sooner than the pace allows. Undo, Resign, `restart` and `dispose` abort a pending request,
  * so an answer that arrives later plays nothing.
+ *
+ * From its first move, by either side, it saves itself after every change, so `resume` can
+ * rebuild it after a reload.
  */
 export class OfflineGame {
 	readonly variant: Variant;
@@ -121,6 +131,9 @@ export class OfflineGame {
 	/** The player's seat against the computer, null when passing and playing. */
 	readonly human: Player | null;
 	#game: Game;
+	#store: GameStore;
+	/** When the first save happened, in epoch milliseconds. */
+	#started: number | null = null;
 	/** The computer and its Level, in a game against it. */
 	#against: { computer: Computer; level: Level } | null;
 	#pace: number;
@@ -137,8 +150,24 @@ export class OfflineGame {
 	resigned: Player | null = $state.raw(null);
 	/** The Local board to flash, with a tick so the same board can flash twice running. */
 	flash: { space: number; tick: number } | null = $state.raw(null);
+	/** The game's id in the store, and its address once `stored`. A restart gives a new one. */
+	id: string = $state.raw(crypto.randomUUID());
+	/** The game has been saved: it had a move. */
+	stored = $state.raw(false);
 
-	constructor(variant: Variant, opponent: Opponent, options: Options = {}) {
+	/**
+	 * Continues a saved game: its Record replayed move by move, so the move list has its notes.
+	 * Throws when the rules no longer accept the Record.
+	 */
+	static resume(saved: SavedGame, options: Options = {}): OfflineGame {
+		const opened = Game.open(saved.record);
+		if (!(opened instanceof Game)) throw new Error(unplayable(opened.index));
+		opened.free();
+		const variant = { name: saved.variant.name, ruleset: saved.record.ruleset };
+		return new OfflineGame(variant, saved.opponent, options, saved);
+	}
+
+	constructor(variant: Variant, opponent: Opponent, options: Options = {}, saved?: SavedGame) {
 		this.variant = variant;
 		this.opponent = opponent;
 		this.seats = seats(opponent);
@@ -148,11 +177,21 @@ export class OfflineGame {
 				? { computer: options.computer ?? new WorkerComputer(), level: opponent.level }
 				: null;
 		this.#pace = options.pace ?? PACE_MS;
-		this.#game = new Game(variant.ruleset, newSeed());
+		this.#store = options.store ?? browserStore;
+		this.#game = new Game(variant.ruleset, saved?.record.seed ?? newSeed());
 		this.view = $state.raw(boardView(this.#game));
 		this.status = $state.raw(this.#game.status());
 		this.moves = $state.raw(dealt(this.#game));
 		this.won = $state.raw(this.#counts());
+		if (saved) {
+			for (const cell of saved.record.moves) {
+				if (!this.#apply(cell)) throw new Error(unplayable(this.moves.length));
+			}
+			this.id = saved.id;
+			this.resigned = saved.resigned;
+			this.stored = true;
+			this.#started = saved.started;
+		}
 		this.#ask();
 	}
 
@@ -213,6 +252,7 @@ export class OfflineGame {
 			this.moves = this.moves.slice(0, -1);
 		} while (this.human && undone?.player !== this.human);
 		this.#refresh();
+		this.#save();
 	}
 
 	/** The player to move gives up, or against the computer the player, even on its turn. */
@@ -221,13 +261,17 @@ export class OfflineGame {
 		if (!player) return;
 		this.#cancel();
 		this.resigned = player;
+		this.#save();
 	}
 
-	/** A fresh game of the same variant and opponent, with a new Seed. */
+	/** A fresh game of the same variant and opponent, with a new Seed and a new id. */
 	restart() {
 		this.#cancel();
 		this.#game.free();
 		this.#game = new Game(this.variant.ruleset, newSeed());
+		this.id = crypto.randomUUID();
+		this.stored = false;
+		this.#started = null;
 		this.resigned = null;
 		this.moves = dealt(this.#game);
 		this.#flash(null);
@@ -249,19 +293,50 @@ export class OfflineGame {
 	}
 
 	#play(cell: Cell) {
+		if (!this.#apply(cell)) return;
+		this.#save();
+		this.#ask();
+	}
+
+	/** Plays `cell` for the side to move and lists it, or flashes the Board a refusal names. */
+	#apply(cell: Cell): boolean {
 		const player = this.toMove;
-		if (this.end || !player) return;
+		if (this.end || !player) return false;
 		const before = this.view;
 		const result = this.#game.play(this.#game.ply(), cell);
-		if (typeof result === 'string') return;
-		if ('Now' in result) {
-			this.#refresh();
-			const move = { n: this.moves.length + 1, player, notation: notation(cell, 2), dealt: false };
-			this.moves = [...this.moves, { ...move, note: note(before, this.view, cell) }];
-			this.#ask();
-		} else if ('Illegal' in result) {
-			this.#flash(named(result.Illegal));
+		if (typeof result === 'string' || !('Now' in result)) {
+			if (typeof result !== 'string' && 'Illegal' in result) this.#flash(named(result.Illegal));
+			return false;
 		}
+		this.#refresh();
+		const move = { n: this.moves.length + 1, player, notation: notation(cell, 2), dealt: false };
+		this.moves = [...this.moves, { ...move, note: note(before, this.view, cell) }];
+		return true;
+	}
+
+	/** Saves the game, from its first move on. A failed save costs the game nothing now. */
+	#save() {
+		if (!this.stored && this.moves.every((move) => move.dealt)) return;
+		this.stored = true;
+		const updated = Date.now();
+		this.#started ??= updated;
+		const end = this.end;
+		const saved: SavedGame = {
+			id: this.id,
+			record: this.#game.record(),
+			variant: { name: this.variant.name, code: rulesetCode(this.variant.ruleset) },
+			opponent: this.opponent,
+			resigned: this.resigned,
+			started: this.#started,
+			updated,
+			view: this.view,
+			toMove: end ? null : this.toMove,
+			result: end ? resultText(end, this.variant.ruleset, this.won) : null,
+			plies: this.moves.length
+		};
+		this.#store.save(saved).catch((error: unknown) => {
+			console.error('The game couldn’t be saved.', error);
+		});
 	}
 
 	/** Asks the computer for its move when it's to move, and plays the answer. */

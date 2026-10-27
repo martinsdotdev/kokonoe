@@ -38,7 +38,7 @@ pub use ruleset::{
 pub use search::{Choice, Level, think};
 
 /// Bumped whenever the same Record could replay to a different [`State`]: a rules fix, a new
-/// opening generator, or a new legal-move order. It is stored beside every serialized Record, so
-/// a client and a server on different releases detect the skew instead of silently disagreeing
-/// about a game.
+/// opening generator, or a new legal-move order (`tests/openings.rs` pins both). It is stored
+/// beside every serialized Record, so a client and a server on different releases detect the
+/// skew instead of silently disagreeing about a game.
 pub const RULES_VERSION: u32 = 1;

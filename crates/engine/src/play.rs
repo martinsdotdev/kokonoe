@@ -98,7 +98,8 @@ impl Game {
         };
         let mut opening = Vec::new();
         for _ in 0..plies {
-            // FirstTo(1) can end the game inside the opening: X can win a Local board on ply 5.
+            // FirstTo(1) can end the game inside the opening: X can win a Local board on its third
+            // mark, the fifth ply.
             let Status::ToMove { moves, .. } = state.status else {
                 break;
             };
@@ -501,8 +502,9 @@ pub enum Sent {
 
 /// The legal Cells of one turn. Never empty, and iterated in ascending address order.
 ///
-/// The order is a seam invariant every representation must honour, because the random opening
-/// picks by position in it. Opaque, so the bitset can change; today it is one bit per Cell.
+/// The order is a seam invariant every representation must honour (`BoardRepr::legal_in`),
+/// because the random opening picks by position in it. Opaque, so the bitset can change; today
+/// it is one bit per Cell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LegalMoves {
     depth: Depth,

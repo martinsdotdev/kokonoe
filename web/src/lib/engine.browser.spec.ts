@@ -156,7 +156,9 @@ describe('a Standard game through the bindings', () => {
 		const rules: Ruleset = { ...STANDARD, opening: { Random: 4 } };
 		const game = new Game(rules, SEED);
 		const opening = game.opening();
-		expect(opening).toHaveLength(4);
+		// The engine's pinned vector for Seed 0x5eed00 (crates/engine/tests/openings.rs), so the
+		// hex Seed reads as the same u64 on both sides.
+		expect(opening).toEqual(cells('10 08 82 20'));
 		expect(game.ply()).toBe(4);
 		expect(game.record().moves).toEqual([]);
 		expect(new Game(rules, SEED).opening()).toEqual(opening);

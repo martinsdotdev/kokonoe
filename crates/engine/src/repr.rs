@@ -35,6 +35,10 @@ pub(crate) trait BoardRepr: Copy + Eq {
     /// The empty Cells inside `scope` that may take a move, or `None` if there are none. With
     /// continuation off, no Cell beneath a Decided Board qualifies, whether that Board is inside
     /// `scope`, is `scope`, or is above it.
+    ///
+    /// A seam invariant: whatever the representation, the moves iterate in ascending Cell index.
+    /// A Random opening deals by position in this list, so another order would deal different
+    /// openings from the same Seeds and needs a new `RULES_VERSION`. `tests/openings.rs` pins it.
     fn legal_in(&self, scope: Board, continuation: Continuation) -> Option<LegalMoves>;
 }
 

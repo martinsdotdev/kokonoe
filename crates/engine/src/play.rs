@@ -526,6 +526,18 @@ impl LegalMoves {
             .sum()
     }
 
+    /// These moves without `cell`. `None` when `cell` was the only one left.
+    pub(crate) fn without(self, cell: Cell) -> Option<LegalMoves> {
+        let mut bits = self.bits;
+        let index = cell.index();
+        if cell.depth() == self.depth
+            && let Some(word) = bits.get_mut(usize::from(index / 64))
+        {
+            *word &= !(1 << (index % 64));
+        }
+        LegalMoves::from_bits(self.depth, bits)
+    }
+
     pub fn contains(&self, cell: Cell) -> bool {
         let index = cell.index();
         cell.depth() == self.depth

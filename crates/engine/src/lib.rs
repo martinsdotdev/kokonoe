@@ -1,4 +1,4 @@
-//! The rules of Kokonoe: Rulesets, play, and Records.
+//! The rules of Kokonoe: Rulesets, play, and Records, and the computer opponent's search.
 //!
 //! Pure and `no_std`, so the same crate runs natively on the server and as WASM in the
 //! browser and the AI Worker.
@@ -23,6 +23,7 @@ mod play;
 mod repr;
 mod rng;
 mod ruleset;
+mod search;
 
 pub use address::{Board, Cell, Child, Space, Spaces};
 pub use error::{IllegalMove, ParseError, PlayError, ReplayError};
@@ -34,6 +35,7 @@ pub use ruleset::{
     Continuation, Depth, DrawnOwner, Fallback, Goal, Objective, Opening, Preset, RandomPlies,
     Ruleset,
 };
+pub use search::{Choice, Level, think};
 
 /// Bumped whenever the same Record could replay to a different [`State`]: a rules fix, a new
 /// opening generator, or a new legal-move order. It is stored beside every serialized Record, so

@@ -156,6 +156,47 @@ export class Game {
 if (Symbol.dispose) Game.prototype[Symbol.dispose] = Game.prototype.free;
 
 /**
+ * A Cell in Notation: `5·5` at depth 2, `5·1·8` at depth 3.
+ * @param {Cell} cell
+ * @param {2 | 3} depth
+ * @returns {string}
+ */
+export function notation(cell, depth) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ret = wasm.notation(cell, depth);
+        var ptr1 = ret[0];
+        var len1 = ret[1];
+        if (ret[3]) {
+            ptr1 = 0; len1 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred2_0 = ptr1;
+        deferred2_1 = len1;
+        return getStringFromWasm0(ptr1, len1);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * The Ruleset a code names. A code with the wrong spelling throws the reason, since codes
+ * arrive in links people type.
+ * @param {string} code
+ * @returns {Ruleset}
+ */
+export function parseRulesetCode(code) {
+    const ptr0 = passStringToWasm0(code, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parseRulesetCode(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * The five Presets, Standard first.
  * @returns {Preset[]}
  */
@@ -164,6 +205,30 @@ export function presets() {
     var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v1;
+}
+
+/**
+ * The Ruleset code of spec §4.2: `std`, or the settings that differ from Standard.
+ * @param {Ruleset} ruleset
+ * @returns {string}
+ */
+export function rulesetCode(ruleset) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ret = wasm.rulesetCode(ruleset);
+        var ptr1 = ret[0];
+        var len1 = ret[1];
+        if (ret[3]) {
+            ptr1 = 0; len1 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred2_0 = ptr1;
+        deferred2_1 = len1;
+        return getStringFromWasm0(ptr1, len1);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
 }
 
 /**

@@ -1,7 +1,8 @@
 /**
  * Notation for people (spec §4.1): a Cell's or Board's path of Spaces from the Global board down,
- * each Space plus 1, joined by `·`. `5·5` is the centre Cell of the centre Local board. Display
- * only: KOK-34 adds the engine's parser for text files.
+ * each Space plus 1, joined by `·`. `5·5` is the centre Cell of the centre Local board. The engine
+ * owns Notation; this copy formats it on pages that load no engine, and
+ * `encodings.browser.spec.ts` holds it to the engine's for every Cell.
  */
 import type { Board, Cell } from '#lib/engine.js';
 

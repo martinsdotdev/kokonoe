@@ -152,9 +152,25 @@ export class Game {
 }
 
 /**
+ * A Cell in Notation: `5·5` at depth 2, `5·1·8` at depth 3.
+ */
+export function notation(cell: Cell, depth: 2 | 3): string;
+
+/**
+ * The Ruleset a code names. A code with the wrong spelling throws the reason, since codes
+ * arrive in links people type.
+ */
+export function parseRulesetCode(code: string): Ruleset;
+
+/**
  * The five Presets, Standard first.
  */
 export function presets(): Preset[];
+
+/**
+ * The Ruleset code of spec §4.2: `std`, or the settings that differ from Standard.
+ */
+export function rulesetCode(ruleset: Ruleset): string;
 
 /**
  * The computer's move in the game `record` leads to, at `level` 1 to 8, searched from `seed`
@@ -182,7 +198,10 @@ export interface InitOutput {
     readonly game_status: (a: number) => any;
     readonly game_undo: (a: number) => any;
     readonly game_wonCount: (a: number, b: any) => [number, number, number];
+    readonly notation: (a: any, b: number) => [number, number, number, number];
+    readonly parseRulesetCode: (a: number, b: number) => [number, number, number];
     readonly presets: () => [number, number];
+    readonly rulesetCode: (a: any) => [number, number, number, number];
     readonly think: (a: any, b: number, c: any) => [number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

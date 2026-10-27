@@ -1,0 +1,38 @@
+import { expect, test, type Page } from '@playwright/test';
+
+const cell = (page: Page, notation: string) =>
+	page.getByRole('button', { name: `Cell ${notation}`, exact: true });
+
+const marked = (page: Page) => page.getByRole('button', { name: /^Cell \S+, [XO]$/ });
+
+test('the computer answers the player, and undo takes back both moves', async ({ page }) => {
+	const wasm: string[] = [];
+	page.on('request', (request) => {
+		if (request.url().endsWith('.wasm')) wasm.push(request.url());
+	});
+	await page.goto('/play?vs=computer&level=1&seat=X');
+	await cell(page, '5·5').click();
+	await expect(page.getByText('Level 1 · Thinking…')).toBeVisible();
+	await expect(marked(page)).toHaveCount(2);
+	await expect(page.getByText('Level 1 · Waiting')).toBeVisible();
+	expect(wasm, 'the Worker gets the page’s compiled module').toHaveLength(1);
+	await page.getByRole('button', { name: 'Undo' }).click();
+	await expect(marked(page)).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Undo' })).toBeDisabled();
+});
+
+test('the computer opens when it sits on X', async ({ page }) => {
+	await page.goto('/play?vs=computer&level=2&seat=O');
+	await expect(page.getByRole('button', { name: /^Cell \S+, X$/ })).toHaveCount(1);
+	await expect(page.getByRole('button', { name: 'Undo' })).toBeDisabled();
+	await expect(page.getByText('You').locator('..')).toContainText('To move');
+});
+
+test('resigning against the computer resigns for the player', async ({ page }) => {
+	await page.goto('/play?vs=computer&level=1&seat=X');
+	await cell(page, '5·5').click();
+	await page.getByRole('button', { name: 'Resign' }).click();
+	await page.getByRole('button', { name: 'Yes, resign' }).click();
+	await expect(page.getByRole('heading', { name: 'X resigned. O wins.' })).toBeVisible();
+	await expect(marked(page), 'the search was stopped').toHaveCount(1);
+});

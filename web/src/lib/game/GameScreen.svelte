@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import type { Player } from '#lib/engine.js';
 	import Board from './Board.svelte';
 	import GameControls from './GameControls.svelte';
 	import MoveList from './MoveList.svelte';
@@ -26,6 +27,14 @@
 	const counted = $derived(
 		variant.ruleset.objective !== 'Line' || variant.ruleset.fallback === 'MostWon'
 	);
+
+	/** What the computer is doing on its move, for its player bar. */
+	const doing = (player: Player) =>
+		session.computerToMove && session.toMove === player
+			? session.stuck
+				? 'Couldn’t move'
+				: 'Thinking…'
+			: null;
 </script>
 
 <div class="min-h-svh">
@@ -68,11 +77,24 @@
 				aria-label="Players and turn"
 				class="flex min-w-0 flex-[1_1_260px] flex-col gap-3.5 lg:max-w-80"
 			>
-				<PlayerBar player="X" seat={session.seats.X} toMove={session.toMove === 'X'} />
-				<PlayerBar player="O" seat={session.seats.O} toMove={session.toMove === 'O'} />
-				{#if opponent.kind === 'computer'}
-					<p class="m-0 text-sm text-muted-foreground" data-computer-note>
-						The computer can’t play yet. Make its moves for it.
+				{#each ['X', 'O'] as const as player (player)}
+					<PlayerBar
+						{player}
+						seat={session.seats[player]}
+						toMove={session.toMove === player}
+						doing={doing(player)}
+					/>
+				{/each}
+				{#if session.stuck && !session.end}
+					<p class="m-0 flex flex-wrap items-center gap-3 text-sm" role="alert">
+						The computer couldn’t find its move.
+						<button
+							type="button"
+							class="min-h-11 rounded-md border-[1.5px] border-foreground bg-card px-4 font-semibold"
+							onclick={() => session.retry()}
+						>
+							Try again
+						</button>
 					</p>
 				{/if}
 				{#if counted}
@@ -90,7 +112,7 @@
 				<Board
 					view={session.view}
 					flash={session.flash}
-					disabled={session.end !== null}
+					disabled={session.end !== null || session.computerToMove}
 					onplay={(cell) => session.play(cell)}
 				/>
 			</section>
@@ -98,7 +120,7 @@
 				<MoveList moves={session.moves} />
 				<GameControls
 					canUndo={session.canUndo}
-					toMove={session.end ? null : session.toMove}
+					resigner={session.resigner}
 					onundo={() => session.undo()}
 					onresign={() => session.resign()}
 				/>

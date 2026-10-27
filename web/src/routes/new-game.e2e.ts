@@ -15,8 +15,10 @@ test('the sheet passes the variant, Level and seat to the game', async ({ page }
 	await expect(page).toHaveURL(/\/play\?rules=cont%2Bfirst5%2Bmost&vs=computer&level=4&seat=O$/);
 	await expect(page.getByRole('banner').getByText('vs Computer · Level 4')).toBeVisible();
 	await expect(page.locator('[data-variant]')).toHaveText('Tic-Tac-Ku');
-	await expect(page.getByText('Level 4 · To move'), 'the computer sits on X').toBeVisible();
-	await expect(page.locator('[data-computer-note]')).toBeVisible();
+	await expect(
+		page.getByRole('button', { name: /^Cell \S+, X$/ }),
+		'the computer sits on X, and opens'
+	).toHaveCount(1);
 	await expect(page.locator('[data-score]')).toHaveText('X 0 · O 0 · first to 5');
 	await expect(page.getByText('RULES · TIC-TAC-KU')).toBeVisible();
 });
@@ -36,7 +38,6 @@ test('pass and play needs no Level or seat', async ({ page }) => {
 	await page.getByRole('button', { name: 'Start game' }).click();
 	await expect(page).toHaveURL(/\/play\?rules=most$/);
 	await expect(page.locator('[data-score]')).toHaveText('X 0 · O 0 · most boards wins');
-	await expect(page.locator('[data-computer-note]')).toHaveCount(0);
 });
 
 test('Deep can’t be picked yet', async ({ page }) => {

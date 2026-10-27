@@ -2,8 +2,11 @@ import { appendFileSync } from 'node:fs';
 import { brotliCompressSync, constants } from 'node:zlib';
 import { expect, test } from '@playwright/test';
 
-/** The route of the game screen. A stub that loads the engine stands in until KOK-37. */
-const GAME_SCREEN = '/play';
+/**
+ * The game screen at its heaviest: against the computer, which opens as X, so the page also loads
+ * the computer's Worker.
+ */
+const GAME_SCREEN = '/play?vs=computer&level=1&seat=O';
 
 /** ADR-0001's startup budget for the game screen's JS plus WASM, in brotli bytes. */
 const BUDGET = 100_000;

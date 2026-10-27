@@ -36,3 +36,24 @@ test('resigning against the computer resigns for the player', async ({ page }) =
 	await expect(page.getByRole('heading', { name: 'X resigned. O wins.' })).toBeVisible();
 	await expect(marked(page), 'the search was stopped').toHaveCount(1);
 });
+
+test('leaving before the engine loads starts no computer', async ({ page }) => {
+	let release = () => {};
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/*.wasm', async (route) => {
+		await held;
+		await route.continue();
+	});
+	await page.goto('/new-game?vs=computer');
+	await page.getByRole('radio', { name: 'O', exact: true }).check();
+	await page.getByRole('button', { name: 'Start game' }).click();
+	await expect(page.getByText('Loading the engine…')).toBeVisible();
+	await page.goBack();
+	await expect(page).toHaveURL(/\/new-game/);
+	const loaded = page.waitForResponse((response) => response.url().endsWith('.wasm'));
+	release();
+	await loaded;
+	// Long enough for the engine to load and a session to start its Worker.
+	await page.waitForTimeout(500);
+	expect(page.workers()).toHaveLength(0);
+});

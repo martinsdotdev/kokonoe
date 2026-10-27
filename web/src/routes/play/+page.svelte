@@ -14,6 +14,8 @@
 
 	let session: OfflineGame | null = $state(null);
 	let problem: string | null = $state(null);
+	/** The page was left, perhaps before the engine loaded. */
+	let left = false;
 
 	const launch = readLaunch(page.url.searchParams);
 	const preset = 'error' in launch ? undefined : presetByCode(launch.code);
@@ -27,7 +29,10 @@
 	} else {
 		const { opponent } = launch;
 		loadEngine().then(
-			() => (session = new OfflineGame(preset, opponent)),
+			() => {
+				// A computer on X would start a search that nothing stops.
+				if (!left) session = new OfflineGame(preset, opponent);
+			},
 			(error: unknown) => {
 				// The page only says it failed, so say why where a developer can see it.
 				console.error('The engine failed to load.', error);
@@ -35,7 +40,10 @@
 			}
 		);
 	}
-	onDestroy(() => session?.dispose());
+	onDestroy(() => {
+		left = true;
+		session?.dispose();
+	});
 </script>
 
 {#if session}

@@ -33,6 +33,15 @@ test('the game screen loads the engine in the built app', async ({ page }) => {
 	expect((await wasm).headers()['content-type']).toBe('application/wasm');
 });
 
+test('the engine still loads from a host that sends the wrong type', async ({ page }) => {
+	await page.route('**/*.wasm', async (route) => {
+		const response = await route.fetch();
+		await route.fulfill({ response, contentType: 'application/octet-stream' });
+	});
+	await open(page);
+	await expect(page.getByText('Play anywhere.')).toBeVisible();
+});
+
 test('a Standard game plays to a line win, and then stays finished', async ({ page }) => {
 	await open(page);
 	await play(page, TOP_ROW);

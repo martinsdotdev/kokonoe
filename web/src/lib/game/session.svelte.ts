@@ -9,7 +9,7 @@ import {
 	type Status
 } from '#lib/engine.js';
 import { WorkerComputer, type Computer } from './computer.js';
-import type { Opponent } from './launch.js';
+import type { Level, Opponent } from './launch.js';
 import { boardLabel, notation } from './notation.js';
 import type { End } from './result.js';
 import { boardView, type BoardView } from './view.js';
@@ -78,10 +78,14 @@ const note = (before: BoardView, after: BoardView, cell: Cell): string => {
 const delay = (ms: number, signal: AbortSignal) =>
 	new Promise<void>((resolve, reject) => {
 		const timer = setTimeout(resolve, ms);
-		signal.addEventListener('abort', () => {
-			clearTimeout(timer);
-			reject(signal.reason);
-		});
+		signal.addEventListener(
+			'abort',
+			() => {
+				clearTimeout(timer);
+				reject(signal.reason);
+			},
+			{ once: true }
+		);
 	});
 
 export interface Options {
@@ -117,9 +121,13 @@ export class OfflineGame {
 	/** The player's seat against the computer, null when passing and playing. */
 	readonly human: Player | null;
 	#game: Game;
-	#computer: Computer | null;
+	/** The computer and its Level, in a game against it. */
+	#against: { computer: Computer; level: Level } | null;
 	#pace: number;
+	/** The pending request to the computer, to abort. */
 	#asking: AbortController | null = null;
+	/** What the computer is doing: nothing, searching for its move, or stuck after a failure. */
+	#phase: 'idle' | 'thinking' | 'stuck' = $state.raw('idle');
 	#flashTimer: ReturnType<typeof setTimeout> | undefined;
 
 	view: BoardView;
@@ -129,18 +137,16 @@ export class OfflineGame {
 	resigned: Player | null = $state.raw(null);
 	/** The Local board to flash, with a tick so the same board can flash twice running. */
 	flash: { space: number; tick: number } | null = $state.raw(null);
-	/** The computer is searching for its move. */
-	thinking = $state.raw(false);
-	/** The computer's last request failed, and `retry` asks again. */
-	stuck = $state.raw(false);
 
 	constructor(variant: Variant, opponent: Opponent, options: Options = {}) {
 		this.variant = variant;
 		this.opponent = opponent;
 		this.seats = seats(opponent);
 		this.human = opponent.kind === 'computer' ? opponent.seat : null;
-		this.#computer =
-			opponent.kind === 'computer' ? (options.computer ?? new WorkerComputer()) : null;
+		this.#against =
+			opponent.kind === 'computer'
+				? { computer: options.computer ?? new WorkerComputer(), level: opponent.level }
+				: null;
 		this.#pace = options.pace ?? PACE_MS;
 		this.#game = new Game(variant.ruleset, newSeed());
 		this.view = $state.raw(boardView(this.#game));
@@ -157,6 +163,16 @@ export class OfflineGame {
 
 	get toMove(): Player | null {
 		return 'ToMove' in this.status ? this.status.ToMove.player : null;
+	}
+
+	/** The computer is searching for its move. */
+	get thinking(): boolean {
+		return this.#phase === 'thinking';
+	}
+
+	/** The computer's last request failed, and `retry` asks again. */
+	get stuck(): boolean {
+		return this.#phase === 'stuck';
 	}
 
 	/** It's the computer's turn, so the Board takes no taps. */
@@ -190,7 +206,6 @@ export class OfflineGame {
 	undo() {
 		if (!this.canUndo) return;
 		this.#cancel();
-		this.stuck = false;
 		let undone: Move | undefined;
 		do {
 			undone = this.moves.at(-1);
@@ -214,7 +229,6 @@ export class OfflineGame {
 		this.#game.free();
 		this.#game = new Game(this.variant.ruleset, newSeed());
 		this.resigned = null;
-		this.stuck = false;
 		this.moves = dealt(this.#game);
 		this.#flash(null);
 		this.#refresh();
@@ -229,7 +243,7 @@ export class OfflineGame {
 	/** Stops the computer and frees the engine's memory. */
 	dispose() {
 		this.#cancel();
-		this.#computer?.dispose();
+		this.#against?.computer.dispose();
 		clearTimeout(this.#flashTimer);
 		this.#game.free();
 	}
@@ -252,36 +266,36 @@ export class OfflineGame {
 
 	/** Asks the computer for its move when it's to move, and plays the answer. */
 	async #ask() {
-		const computer = this.#computer;
-		if (!computer || this.opponent.kind !== 'computer' || this.end || !this.computerToMove) return;
+		const against = this.#against;
+		if (!against || this.end || !this.computerToMove) return;
 		const asking = new AbortController();
 		this.#asking = asking;
-		this.thinking = true;
-		this.stuck = false;
+		this.#phase = 'thinking';
 		try {
 			const [cell] = await Promise.all([
-				computer.think(this.#game.record(), this.opponent.level, asking.signal),
+				against.computer.think(this.#game.record(), against.level, asking.signal),
 				delay(this.#pace, asking.signal)
 			]);
 			if (this.#asking !== asking) return;
-			this.#asking = null;
-			this.thinking = false;
+			this.#settle('idle');
 			this.#play(cell);
 		} catch (error) {
 			if (this.#asking !== asking) return;
 			// The screen only says it failed, so say why where a developer can see it.
 			console.error('The computer couldn’t move.', error);
-			this.#asking = null;
-			this.thinking = false;
-			this.stuck = true;
+			this.#settle('stuck');
 		}
 	}
 
 	/** Aborts a pending request, so its answer plays nothing whenever it comes. */
 	#cancel() {
 		this.#asking?.abort();
+		this.#settle('idle');
+	}
+
+	#settle(phase: 'idle' | 'stuck') {
 		this.#asking = null;
-		this.thinking = false;
+		this.#phase = phase;
 	}
 
 	#refresh() {

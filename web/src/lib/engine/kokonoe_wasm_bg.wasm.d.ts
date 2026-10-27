@@ -16,6 +16,7 @@ export const game_status: (a: number) => any;
 export const game_undo: (a: number) => any;
 export const game_wonCount: (a: number, b: any) => [number, number, number];
 export const presets: () => [number, number];
+export const think: (a: any, b: number, c: any) => [number, number, number];
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_exn_store: (a: number) => void;

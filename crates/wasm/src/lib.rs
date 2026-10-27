@@ -1,7 +1,7 @@
 //! The engine's JavaScript bindings, the only crate that knows about the browser.
 //!
 //! One module serves the page and the AI Worker alike. [`Game`] wraps the engine's Game in WASM
-//! memory. The values it takes and returns are plain JavaScript values: [`types`] declares them
+//! memory, and [`think`] is the computer's search. The values it takes and returns are plain JavaScript values: [`types`] declares them
 //! for the `.d.ts` as Rust mirrors, [`convert`] maps the mirrors to and from the engine, and
 //! [`js`] builds and parses them. They cross as `Ts<T>`, a JS handle carrying its declared type,
 //! and are parsed inside each method, so a value of the wrong shape is an ordinary error rather
@@ -139,6 +139,23 @@ fn cells(cells: &[engine::Cell]) -> Vec<Ts<Cell>> {
         .iter()
         .map(|&cell| typed(Cell::from(cell).to_js()))
         .collect()
+}
+
+/// The computer's move in the game `record` leads to, at `level` 1 to 8, searched from `seed`
+/// (spec §6). For the AI Worker: one call per move, so the search never crosses into JavaScript
+/// except to read `Date.now` against the Level's time cap. A Level out of range, a Record the
+/// rules reject and a finished game all throw, since the game screen never asks for them.
+#[wasm_bindgen]
+pub fn think(record: Ts<Record>, level: u8, seed: Ts<Seed>) -> Result<Ts<Cell>, JsError> {
+    let record = engine::Record::try_from(js::parse_record(&record.js_value())?)?;
+    let level = engine::Level::try_from(level)?;
+    let seed = engine::Seed::try_from(&js::parse_seed(&seed.js_value())?)?;
+    let game = engine::Game::open(&record)?;
+    let start = js_sys::Date::now();
+    let elapsed_ms = || (js_sys::Date::now() - start) as u32;
+    let cell = engine::think(game.state(), level, seed.0, elapsed_ms)
+        .ok_or_else(|| JsError::new("the game is over"))?;
+    Ok(typed(Cell::from(cell).to_js()))
 }
 
 /// The five Presets, Standard first.

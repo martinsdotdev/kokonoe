@@ -164,6 +164,24 @@ export function presets() {
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v1;
 }
+
+/**
+ * The computer's move in the game `record` leads to, at `level` 1 to 8, searched from `seed`
+ * (spec §6). For the AI Worker: one call per move, so the search never crosses into JavaScript
+ * except to read `Date.now` against the Level's time cap. A Level out of range, a Record the
+ * rules reject and a finished game all throw, since the game screen never asks for them.
+ * @param {Record} record
+ * @param {number} level
+ * @param {Seed} seed
+ * @returns {Cell}
+ */
+export function think(record, level, seed) {
+    const ret = wasm.think(record, level, seed);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -178,10 +196,6 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_is_undefined_8865fb403f8fe9d8: function(arg0) {
             const ret = arg0 === undefined;
-            return ret;
-        },
-        __wbg___wbindgen_jsval_eq_02babf21faa37971: function(arg0, arg1) {
-            const ret = arg0 === arg1;
             return ret;
         },
         __wbg___wbindgen_number_get_2e0e7dee9f701a71: function(arg0, arg1) {
@@ -227,6 +241,10 @@ function __wbg_get_imports() {
         },
         __wbg_new_ee2291f50781bf1d: function() {
             const ret = new Array();
+            return ret;
+        },
+        __wbg_now_aa4ccb83129e9e55: function() {
+            const ret = Date.now();
             return ret;
         },
         __wbg_ownKeys_7f46b96dc7311fe8: function() { return handleError(function (arg0) {

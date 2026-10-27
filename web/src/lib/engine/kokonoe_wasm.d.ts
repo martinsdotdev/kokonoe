@@ -155,6 +155,14 @@ export class Game {
  */
 export function presets(): Preset[];
 
+/**
+ * The computer's move in the game `record` leads to, at `level` 1 to 8, searched from `seed`
+ * (spec §6). For the AI Worker: one call per move, so the search never crosses into JavaScript
+ * except to read `Date.now` against the Level's time cap. A Level out of range, a Record the
+ * rules reject and a finished game all throw, since the game screen never asks for them.
+ */
+export function think(record: Record, level: number, seed: Seed): Cell;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -174,6 +182,7 @@ export interface InitOutput {
     readonly game_undo: (a: number) => any;
     readonly game_wonCount: (a: number, b: any) => [number, number, number];
     readonly presets: () => [number, number];
+    readonly think: (a: any, b: number, c: any) => [number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

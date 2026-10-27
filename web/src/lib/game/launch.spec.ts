@@ -7,6 +7,10 @@ describe("a game's URL", () => {
 	it('defaults to Standard, passed and played', () => {
 		expect(read('')).toEqual({ code: 'std', opponent: { kind: 'hotseat' } });
 		expect(read('rules=most')).toEqual({ code: 'most', opponent: { kind: 'hotseat' } });
+		expect(read('rules=cont+first5+most'), 'a hand-typed +').toEqual({
+			code: 'cont+first5+most',
+			opponent: { kind: 'hotseat' }
+		});
 	});
 
 	it('names the computer with a Level and a seat, Level 3 and X by default', () => {

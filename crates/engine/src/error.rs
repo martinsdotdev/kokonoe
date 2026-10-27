@@ -20,6 +20,8 @@ pub enum ParseError {
     Goal(u8),
     /// Not 1 to 8.
     RandomPlies(u8),
+    /// Not 1 to 8.
+    Level(u8),
 }
 
 impl fmt::Display for ParseError {
@@ -31,6 +33,7 @@ impl fmt::Display for ParseError {
             ParseError::CellIndex(n) => write!(f, "cell index {n} is past the last Cell"),
             ParseError::Goal(n) => write!(f, "FirstTo({n}) is outside 1 to 9"),
             ParseError::RandomPlies(n) => write!(f, "Random({n}) is outside 1 to 8"),
+            ParseError::Level(n) => write!(f, "Level {n} is outside 1 to 8"),
         }
     }
 }

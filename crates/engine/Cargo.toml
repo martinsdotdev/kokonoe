@@ -5,5 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[dependencies]
+# The search's float math (ln, sqrt, powf), which core lacks without std.
+libm = { version = "0.2.16", default-features = false }
+
 [dev-dependencies]
 proptest = { version = "1.12", default-features = false, features = ["std"] }

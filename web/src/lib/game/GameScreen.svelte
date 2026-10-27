@@ -9,13 +9,23 @@
 	import MoveList from './MoveList.svelte';
 	import PlayerBar from './PlayerBar.svelte';
 	import ResultBanner from './ResultBanner.svelte';
+	import RulesCard from './RulesCard.svelte';
+	import Scoreboard from './Scoreboard.svelte';
 	import { resultText, winner } from './result.js';
-	import type { HotSeat } from './session.svelte.js';
+	import type { OfflineGame } from './session.svelte.js';
 	import TurnCard from './TurnCard.svelte';
 
-	let { session }: { session: HotSeat } = $props();
+	let { session }: { session: OfflineGame } = $props();
 
 	const played = $derived(session.moves.filter((move) => !move.dealt).length);
+	const opponent = $derived(session.opponent);
+	const variant = $derived(session.variant);
+	const against = $derived(
+		opponent.kind === 'computer' ? `vs Computer · Level ${opponent.level}` : 'Pass and play'
+	);
+	const counted = $derived(
+		variant.ruleset.objective !== 'Line' || variant.ruleset.fallback === 'MostWon'
+	);
 </script>
 
 <div class="min-h-svh">
@@ -26,10 +36,13 @@
 					href={resolve('/')}
 					class="font-display text-[26px] font-bold text-foreground no-underline">Kokonoe</a
 				>
-				<span class="rounded border-[1.5px] border-foreground px-2.5 py-0.5 font-mono text-[13px]">
-					Standard
+				<span
+					class="rounded border-[1.5px] border-foreground px-2.5 py-0.5 font-mono text-[13px]"
+					data-variant
+				>
+					{variant.name}
 				</span>
-				<span class="text-muted-foreground">Pass and play</span>
+				<span class="text-muted-foreground">{against}</span>
 			</div>
 			<a
 				href={resolve('/')}
@@ -41,10 +54,10 @@
 	</header>
 
 	<main class="mx-auto flex max-w-[1320px] flex-col gap-6 p-7">
-		<h1 class="sr-only">Standard, pass and play</h1>
+		<h1 class="sr-only">{variant.name}, {against}</h1>
 		{#if session.end}
 			<ResultBanner
-				headline={resultText(session.end, session.ruleset, session.won)}
+				headline={resultText(session.end, variant.ruleset, session.won)}
 				detail={`After ${played} ${played === 1 ? 'move' : 'moves'}.`}
 				winner={winner(session.end)}
 				onrestart={() => session.restart()}
@@ -55,8 +68,16 @@
 				aria-label="Players and turn"
 				class="flex min-w-0 flex-[1_1_260px] flex-col gap-3.5 lg:max-w-80"
 			>
-				<PlayerBar player="X" name="Player 1" toMove={session.toMove === 'X'} />
-				<PlayerBar player="O" name="Player 2" toMove={session.toMove === 'O'} />
+				<PlayerBar player="X" seat={session.seats.X} toMove={session.toMove === 'X'} />
+				<PlayerBar player="O" seat={session.seats.O} toMove={session.toMove === 'O'} />
+				{#if opponent.kind === 'computer'}
+					<p class="m-0 text-sm text-muted-foreground" data-computer-note>
+						The computer can’t play yet. Make its moves for it.
+					</p>
+				{/if}
+				{#if counted}
+					<Scoreboard won={session.won} ruleset={variant.ruleset} />
+				{/if}
 				{#if 'ToMove' in session.status}
 					<TurnCard
 						player={session.status.ToMove.player}
@@ -81,6 +102,7 @@
 					onundo={() => session.undo()}
 					onresign={() => session.resign()}
 				/>
+				<RulesCard {variant} />
 			</aside>
 		</div>
 	</main>

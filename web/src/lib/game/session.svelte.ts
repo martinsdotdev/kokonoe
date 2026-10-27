@@ -1,13 +1,14 @@
 import {
 	Game,
 	newSeed,
-	presets,
 	type Board,
 	type Cell,
 	type IllegalMove,
 	type Player,
+	type Ruleset,
 	type Status
 } from '#lib/engine.js';
+import type { Opponent } from './launch.js';
 import { boardLabel, notation } from './notation.js';
 import type { End } from './result.js';
 import { boardView, type BoardView } from './view.js';
@@ -27,7 +28,27 @@ export interface Move {
 /** How long an illegal tap flashes the Board it names. */
 const FLASH_MS = 700;
 
-const standard = () => new Game(presets()[0].ruleset, newSeed());
+/** A Preset or Custom variant: the rules and what to call them. */
+export interface Variant {
+	name: string;
+	ruleset: Ruleset;
+}
+
+/** What a player bar says about a seat. */
+export interface Seat {
+	name: string;
+	/** "Level 3" for the computer. */
+	detail: string | null;
+}
+
+const seats = (opponent: Opponent): Record<Player, Seat> => {
+	if (opponent.kind === 'hotseat') {
+		return { X: { name: 'Player 1', detail: null }, O: { name: 'Player 2', detail: null } };
+	}
+	const you: Seat = { name: 'You', detail: null };
+	const computer: Seat = { name: 'Computer', detail: `Level ${opponent.level}` };
+	return opponent.seat === 'X' ? { X: you, O: computer } : { X: computer, O: you };
+};
 
 /** The Local board an IllegalMove names, if it names one. */
 const named = (illegal: IllegalMove): number | null => {
@@ -59,32 +80,49 @@ const dealt = (game: Game): Move[] =>
 	}));
 
 /**
- * A Standard game passed between two players on one device. It owns the engine's Game and is
- * the one writer of what the screen shows: each action changes the engine, then reads it back.
- * A finished game stays finished: Undo and Resign stop, and only `restart` goes on.
+ * A game on this device: passed between two players, or against the computer. It owns the
+ * engine's Game and is the one writer of what the screen shows: each action changes the engine,
+ * then reads it back. A finished game stays finished: Undo and Resign stop, and only `restart`
+ * goes on. Until KOK-41 the computer's turns are played by hand.
  */
-export class HotSeat {
-	#game = standard();
+export class OfflineGame {
+	readonly variant: Variant;
+	readonly opponent: Opponent;
+	readonly seats: Record<Player, Seat>;
+	#game: Game;
 	#flashTimer: ReturnType<typeof setTimeout> | undefined;
 
-	readonly ruleset = this.#game.ruleset();
-	view: BoardView = $state.raw(boardView(this.#game));
-	status: Status = $state.raw(this.#game.status());
-	moves: Move[] = $state.raw(dealt(this.#game));
-	won: Record<Player, number> = $state.raw(this.#counts());
+	view: BoardView;
+	status: Status;
+	moves: Move[];
+	won: Record<Player, number>;
 	resigned: Player | null = $state.raw(null);
 	/** The Local board to flash, with a tick so the same board can flash twice running. */
 	flash: { space: number; tick: number } | null = $state.raw(null);
 
-	end: End | null = $derived(
-		this.resigned
-			? { resigned: this.resigned }
-			: 'Over' in this.status
-				? { outcome: this.status.Over }
-				: null
-	);
-	toMove: Player | null = $derived('ToMove' in this.status ? this.status.ToMove.player : null);
-	canUndo: boolean = $derived(this.end === null && this.moves.some((move) => !move.dealt));
+	constructor(variant: Variant, opponent: Opponent) {
+		this.variant = variant;
+		this.opponent = opponent;
+		this.seats = seats(opponent);
+		this.#game = new Game(variant.ruleset, newSeed());
+		this.view = $state.raw(boardView(this.#game));
+		this.status = $state.raw(this.#game.status());
+		this.moves = $state.raw(dealt(this.#game));
+		this.won = $state.raw(this.#counts());
+	}
+
+	get end(): End | null {
+		if (this.resigned) return { resigned: this.resigned };
+		return 'Over' in this.status ? { outcome: this.status.Over } : null;
+	}
+
+	get toMove(): Player | null {
+		return 'ToMove' in this.status ? this.status.ToMove.player : null;
+	}
+
+	get canUndo(): boolean {
+		return this.end === null && this.moves.some((move) => !move.dealt);
+	}
 
 	/** Plays `cell` for the player to move, or flashes the Board the refusal names. */
 	play(cell: Cell) {
@@ -115,10 +153,10 @@ export class HotSeat {
 		if (!this.end && this.toMove) this.resigned = this.toMove;
 	}
 
-	/** A fresh Standard game with a new Seed. */
+	/** A fresh game of the same variant and opponent, with a new Seed. */
 	restart() {
 		this.#game.free();
-		this.#game = standard();
+		this.#game = new Game(this.variant.ruleset, newSeed());
 		this.resigned = null;
 		this.moves = dealt(this.#game);
 		this.#flash(null);

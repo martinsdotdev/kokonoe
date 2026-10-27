@@ -84,3 +84,10 @@ test('resigning asks first, then ends the game', async ({ page }) => {
 	await expect(page.getByRole('heading', { name: 'O resigned. X wins.' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Undo' })).toBeDisabled();
 });
+
+test('a link naming no variant says so, and points to a new game', async ({ page }) => {
+	await page.goto('/play?rules=nonsense');
+	await expect(page.getByText('Kokonoe doesn’t know the variant “nonsense”.')).toBeVisible();
+	await page.getByRole('link', { name: 'Choose a new game' }).click();
+	await expect(page).toHaveURL(/\/new-game$/);
+});

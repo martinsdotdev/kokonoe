@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadEngine, type Cell } from '#lib/engine.js';
-import { HotSeat } from './session.svelte.js';
+import { OfflineGame } from './session.svelte.js';
+import { SHELF } from './shelf.js';
 
 beforeAll(() => loadEngine());
 
@@ -12,7 +13,7 @@ const cells = (moves: string): Cell[] =>
 const TOP_ROW = '03 30 04 40 05 51 13 31 14 41 15 52 26 62 27 72 28';
 
 const after = (moves: string) => {
-	const session = new HotSeat();
+	const session = new OfflineGame(SHELF[0], { kind: 'hotseat' });
 	for (const cell of cells(moves)) session.play(cell);
 	return session;
 };
@@ -69,5 +70,30 @@ describe('a hot-seat game', () => {
 		expect(session.end).toBeNull();
 		expect(session.moves).toEqual([]);
 		expect(session.toMove).toBe('X');
+	});
+});
+
+describe('the opponent and the variant', () => {
+	it('names the seats for pass and play, and for the computer', () => {
+		expect(new OfflineGame(SHELF[0], { kind: 'hotseat' }).seats).toEqual({
+			X: { name: 'Player 1', detail: null },
+			O: { name: 'Player 2', detail: null }
+		});
+		const computer = new OfflineGame(SHELF[0], { kind: 'computer', level: 4, seat: 'O' });
+		expect(computer.seats).toEqual({
+			X: { name: 'Computer', detail: 'Level 4' },
+			O: { name: 'You', detail: null }
+		});
+	});
+
+	it('plays the variant it was given, and restarts it', () => {
+		const tictacku = SHELF.find((preset) => preset.name === 'Tic-Tac-Ku')!;
+		const session = new OfflineGame(tictacku, { kind: 'hotseat' });
+		for (const cell of cells('03 30 04 40 05')) session.play(cell);
+		expect(session.won).toEqual({ X: 1, O: 0 });
+		expect(session.end, 'first to 5, not 1').toBeNull();
+		session.restart();
+		expect(session.variant.name).toBe('Tic-Tac-Ku');
+		expect(session.won).toEqual({ X: 0, O: 0 });
 	});
 });

@@ -21,37 +21,41 @@ export class WorkerComputer implements Computer {
 
 	async think(record: Record, level: number, signal: AbortSignal): Promise<Cell> {
 		const engine = await compiledEngine();
-		return new Promise((resolve, reject) => {
-			if (signal.aborted) return reject(signal.reason);
-			const worker = (this.#worker ??= new Worker(
-				new URL('./computer.worker.ts', import.meta.url),
-				{ type: 'module' }
-			));
-			const settle = () => {
-				worker.removeEventListener('message', onmessage);
-				worker.removeEventListener('error', onerror);
-				signal.removeEventListener('abort', onabort);
-			};
-			const onmessage = ({ data }: MessageEvent<Answer>) => {
-				settle();
-				if ('cell' in data) resolve(data.cell);
-				else reject(new Error(data.error));
-			};
-			const onerror = (event: ErrorEvent) => {
-				settle();
-				this.#stop();
-				reject(new Error(event.message || 'The computer’s Worker failed to start.'));
-			};
-			const onabort = () => {
-				settle();
-				this.#stop();
-				reject(signal.reason);
-			};
-			worker.addEventListener('message', onmessage);
-			worker.addEventListener('error', onerror);
-			signal.addEventListener('abort', onabort);
-			worker.postMessage({ record, level, seed: newSeed(), engine } satisfies Ask);
-		});
+		signal.throwIfAborted();
+		const worker = (this.#worker ??= new Worker(new URL('./computer.worker.ts', import.meta.url), {
+			type: 'module'
+		}));
+		// Every listener goes when the request settles.
+		const listening = new AbortController();
+		const on = { signal: listening.signal };
+		try {
+			return await new Promise<Cell>((resolve, reject) => {
+				const stop = (error: unknown) => {
+					this.#stop();
+					reject(error);
+				};
+				worker.addEventListener(
+					'message',
+					({ data }: MessageEvent<Answer>) =>
+						'cell' in data ? resolve(data.cell) : reject(new Error(data.error)),
+					on
+				);
+				worker.addEventListener(
+					'messageerror',
+					() => reject(new Error('The computer’s answer couldn’t be read.')),
+					on
+				);
+				worker.addEventListener(
+					'error',
+					(event) => stop(new Error(event.message || 'The computer’s Worker failed to start.')),
+					on
+				);
+				signal.addEventListener('abort', () => stop(signal.reason), on);
+				worker.postMessage({ record, level, seed: newSeed(), engine } satisfies Ask);
+			});
+		} finally {
+			listening.abort();
+		}
 	}
 
 	dispose() {

@@ -25,9 +25,15 @@ const retrying =
  * compile a second time.
  */
 export const compiledEngine = (): Promise<WebAssembly.Module> =>
-	(compiling ??= WebAssembly.compileStreaming(fetch(url)).catch(
-		retrying(() => (compiling = undefined))
-	));
+	(compiling ??= WebAssembly.compileStreaming(fetch(url))
+		.catch(async (error: unknown) => {
+			// Streaming needs `application/wasm`. As wasm-bindgen's own loader does, compile from
+			// the bytes when a host sends another type, and give up on any other failure.
+			const response = await fetch(url);
+			if (!response.ok) throw error;
+			return WebAssembly.compile(await response.arrayBuffer());
+		})
+		.catch(retrying(() => (compiling = undefined))));
 
 /**
  * Instantiates the engine, once per realm (the page, or a Worker): from `module` when the page

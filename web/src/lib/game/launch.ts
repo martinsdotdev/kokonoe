@@ -8,7 +8,7 @@ import type { Player } from '#lib/engine.js';
 export const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 export type Level = (typeof LEVELS)[number];
 
-/** Levels 1 to 4 arrive first (KOK-41), so the default is among them. */
+/** Level 3 rather than the design's 5, chosen in KOK-40 while only Levels 1 to 4 played. */
 export const DEFAULT_LEVEL: Level = 3;
 
 export type Opponent = { kind: 'hotseat' } | { kind: 'computer'; level: Level; seat: Player };

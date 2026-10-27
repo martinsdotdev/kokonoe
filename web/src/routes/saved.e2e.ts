@@ -17,9 +17,10 @@ const marked = (page: Page) => page.getByRole('button', { name: /^Cell \S+, [XO]
 
 /**
  * Waits until IndexedDB holds `moves` moves of the game in the address. A save is still in
- * flight just after a move, and a full page load would abort it.
+ * flight just after a move, and a full page load would abort it. It runs in the page, so it
+ * repeats `saved.ts`'s names: the `kokonoe` database and its `games` store.
  */
-const saved = (page: Page, moves: number) =>
+const waitForSaved = (page: Page, moves: number) =>
 	page.waitForFunction(async (moves) => {
 		const id = new URLSearchParams(location.search).get('game');
 		if (!id) return false;
@@ -40,7 +41,7 @@ test('a reload resumes a game against the computer where it stood', async ({ pag
 	await cell(page, '5·5').click();
 	await expect(page).toHaveURL(/\/play\?game=[\w-]+$/);
 	await expect(marked(page)).toHaveCount(2);
-	await saved(page, 2);
+	await waitForSaved(page, 2);
 	const url = page.url();
 
 	await page.reload();
@@ -56,7 +57,7 @@ test('a finished game reopens at its final position', async ({ page }) => {
 	await page.goto('/play');
 	await play(page, TOP_ROW);
 	await expect(page.getByRole('heading', { name: 'X wins on a line' })).toBeVisible();
-	await saved(page, 17);
+	await waitForSaved(page, 17);
 	await page.reload();
 	await expect(page.getByRole('heading', { name: 'X wins on a line' })).toBeVisible();
 	await expect(marked(page)).toHaveCount(17);
@@ -80,7 +81,7 @@ test('Home continues the latest unfinished game', async ({ page }) => {
 
 	const card = page.getByRole('article', { name: 'Continue game' });
 	await expect(card.getByText('Your move against the computer')).toBeVisible();
-	await expect(card.getByText('Standard · Level 1 · move 2')).toBeVisible();
+	await expect(card.getByText('Standard · Level 1 · 2 moves')).toBeVisible();
 	await expect(card.getByRole('img', { name: 'The board after 2 moves' })).toBeVisible();
 	await card.getByRole('link', { name: 'Resume' }).click();
 	await expect(page).toHaveURL(/\/play\?game=[\w-]+$/);
@@ -90,11 +91,11 @@ test('Home continues the latest unfinished game', async ({ page }) => {
 test('Recent games lists finished and unfinished games, and opens them', async ({ page }) => {
 	await page.goto('/play');
 	await play(page, TOP_ROW);
-	await saved(page, 17);
+	await waitForSaved(page, 17);
 	for (const code of ['most', 'cont']) {
 		await page.goto(`/play?rules=${code}`);
 		await play(page, '42');
-		await saved(page, 1);
+		await waitForSaved(page, 1);
 	}
 	await page.goto('/');
 
@@ -108,10 +109,35 @@ test('Recent games lists finished and unfinished games, and opens them', async (
 	);
 	const card = page.getByRole('article', { name: 'Continue game' });
 	await expect(card).toContainText('O to move · pass and play');
-	await expect(card).toContainText('Forced continuation · move 1');
+	await expect(card).toContainText('Forced continuation · 1 move');
 	const finished = page.locator('[data-recent="finished"]');
 	await expect(finished).toContainText('X wins on a line');
 	await finished.click();
 	await expect(page.getByRole('heading', { name: 'X wins on a line' })).toBeVisible();
 	await expect(marked(page)).toHaveCount(17);
+});
+
+test('a saved game the rules refuse says why it can’t be resumed', async ({ page }) => {
+	await page.goto('/play');
+	await play(page, '42');
+	await waitForSaved(page, 1);
+	await page.evaluate(async () => {
+		const id = new URLSearchParams(location.search).get('game')!;
+		const db = await new Promise<IDBDatabase>((resolve) => {
+			indexedDB.open('kokonoe').onsuccess = (event) =>
+				resolve((event.target as IDBOpenDBRequest).result);
+		});
+		const store = db.transaction('games', 'readwrite').objectStore('games');
+		await new Promise((resolve) => {
+			store.get(id).onsuccess = (event) => {
+				const game = (event.target as IDBRequest).result;
+				game.record.moves = [0, 0];
+				store.put(game).onsuccess = resolve;
+			};
+		});
+		db.close();
+	});
+	await page.reload();
+	await expect(page.getByText('This game can’t be resumed. Its move 2 isn’t legal.')).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Choose a new game' })).toBeVisible();
 });

@@ -15,7 +15,7 @@
 		playQuery,
 		type Level
 	} from '#lib/game/launch.js';
-	import { detailLine, playedWhen, turnLine } from '#lib/game/listing.js';
+	import { detailLine, moves, playedWhen, turnLine } from '#lib/game/listing.js';
 	import Mark from '#lib/game/Mark.svelte';
 	import MiniBoard from '#lib/game/MiniBoard.svelte';
 	import { rulesetCode } from '#lib/game/rules.js';
@@ -80,7 +80,10 @@
 					class="flex w-full max-w-[400px] gap-4.5 rounded-[10px] border-[1.5px] border-foreground bg-card p-5"
 				>
 					<div class="w-[120px] shrink-0">
-						<MiniBoard view={unfinished.view} label={`The board after ${unfinished.plies} moves`} />
+						<MiniBoard
+							view={unfinished.view}
+							label={`The board after ${moves(unfinished.record.moves.length)}`}
+						/>
 					</div>
 					<div class="flex min-w-0 flex-col gap-1.5">
 						<h2
@@ -206,9 +209,16 @@
 								class="flex flex-wrap items-center gap-x-5 gap-y-1 px-5 py-3.5 text-foreground no-underline hover:bg-muted"
 								data-recent={game.result === null ? 'unfinished' : 'finished'}
 							>
-								<span class="w-32 text-sm text-muted-foreground">{playedWhen(game.updated)}</span>
-								<span class="min-w-40 flex-1">{againstLabel(game.opponent)}</span>
-								<span class="font-mono text-[13px]">{game.variant.name}</span>
+								<!-- The commas only part the link's name for screen readers. -->
+								<span class="w-32 text-sm text-muted-foreground">{playedWhen(game.updated)}</span
+								><span class="sr-only">, </span>
+								<span class="min-w-40 flex-1">{againstLabel(game.opponent)}</span><span
+									class="sr-only"
+									>,
+								</span>
+								<span class="font-mono text-[13px]">{game.variant.name}</span><span class="sr-only"
+									>,
+								</span>
 								<span class="font-semibold">{game.result ?? 'Unfinished · Resume'}</span>
 							</a>
 						</li>

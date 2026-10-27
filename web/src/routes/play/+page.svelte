@@ -13,7 +13,7 @@
 	import { gameQuery, playQuery, readLaunch } from '#lib/game/launch.js';
 	import { rulesetCode } from '#lib/game/rules.js';
 	import { loadGame } from '#lib/game/saved.js';
-	import { OfflineGame } from '#lib/game/session.svelte.js';
+	import { OfflineGame, UnplayableGame } from '#lib/game/session.svelte.js';
 	import { presetByCode } from '#lib/game/shelf.js';
 
 	let session: OfflineGame | null = $state(null);
@@ -21,47 +21,57 @@
 	/** The page was left, perhaps before the engine loaded. */
 	let left = false;
 
-	/** Shows the game `make` builds, unless the page was left meanwhile. */
-	const start = (make: () => OfflineGame) => {
-		// A computer on X would start a search that nothing stops.
-		if (left) return;
-		try {
-			session = make();
-		} catch (error) {
-			problem = `This game can’t be resumed. ${error instanceof Error ? error.message : error}`;
+	/** A failure the page explains to the player, rather than only logging it. */
+	class Problem extends Error {}
+
+	/** Throws `message` for the page to show, with the cause logged where a developer can see it. */
+	const failed = (message: string) => (error: unknown) => {
+		console.error(message, error);
+		throw new Problem(message);
+	};
+
+	const ENGINE = 'The engine didn’t load. Reload the page to try again.';
+
+	/**
+	 * The game the address names: a saved one by its id, or a new one by its launch query. Null
+	 * once the page has been left, since a computer on X would start a search nothing stops.
+	 */
+	const open = async (): Promise<OfflineGame | null> => {
+		const id = page.url.searchParams.get('game');
+		if (id !== null) {
+			const [saved] = await Promise.all([
+				loadGame(id).catch(failed('Saved games can’t be read in this browser.')),
+				loadEngine().catch(failed(ENGINE))
+			]);
+			if (!saved) throw new Problem('This game isn’t saved on this device.');
+			try {
+				return left ? null : OfflineGame.resume(saved);
+			} catch (error) {
+				if (error instanceof UnplayableGame) {
+					throw new Problem(`This game can’t be resumed. ${error.message}`);
+				}
+				throw error;
+			}
 		}
-	};
-
-	const engineFailed = (error: unknown) => {
-		// The page only says it failed, so say why where a developer can see it.
-		console.error('The engine failed to load.', error);
-		problem = 'The engine didn’t load. Reload the page to try again.';
-	};
-
-	const id = page.url.searchParams.get('game');
-	if (id !== null) {
-		const saved = loadGame(id).catch((error: unknown) => {
-			console.error('The saved game couldn’t be read.', error);
-			problem = 'Saved games can’t be read in this browser.';
-		});
-		Promise.all([loadEngine(), saved]).then(([, saved]) => {
-			if (saved) start(() => OfflineGame.resume(saved));
-			else problem ??= 'This game isn’t saved on this device.';
-		}, engineFailed);
-	} else {
 		const launch = readLaunch(page.url.searchParams);
-		const preset = 'error' in launch ? undefined : presetByCode(launch.code);
-		if ('error' in launch) {
-			problem = launch.error;
-		} else if (!preset) {
-			problem = `Kokonoe doesn’t know the variant “${launch.code}”.`;
-		} else if (!preset.playable) {
-			problem = `${preset.name} arrives soon.`;
-		} else {
-			const { opponent } = launch;
-			loadEngine().then(() => start(() => new OfflineGame(preset, opponent)), engineFailed);
+		if ('error' in launch) throw new Problem(launch.error);
+		const preset = presetByCode(launch.code);
+		if (!preset) throw new Problem(`Kokonoe doesn’t know the variant “${launch.code}”.`);
+		if (!preset.playable) throw new Problem(`${preset.name} arrives soon.`);
+		await loadEngine().catch(failed(ENGINE));
+		return left ? null : new OfflineGame(preset, launch.opponent);
+	};
+
+	open().then(
+		(game) => (session = game),
+		(error: unknown) => {
+			if (!(error instanceof Problem)) console.error('The game couldn’t start.', error);
+			problem =
+				error instanceof Problem
+					? error.message
+					: 'Something went wrong. Reload the page to try again.';
 		}
-	}
+	);
 
 	// The address follows the game: its id once saved, or the new game a restart begins.
 	$effect(() => {

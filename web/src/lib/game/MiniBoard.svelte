@@ -5,18 +5,16 @@
 -->
 <script lang="ts">
 	import Mark from './Mark.svelte';
-	import type { BoardView, LocalView } from './view.js';
+	import { ownerOf, type BoardView } from './view.js';
 
 	let { view, label }: { view: BoardView; label: string } = $props();
 
 	const SPACES = [...Array(9).keys()];
-
-	const owner = (local: LocalView) => (typeof local.status === 'object' ? local.status.Won : null);
 </script>
 
 <div class="mini" role="img" aria-label={label}>
 	{#each view.locals as local (local.space)}
-		{@const won = owner(local)}
+		{@const won = ownerOf(local)}
 		<div class="local" data-active={local.active || undefined}>
 			<div class="cells" class:faded={won && !view.continuation}>
 				{#each SPACES as inner (inner)}

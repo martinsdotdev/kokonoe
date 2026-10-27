@@ -28,6 +28,10 @@ export interface BoardView {
 	last: Cell | null;
 }
 
+/** The player who won a Local board, or null. */
+export const ownerOf = (local: LocalView): Player | null =>
+	typeof local.status === 'object' ? local.status.Won : null;
+
 const SPACES = [...Array(9).keys()];
 const CELLS = [...Array(81).keys()];
 

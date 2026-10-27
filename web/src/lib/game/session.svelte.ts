@@ -5,6 +5,7 @@ import {
 	type Cell,
 	type IllegalMove,
 	type Player,
+	type ReplayError,
 	type Ruleset,
 	type Status
 } from '#lib/engine.js';
@@ -99,8 +100,10 @@ export interface Options {
 	store?: GameStore;
 }
 
-/** The message for a saved game the rules no longer accept. */
-const unplayable = (index: number) => `Its move ${index + 1} isn’t legal.`;
+/** A saved game that can't be played on: its message says why, for the player. */
+export class UnplayableGame extends Error {}
+
+const illegalMove = (index: number) => new UnplayableGame(`Its move ${index + 1} isn’t legal.`);
 
 const dealt = (game: Game): Move[] =>
 	game.opening().map((cell, i) => ({
@@ -132,7 +135,7 @@ export class OfflineGame {
 	readonly human: Player | null;
 	#game: Game;
 	#store: GameStore;
-	/** When the first save happened, in epoch milliseconds. */
+	/** When the game was first saved, in epoch milliseconds: null until its first move. */
 	#started: number | null = null;
 	/** The computer and its Level, in a game against it. */
 	#against: { computer: Computer; level: Level } | null;
@@ -152,21 +155,28 @@ export class OfflineGame {
 	flash: { space: number; tick: number } | null = $state.raw(null);
 	/** The game's id in the store, and its address once `stored`. A restart gives a new one. */
 	id: string = $state.raw(crypto.randomUUID());
-	/** The game has been saved: it had a move. */
+	/** A save of the game has succeeded, so `id` can be its address. */
 	stored = $state.raw(false);
 
 	/**
 	 * Continues a saved game: its Record replayed move by move, so the move list has its notes.
-	 * Throws when the rules no longer accept the Record.
+	 * Throws an UnplayableGame when this version of Kokonoe can't play the Record on.
 	 */
 	static resume(saved: SavedGame, options: Options = {}): OfflineGame {
-		const opened = Game.open(saved.record);
-		if (!(opened instanceof Game)) throw new Error(unplayable(opened.index));
+		// Only `open` checks the Record's rules version, so check with it before replaying.
+		let opened: Game | ReplayError;
+		try {
+			opened = Game.open(saved.record);
+		} catch {
+			throw new UnplayableGame('It was saved in a form this version of Kokonoe can’t read.');
+		}
+		if (!(opened instanceof Game)) throw illegalMove(opened.index);
 		opened.free();
 		const variant = { name: saved.variant.name, ruleset: saved.record.ruleset };
 		return new OfflineGame(variant, saved.opponent, options, saved);
 	}
 
+	/** A new game, or with `saved`, the one `resume` continues. */
 	constructor(variant: Variant, opponent: Opponent, options: Options = {}, saved?: SavedGame) {
 		this.variant = variant;
 		this.opponent = opponent;
@@ -185,7 +195,9 @@ export class OfflineGame {
 		this.won = $state.raw(this.#counts());
 		if (saved) {
 			for (const cell of saved.record.moves) {
-				if (!this.#apply(cell)) throw new Error(unplayable(this.moves.length));
+				if (this.#apply(cell)) continue;
+				this.dispose();
+				throw illegalMove(this.moves.filter((move) => !move.dealt).length);
 			}
 			this.id = saved.id;
 			this.resigned = saved.resigned;
@@ -304,20 +316,29 @@ export class OfflineGame {
 		if (this.end || !player) return false;
 		const before = this.view;
 		const result = this.#game.play(this.#game.ply(), cell);
-		if (typeof result === 'string' || !('Now' in result)) {
-			if (typeof result !== 'string' && 'Illegal' in result) this.#flash(named(result.Illegal));
-			return false;
-		}
+		if (typeof result === 'string') return false;
+		if ('Illegal' in result) this.#flash(named(result.Illegal));
+		if (!('Now' in result)) return false;
 		this.#refresh();
-		const move = { n: this.moves.length + 1, player, notation: notation(cell, 2), dealt: false };
-		this.moves = [...this.moves, { ...move, note: note(before, this.view, cell) }];
+		this.moves = [
+			...this.moves,
+			{
+				n: this.moves.length + 1,
+				player,
+				notation: notation(cell, 2),
+				dealt: false,
+				note: note(before, this.view, cell)
+			}
+		];
 		return true;
 	}
 
-	/** Saves the game, from its first move on. A failed save costs the game nothing now. */
+	/**
+	 * Saves the game, from its first move on. `stored` waits for the first save to succeed, so
+	 * the address never names a game the store doesn't hold. A failed save costs play nothing.
+	 */
 	#save() {
-		if (!this.stored && this.moves.every((move) => move.dealt)) return;
-		this.stored = true;
+		if (this.#started === null && this.moves.every((move) => move.dealt)) return;
 		const updated = Date.now();
 		this.#started ??= updated;
 		const end = this.end;
@@ -331,12 +352,14 @@ export class OfflineGame {
 			updated,
 			view: this.view,
 			toMove: end ? null : this.toMove,
-			result: end ? resultText(end, this.variant.ruleset, this.won) : null,
-			plies: this.moves.length
+			result: end ? resultText(end, this.variant.ruleset, this.won) : null
 		};
-		this.#store.save(saved).catch((error: unknown) => {
-			console.error('The game couldn’t be saved.', error);
-		});
+		this.#store.save(saved).then(
+			() => {
+				if (this.id === saved.id) this.stored = true;
+			},
+			(error: unknown) => console.error('The game couldn’t be saved.', error)
+		);
 	}
 
 	/** Asks the computer for its move when it's to move, and plays the answer. */

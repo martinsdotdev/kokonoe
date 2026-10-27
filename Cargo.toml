@@ -11,11 +11,13 @@ repository = "https://github.com/martinsdotdev/kokonoe"
 [workspace.dependencies]
 kokonoe-engine = { path = "crates/engine" }
 
-# The browser module, built by scripts/bindings.mjs: small over fast, for the 100 KB game-screen
-# budget. Native builds, the server's included, keep the plain release profile.
+# The browser module, built by scripts/bindings.mjs, for the 100 KB game-screen budget. Opt-level
+# 2 beats "z" on both counts: 24.4 against 25.9 KB brotli, and about 1.4 times the search's
+# iterations per second (KOK-41). 3 searches faster again, for 0.6 KB more. Native builds, the
+# server's included, keep the plain release profile.
 [profile.wasm]
 inherits = "release"
-opt-level = "z"
+opt-level = 2
 lto = true
 codegen-units = 1
 

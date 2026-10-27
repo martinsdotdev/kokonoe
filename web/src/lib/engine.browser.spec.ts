@@ -4,6 +4,7 @@ import {
 	loadEngine,
 	newSeed,
 	presets,
+	think,
 	type Cell,
 	type Continuation,
 	type DrawnOwner,
@@ -260,6 +261,32 @@ describe('values crossing the boundary', () => {
 		// A JS exception thrown through the WASM frames would have left the Game borrowed.
 		expect(game.play(1, cell('24'))).toHaveProperty('Now');
 		expect(game.undo()).toBe(cell('24'));
+	});
+});
+
+describe('the computer', () => {
+	it('answers with a legal move, the same one for the same seed', () => {
+		const game = standard('42 24');
+		const status = game.status();
+		const moves = 'ToMove' in status ? status.ToMove.moves : [];
+		for (const level of range(8).map((i) => i + 1)) {
+			const move = think(game.record(), level, SEED);
+			expect(moves).toContain(move);
+			expect(think(game.record(), level, SEED)).toBe(move);
+		}
+	});
+
+	it('takes an immediate win from Level 3', () => {
+		const game = standard(TOP_ROW.split(' ').slice(0, -1).join(' '));
+		expect(think(game.record(), 3, SEED)).toBe(cell('28'));
+	});
+
+	it('throws on a Level out of range or a finished game', () => {
+		const record = standard('42').record();
+		expect(() => think(record, 0, SEED)).toThrow(/Level 0 is outside 1 to 8/);
+		expect(() => think(record, 9, SEED)).toThrow(/Level 9 is outside 1 to 8/);
+		expect(() => think(standard(TOP_ROW).record(), 3, SEED)).toThrow(/the game is over/);
+		expect(() => think({ ...record, moves: [0, 0] }, 3, SEED)).toThrow(/move 1 is illegal/);
 	});
 });
 

@@ -8,6 +8,15 @@ repository.workspace = true
 [dependencies]
 # The search's float math (ln, sqrt, powf), which core lacks without std.
 libm = { version = "0.2.16", default-features = false }
+# The Ruleset and Record JSON of spec §4.2 and §4.3, for the server. The browser module converts
+# by hand to stay small, so it leaves the feature off.
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"], optional = true }
+
+[features]
+serde = ["dep:serde"]
 
 [dev-dependencies]
+# The engine's own tests, with the JSON they check.
+kokonoe-engine = { path = ".", features = ["serde"] }
 proptest = { version = "1.12", default-features = false, features = ["std"] }
+serde_json = "1.0"

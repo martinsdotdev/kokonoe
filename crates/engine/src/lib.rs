@@ -28,7 +28,9 @@ mod search;
 
 pub use address::{Board, Cell, Child, Space, Spaces};
 pub use encoding::NotatedMove;
-pub use error::{CodeError, IllegalMove, ParseError, PlayError, ReplayError};
+#[cfg(feature = "serde")]
+pub use encoding::RecordFile;
+pub use error::{CodeError, IllegalMove, OpenError, ParseError, PlayError, ReplayError};
 pub use play::{
     BoardStatus, Game, LegalIter, LegalMoves, Outcome, Played, Player, Ply, Record, Seed, Sent,
     State, Status,

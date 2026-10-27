@@ -18,12 +18,8 @@ use crate::types::{
 pub enum Malformed {
     /// Not the declared shape. Names what was expected.
     Shape(&'static str),
-    /// A value outside the engine's range: a depth, a Space, a Goal, a Random k or a Cell index.
+    /// A value the engine's parsers refuse: out of range, or not the one spelling it reads.
     Parse(engine::ParseError),
-    /// A Board path that doesn't name a Board of the game: a Cell's path or longer.
-    BoardPath(usize),
-    /// A Record from another rules version than this build plays.
-    RulesVersion(u32),
 }
 
 impl From<engine::ParseError> for Malformed {
@@ -37,12 +33,6 @@ impl fmt::Display for Malformed {
         match self {
             Malformed::Shape(expected) => f.write_str(expected),
             Malformed::Parse(error) => write!(f, "{error}"),
-            Malformed::BoardPath(n) => write!(f, "a Board path of {n} Spaces names no Board"),
-            Malformed::RulesVersion(n) => write!(
-                f,
-                "the Record is from rules version {n}, and this build plays version {}",
-                engine::RULES_VERSION
-            ),
         }
     }
 }
@@ -89,14 +79,7 @@ impl From<engine::Board> for Board {
 impl Board {
     /// The Board at this path in a game of `depth`, read from the Global board down.
     pub fn at_depth(&self, depth: engine::Depth) -> Result<engine::Board, Malformed> {
-        let mut board = engine::Board::global(depth);
-        for &space in &self.0 {
-            board = match board.child(engine::Space::try_from(space)?) {
-                engine::Child::Board(child) => child,
-                engine::Child::Cell(_) => return Err(Malformed::BoardPath(self.0.len())),
-            };
-        }
-        Ok(board)
+        Ok(engine::Board::from_path(depth, &self.0)?)
     }
 }
 
@@ -115,30 +98,16 @@ impl Ply {
 
 impl From<engine::Seed> for Seed {
     fn from(seed: engine::Seed) -> Seed {
-        let mut hex = String::with_capacity(16);
-        for byte in seed.0.to_be_bytes() {
-            for nibble in [byte >> 4, byte & 0xf] {
-                hex.push(char::from_digit(u32::from(nibble), 16).unwrap_or('0'));
-            }
-        }
-        Seed(hex)
+        Seed(seed.to_string())
     }
 }
 
 impl TryFrom<&Seed> for engine::Seed {
     type Error = Malformed;
 
-    /// Exactly 16 lowercase hex digits, the one spelling `From` writes, so a Record has one
-    /// encoding.
+    /// Exactly 16 lowercase hex digits, the one spelling a Record writes.
     fn try_from(seed: &Seed) -> Result<engine::Seed, Malformed> {
-        let hex = seed.0.as_str();
-        // from_str_radix alone would also take a sign and uppercase.
-        if hex.len() != 16 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
-            return Err(Malformed::Shape("a Seed is 16 lowercase hex digits"));
-        }
-        u64::from_str_radix(hex, 16)
-            .map(engine::Seed)
-            .map_err(|_| Malformed::Shape("a Seed is 16 lowercase hex digits"))
+        Ok(seed.0.parse()?)
     }
 }
 
@@ -203,7 +172,7 @@ impl TryFrom<Ruleset> for engine::Ruleset {
 impl From<engine::Record> for Record {
     fn from(record: engine::Record) -> Record {
         Record {
-            rules_version: engine::RULES_VERSION,
+            rules_version: record.rules_version,
             ruleset: record.ruleset.into(),
             seed: record.seed.into(),
             moves: record.moves.into_iter().map(Cell::from).collect(),
@@ -214,12 +183,11 @@ impl From<engine::Record> for Record {
 impl TryFrom<Record> for engine::Record {
     type Error = Malformed;
 
+    /// The Record as written. `Game::open` is the one that refuses another rules version.
     fn try_from(record: Record) -> Result<engine::Record, Malformed> {
-        if record.rules_version != engine::RULES_VERSION {
-            return Err(Malformed::RulesVersion(record.rules_version));
-        }
         let ruleset = engine::Ruleset::try_from(record.ruleset)?;
         Ok(engine::Record {
+            rules_version: record.rules_version,
             ruleset,
             seed: engine::Seed::try_from(&record.seed)?,
             moves: record
@@ -421,7 +389,7 @@ mod tests {
         }
         assert_eq!(
             Board(vec![4, 2]).at_depth(engine::Depth::Two),
-            Err(Malformed::BoardPath(2)),
+            Err(Malformed::Parse(engine::ParseError::BoardPath(2))),
             "a Cell's path"
         );
         assert_eq!(
@@ -461,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn records_check_the_rules_version() {
+    fn records_carry_their_rules_version() {
         let mut game =
             engine::Game::new(engine::Preset::Standard.ruleset(), engine::Seed(0x5eed00));
         let at = game.state().ply();
@@ -475,9 +443,11 @@ mod tests {
             rules_version: engine::RULES_VERSION + 1,
             ..record
         };
+        let read = engine::Record::try_from(future).unwrap();
+        assert_eq!(read.rules_version, engine::RULES_VERSION + 1);
         assert_eq!(
-            engine::Record::try_from(future),
-            Err(Malformed::RulesVersion(engine::RULES_VERSION + 1))
+            engine::Game::open(&read).err(),
+            Some(engine::OpenError::RulesVersion(engine::RULES_VERSION + 1))
         );
     }
 }

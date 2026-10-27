@@ -2,11 +2,14 @@
 //! form. Each writes one spelling and its parser accepts only that spelling, apart from the `.`
 //! Notation also takes, so every value has one encoding.
 
+use alloc::string::{String, ToString};
 use core::fmt;
 use core::str::FromStr;
 
 use crate::address::Cell;
 use crate::error::{CodeError, ParseError};
+#[cfg(feature = "serde")]
+use crate::play::Record;
 use crate::play::Seed;
 use crate::ruleset::{
     Continuation, Depth, DrawnOwner, Fallback, Goal, Objective, Opening, Preset, RandomPlies,
@@ -220,6 +223,73 @@ impl FromStr for Seed {
         u64::from_str_radix(hex, 16)
             .map(Seed)
             .map_err(|_| ParseError::Seed)
+    }
+}
+
+impl From<Seed> for String {
+    fn from(seed: Seed) -> String {
+        seed.to_string()
+    }
+}
+
+impl TryFrom<String> for Seed {
+    type Error = ParseError;
+
+    fn try_from(hex: String) -> Result<Seed, ParseError> {
+        hex.parse()
+    }
+}
+
+/// Spec §4.3's encoded Record: the Record, plus the name a Custom variant was given. The engine
+/// never needs the name, so it stays out of [`Record`].
+#[cfg(feature = "serde")]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RecordFile {
+    #[serde(flatten)]
+    pub record: Record,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// A Record as its JSON carries it, with the moves as Cell indices: a Cell's depth comes from
+/// the Ruleset, so they're read against it.
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct RawRecord {
+    rules_version: u32,
+    ruleset: Ruleset,
+    seed: Seed,
+    moves: alloc::vec::Vec<u16>,
+}
+
+#[cfg(feature = "serde")]
+impl From<Record> for RawRecord {
+    fn from(record: Record) -> RawRecord {
+        RawRecord {
+            rules_version: record.rules_version,
+            ruleset: record.ruleset,
+            seed: record.seed,
+            moves: record.moves.into_iter().map(Cell::index).collect(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawRecord> for Record {
+    type Error = ParseError;
+
+    fn try_from(raw: RawRecord) -> Result<Record, ParseError> {
+        let depth = raw.ruleset.depth;
+        Ok(Record {
+            rules_version: raw.rules_version,
+            ruleset: raw.ruleset,
+            seed: raw.seed,
+            moves: raw
+                .moves
+                .into_iter()
+                .map(|index| Cell::from_index(depth, index))
+                .collect::<Result<_, _>>()?,
+        })
     }
 }
 

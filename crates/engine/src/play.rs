@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use core::ops::Range;
 
 use crate::address::{Board, Cell, Child, Space};
-use crate::error::{IllegalMove, PlayError, ReplayError};
+use crate::error::{IllegalMove, OpenError, PlayError, ReplayError};
 use crate::repr::{BoardRepr, Masks, Repr, has_line};
 use crate::rng::Rng;
 use crate::ruleset::{Continuation, Depth, Fallback, Objective, Opening, Ruleset};
@@ -56,17 +56,32 @@ impl Ply {
 /// Drives a Random opening. Part of the game record, beside the Ruleset and the moves. The
 /// caller supplies it, since the engine has no entropy source. A server draws it, so neither
 /// client picks its own opening. Under `Opening::Free` it is carried and unused.
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "alloc::string::String", into = "alloc::string::String")
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Seed(pub u64);
 
 /// A game as data: what a Room persists, an export carries, a Worker receives, and a rating
-/// check replays.
+/// check replays. Its JSON is spec §4.3's, with the moves as Cell indices.
 ///
 /// Claimed, not checked. The moves may be illegal until [`Game::open`] says otherwise. The random
 /// opening is not in `moves`: it is derived from `seed`, so it has one source of truth and no
 /// client can forge it.
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(
+        try_from = "crate::encoding::RawRecord",
+        into = "crate::encoding::RawRecord"
+    )
+)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
+    /// The `RULES_VERSION` it was played under. [`Game::open`] plays only its own.
+    pub rules_version: u32,
     pub ruleset: Ruleset,
     pub seed: Seed,
     /// The moves players made after the opening, in order.
@@ -119,15 +134,19 @@ impl Game {
         }
     }
 
-    /// Rebuilds a game from an untrusted Record: `new`, then [`State::play`] for each move. The
-    /// first illegal move stops it and reports its index in `record.moves`. The one path for
+    /// Rebuilds a game from an untrusted Record: `new`, then [`State::play`] for each move. A
+    /// Record from another `RULES_VERSION` is refused, since it could replay differently here,
+    /// and the first illegal move stops it with its index in `record.moves`. The one path for
     /// reconnects, deploy restarts, imports, Workers, and rating checks.
-    pub fn open(record: &Record) -> Result<Game, ReplayError> {
+    pub fn open(record: &Record) -> Result<Game, OpenError> {
+        if record.rules_version != crate::RULES_VERSION {
+            return Err(OpenError::RulesVersion(record.rules_version));
+        }
         let mut game = Game::new(record.ruleset, record.seed);
         for (index, &cell) in record.moves.iter().enumerate() {
             game.state
                 .play(cell)
-                .map_err(|error| ReplayError { index, error })?;
+                .map_err(|error| OpenError::Illegal(ReplayError { index, error }))?;
             game.moves.push(cell);
         }
         Ok(game)
@@ -136,6 +155,7 @@ impl Game {
     /// The data to persist, export, or rate. Allocates; call it when saving, not per move.
     pub fn record(&self) -> Record {
         Record {
+            rules_version: crate::RULES_VERSION,
             ruleset: self.state.ruleset,
             seed: self.seed,
             moves: self.moves.clone(),

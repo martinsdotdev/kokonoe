@@ -127,6 +127,15 @@ pub struct ReplayError {
     pub error: IllegalMove,
 }
 
+/// Why [`Game::open`](crate::Game::open) refused a Record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenError {
+    /// The Record was played under this `RULES_VERSION`, not this build's.
+    RulesVersion(u32),
+    /// A move of the Record the rules refuse.
+    Illegal(ReplayError),
+}
+
 impl From<IllegalMove> for PlayError {
     fn from(error: IllegalMove) -> PlayError {
         PlayError::Illegal(error)
@@ -165,6 +174,20 @@ impl fmt::Display for ReplayError {
     }
 }
 
+impl fmt::Display for OpenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OpenError::RulesVersion(n) => write!(
+                f,
+                "the Record is from rules version {n}, and this build plays version {}",
+                crate::RULES_VERSION
+            ),
+            OpenError::Illegal(error) => error.fmt(f),
+        }
+    }
+}
+
 impl core::error::Error for IllegalMove {}
+impl core::error::Error for OpenError {}
 impl core::error::Error for PlayError {}
 impl core::error::Error for ReplayError {}

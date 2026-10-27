@@ -231,3 +231,121 @@ mod seeds_and_boards {
         );
     }
 }
+
+mod json {
+    use super::*;
+    use kokonoe_engine::{Game, OpenError, RULES_VERSION, Record, RecordFile};
+
+    #[test]
+    fn every_ruleset_round_trips_through_json() {
+        for rules in every_ruleset() {
+            let json = serde_json::to_string(&rules).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Ruleset>(&json).unwrap(),
+                rules,
+                "{json}"
+            );
+        }
+    }
+
+    #[test]
+    fn standard_is_the_spec_string() {
+        let json = serde_json::to_string(&Preset::Standard.ruleset()).unwrap();
+        assert_eq!(
+            json,
+            r#"{"depth":2,"continuation":"Off","drawn_owner":"Neither","objective":"Line","fallback":"Draw","opening":"Free"}"#
+        );
+        let counting = serde_json::to_value(Preset::TicTacKu.ruleset()).unwrap();
+        assert_eq!(counting["objective"], serde_json::json!({ "FirstTo": 5 }));
+    }
+
+    #[test]
+    fn json_runs_the_engine_boundary_checks() {
+        let standard = serde_json::to_value(Preset::Standard.ruleset()).unwrap();
+        for (field, value) in [
+            ("depth", serde_json::json!(4)),
+            ("objective", serde_json::json!({ "FirstTo": 10 })),
+            ("opening", serde_json::json!({ "Random": 0 })),
+            ("fallback", serde_json::json!("Coin")),
+        ] {
+            let mut bad = standard.clone();
+            bad[field] = value;
+            assert!(serde_json::from_value::<Ruleset>(bad).is_err(), "{field}");
+        }
+    }
+
+    fn record(seed: u64) -> Record {
+        let mut game = Game::new(Preset::Standard.ruleset(), Seed(seed));
+        for digits in ["42", "24"] {
+            let at = game.state().ply();
+            game.play(at, digits_cell(digits)).unwrap();
+        }
+        game.record()
+    }
+
+    fn digits_cell(digits: &str) -> Cell {
+        let digits: Vec<u8> = digits.bytes().map(|b| b - b'0').collect();
+        Cell::from_digits(&digits).unwrap()
+    }
+
+    #[test]
+    fn a_record_round_trips_with_a_seed_past_two_to_the_53() {
+        for seed in [(1 << 53) + 1, u64::MAX] {
+            let original = record(seed);
+            let json = serde_json::to_string(&original).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Record>(&json).unwrap(),
+                original,
+                "{json}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_record_is_the_spec_shape() {
+        let json = serde_json::to_string(&record(0x5eed00)).unwrap();
+        assert_eq!(
+            json,
+            format!(
+                r#"{{"rules_version":{RULES_VERSION},"ruleset":{},"seed":"00000000005eed00","moves":[38,22]}}"#,
+                serde_json::to_string(&Preset::Standard.ruleset()).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn a_record_file_carries_a_custom_variant_name() {
+        let plain = RecordFile {
+            record: record(1),
+            name: None,
+        };
+        let json = serde_json::to_value(&plain).unwrap();
+        assert!(json.get("name").is_none(), "absent unless named");
+        assert_eq!(serde_json::from_value::<RecordFile>(json).unwrap(), plain);
+
+        let named = RecordFile {
+            name: Some("Quick fives".into()),
+            ..plain
+        };
+        let json = serde_json::to_string(&named).unwrap();
+        assert_eq!(serde_json::from_str::<RecordFile>(&json).unwrap(), named);
+    }
+
+    #[test]
+    fn a_record_reads_its_moves_at_its_depth_and_open_checks_its_version() {
+        let mut json = serde_json::to_value(record(1)).unwrap();
+        json["moves"] = serde_json::json!([81]);
+        assert!(
+            serde_json::from_value::<Record>(json.clone()).is_err(),
+            "past depth 2"
+        );
+
+        json["moves"] = serde_json::json!([40]);
+        json["rules_version"] = serde_json::json!(RULES_VERSION + 1);
+        let future: Record = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            Game::open(&future).err(),
+            Some(OpenError::RulesVersion(RULES_VERSION + 1))
+        );
+    }
+}

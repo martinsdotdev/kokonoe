@@ -3,7 +3,8 @@ import type { Ruleset } from '#lib/engine.js';
 /**
  * The Ruleset code (spec §4.2): `std` for Standard, otherwise the settings that differ from
  * Standard joined by `+` in the fixed order `d3`, `cont`, `both`, `first<N>`, `most`, `rand<K>`.
- * Formatting only: KOK-34 adds the engine's parser.
+ * The engine owns codes and parses them (`parseRulesetCode`); this copy writes them on pages that
+ * load no engine, and `encodings.browser.spec.ts` holds it to the engine's for every Ruleset.
  */
 export const rulesetCode = (rules: Ruleset): string => {
 	const tokens = [

@@ -160,6 +160,32 @@ pub fn think(record: Ts<Record>, level: u8, seed: Ts<Seed>) -> Result<Ts<Cell>, 
     Ok(typed(Cell::from(cell).to_js()))
 }
 
+/// The Ruleset code of spec §4.2: `std`, or the settings that differ from Standard.
+#[wasm_bindgen(js_name = rulesetCode)]
+pub fn ruleset_code(ruleset: Ts<Ruleset>) -> Result<String, JsError> {
+    let ruleset = engine::Ruleset::try_from(js::parse_ruleset(&ruleset.js_value())?)?;
+    Ok(ruleset.to_string())
+}
+
+/// The Ruleset a code names. A code with the wrong spelling throws the reason, since codes
+/// arrive in links people type.
+#[wasm_bindgen(js_name = parseRulesetCode)]
+pub fn parse_ruleset_code(code: &str) -> Result<Ts<Ruleset>, JsError> {
+    let ruleset: engine::Ruleset = code.parse()?;
+    Ok(typed(Ruleset::from(ruleset).to_js()))
+}
+
+/// A Cell in Notation: `5·5` at depth 2, `5·1·8` at depth 3.
+#[wasm_bindgen]
+pub fn notation(
+    cell: Ts<Cell>,
+    #[wasm_bindgen(unchecked_param_type = "2 | 3")] depth: u8,
+) -> Result<String, JsError> {
+    let depth = engine::Depth::try_from(depth)?;
+    let cell = js::parse_cell(&cell.js_value())?.at_depth(depth)?;
+    Ok(cell.to_string())
+}
+
 /// The five Presets, Standard first.
 #[wasm_bindgen]
 pub fn presets() -> Vec<Ts<Preset>> {

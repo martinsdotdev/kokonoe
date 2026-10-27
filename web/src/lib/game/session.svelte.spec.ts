@@ -3,7 +3,7 @@ import { loadEngine, type Cell, type Record } from '#lib/engine.js';
 import type { Computer } from './computer.js';
 import type { Opponent } from './launch.js';
 import type { GameStore, SavedGame } from './saved.js';
-import { OfflineGame } from './session.svelte.js';
+import { OfflineGame, UnplayableGame } from './session.svelte.js';
 import { SHELF } from './shelf.js';
 
 beforeAll(() => loadEngine());
@@ -21,7 +21,7 @@ class FakeStore implements GameStore {
 	}
 }
 
-const hotseat = (store = new FakeStore()) =>
+const hotseat = (store: GameStore = new FakeStore()) =>
 	new OfflineGame(SHELF[0], { kind: 'hotseat' }, { store });
 
 /** Cells written as engine digit pairs: `"42"` is Space 4, then Space 2. */
@@ -282,12 +282,14 @@ describe('a game against the computer', () => {
 });
 
 describe('saving and resuming', () => {
-	it('saves from the first move, after every change', () => {
+	it('saves from the first move, after every change', async () => {
 		const store = new FakeStore();
 		const session = hotseat(store);
 		expect(store.saves, 'nothing to keep yet').toHaveLength(0);
 		expect(session.stored).toBe(false);
 		session.play(C42);
+		expect(session.stored, 'not until the save succeeds').toBe(false);
+		await settle();
 		expect(session.stored).toBe(true);
 		expect(store.last).toMatchObject({
 			id: session.id,
@@ -295,8 +297,7 @@ describe('saving and resuming', () => {
 			variant: { name: 'Standard', code: 'std' },
 			opponent: { kind: 'hotseat' },
 			toMove: 'O',
-			result: null,
-			plies: 1
+			result: null
 		});
 		session.play(C24);
 		session.undo();
@@ -320,9 +321,21 @@ describe('saving and resuming', () => {
 		expect(store.last.record.moves).toEqual([C42]);
 	});
 
-	it('restarts as a new game, unsaved until its first move', () => {
+	it('keeps its address on the launch query while saves fail', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const session = hotseat({ save: () => Promise.reject(new Error('no IndexedDB')) });
+		session.play(C42);
+		await settle();
+		expect(session.stored).toBe(false);
+		expect(session.moves, 'play goes on').toHaveLength(1);
+		expect(error).toHaveBeenCalledWith('The game couldn’t be saved.', expect.any(Error));
+		error.mockRestore();
+	});
+
+	it('restarts as a new game, unsaved until its first move', async () => {
 		const store = new FakeStore();
 		const session = after('42', store);
+		await settle();
 		const first = session.id;
 		session.restart();
 		expect(session.id).not.toBe(first);
@@ -371,6 +384,10 @@ describe('saving and resuming', () => {
 		const store = new FakeStore();
 		after('42', store);
 		const broken = { ...store.last, record: { ...store.last.record, moves: [0, 0] } };
-		expect(() => OfflineGame.resume(broken, { store })).toThrow('Its move 2 isn’t legal.');
+		expect(() => OfflineGame.resume(broken, { store })).toThrow(
+			new UnplayableGame('Its move 2 isn’t legal.')
+		);
+		const future = { ...store.last, record: { ...store.last.record, rules_version: 2 } };
+		expect(() => OfflineGame.resume(future, { store })).toThrow(UnplayableGame);
 	});
 });

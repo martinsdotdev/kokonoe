@@ -26,8 +26,6 @@ export interface SavedGame {
 	toMove: Player | null;
 	/** The result banner's words, or null while the game goes on. */
 	result: string | null;
-	/** Moves on the board, a dealt opening included. */
-	plies: number;
 }
 
 /** Where a game keeps itself: IndexedDB, or a fake in tests. */
@@ -48,7 +46,9 @@ const databases = new Map<string, Promise<IDBPDatabase<Schema>>>();
 const database = (name: string): Promise<IDBPDatabase<Schema>> => {
 	const known = databases.get(name);
 	if (known) return known;
-	const forget = () => databases.delete(name);
+	const forget = () => {
+		if (databases.get(name) === opening) databases.delete(name);
+	};
 	const opening = openDB<Schema>(name, VERSION, {
 		upgrade(db) {
 			db.createObjectStore('games', { keyPath: 'id' }).createIndex('updated', 'updated');
@@ -60,6 +60,7 @@ const database = (name: string): Promise<IDBPDatabase<Schema>> => {
 		},
 		terminated: forget
 	});
+	// A failed open isn't kept, so the next call tries again.
 	opening.catch(forget);
 	databases.set(name, opening);
 	return opening;

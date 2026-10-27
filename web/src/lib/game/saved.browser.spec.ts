@@ -22,8 +22,7 @@ const game = (id: string, updated: number, result: string | null = null): SavedG
 		last: 40
 	},
 	toMove: result ? null : 'O',
-	result,
-	plies: 1
+	result
 });
 
 describe('saved games in IndexedDB', () => {

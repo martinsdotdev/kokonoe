@@ -13,6 +13,7 @@
 	import RulesCard from './RulesCard.svelte';
 	import Scoreboard from './Scoreboard.svelte';
 	import { againstLabel } from './launch.js';
+	import { moves } from './listing.js';
 	import { resultText, winner } from './result.js';
 	import type { OfflineGame } from './session.svelte.js';
 	import TurnCard from './TurnCard.svelte';
@@ -66,7 +67,7 @@
 		{#if session.end}
 			<ResultBanner
 				headline={resultText(session.end, variant.ruleset, session.won)}
-				detail={`After ${played} ${played === 1 ? 'move' : 'moves'}.`}
+				detail={`After ${moves(played)}.`}
 				winner={winner(session.end)}
 				onrestart={() => session.restart()}
 			/>

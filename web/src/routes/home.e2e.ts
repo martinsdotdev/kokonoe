@@ -29,3 +29,27 @@ test('the computer card opens the sheet at the chosen Level', async ({ page }) =
 	await expect(page.getByRole('radio', { name: /^Computer/ })).toBeChecked();
 	await expect(page.getByLabel('Computer level')).toHaveValue('4');
 });
+
+test('Home loads no engine, with a saved game to continue', async ({ context, page }) => {
+	await page.goto('/play');
+	await page.getByRole('button', { name: 'Cell 5·5', exact: true }).click();
+	await expect(page).toHaveURL(/\?game=/);
+
+	// A second page shares the saved game, and loads Home from scratch.
+	const home = await context.newPage();
+	const loaded: string[] = [];
+	const scripts: Promise<string>[] = [];
+	home.on('response', (response) => {
+		const path = new URL(response.url()).pathname;
+		if (!/\.(m?js|wasm)$/.test(path)) return;
+		loaded.push(path);
+		scripts.push(response.text());
+	});
+	await home.goto('/');
+	await expect(home.getByRole('link', { name: 'Resume', exact: true })).toBeVisible();
+	await home.waitForLoadState('networkidle');
+	expect(loaded.filter((path) => path.endsWith('.wasm'))).toEqual([]);
+	// The engine's glue names its module, so no script Home loads may carry the name.
+	for (const script of await Promise.all(scripts)) expect(script).not.toContain('kokonoe_wasm_bg');
+	expect(scripts.length).toBeGreaterThan(0);
+});

@@ -8,7 +8,7 @@
 	import type { Cell } from '#lib/engine.js';
 	import Mark from './Mark.svelte';
 	import { boardLabel, notation } from './notation.js';
-	import type { BoardView, LocalView } from './view.js';
+	import { ownerOf, type BoardView, type LocalView } from './view.js';
 
 	interface Props {
 		view: BoardView;
@@ -23,11 +23,9 @@
 
 	const SPACES = [...Array(9).keys()];
 
-	const owner = (local: LocalView) => (typeof local.status === 'object' ? local.status.Won : null);
-
 	const describe = (local: LocalView) => {
 		const name = `Board ${boardLabel([local.space])}`;
-		const won = owner(local);
+		const won = ownerOf(local);
 		return won ? `${name}, won by ${won}` : local.status === 'Drawn' ? `${name}, drawn` : name;
 	};
 
@@ -37,7 +35,7 @@
 
 <div class="board" role="group" aria-label="The Global board">
 	{#each view.locals as local (local.space)}
-		{@const won = owner(local)}
+		{@const won = ownerOf(local)}
 		<div
 			class="local"
 			role="group"

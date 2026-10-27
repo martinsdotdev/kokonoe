@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detailLine, playedWhen, turnLine } from './listing.js';
+import { detailLine, moves, playedWhen, turnLine } from './listing.js';
 import type { SavedGame } from './saved.js';
 
 const at = (iso: string) => new Date(iso).getTime();
@@ -9,7 +9,7 @@ const game = (opponent: SavedGame['opponent'], toMove: SavedGame['toMove']) =>
 		opponent,
 		toMove,
 		variant: { name: 'Tic-Tac-Ku', code: 'cont+first5+most' },
-		plies: 12
+		record: { moves: Array(12).fill(40) }
 	}) as SavedGame;
 
 describe('a saved game in words', () => {
@@ -30,8 +30,9 @@ describe('a saved game in words', () => {
 
 	it('names the variant, the Level and the move', () => {
 		expect(detailLine(game({ kind: 'computer', level: 3, seat: 'X' }, 'X'))).toBe(
-			'Tic-Tac-Ku · Level 3 · move 12'
+			'Tic-Tac-Ku · Level 3 · 12 moves'
 		);
-		expect(detailLine(game({ kind: 'hotseat' }, 'X'))).toBe('Tic-Tac-Ku · move 12');
+		expect(detailLine(game({ kind: 'hotseat' }, 'X'))).toBe('Tic-Tac-Ku · 12 moves');
+		expect([0, 1, 2].map(moves)).toEqual(['0 moves', '1 move', '2 moves']);
 	});
 });

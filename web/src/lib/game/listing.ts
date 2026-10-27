@@ -22,14 +22,21 @@ export const playedWhen = (updated: number, now = Date.now()): string => {
 	return (then.getFullYear() === today.getFullYear() ? day : dayOfYear).format(then);
 };
 
+/** "1 move" or "12 moves": the moves players made, as the result banner counts them. */
+export const moves = (n: number): string => `${n} ${n === 1 ? 'move' : 'moves'}`;
+
 /** Whose move an unfinished game waits for: "Your move against the computer". */
 export const turnLine = ({ opponent, toMove }: SavedGame): string => {
 	if (opponent.kind === 'hotseat') return `${toMove} to move · pass and play`;
 	return toMove === opponent.seat ? 'Your move against the computer' : 'The computer’s move';
 };
 
-/** "Standard · Level 3 · move 12", or "Tic-Tac-Ku · move 4" when passing and playing. */
-export const detailLine = ({ variant, opponent, plies }: SavedGame): string =>
-	[variant.name, opponent.kind === 'computer' ? `Level ${opponent.level}` : null, `move ${plies}`]
+/** "Standard · Level 3 · 12 moves", or "Tic-Tac-Ku · 4 moves" when passing and playing. */
+export const detailLine = ({ variant, opponent, record }: SavedGame): string =>
+	[
+		variant.name,
+		opponent.kind === 'computer' ? `Level ${opponent.level}` : null,
+		moves(record.moves.length)
+	]
 		.filter(Boolean)
 		.join(' · ');

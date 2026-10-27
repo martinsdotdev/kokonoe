@@ -123,7 +123,8 @@ export class Game {
      */
     constructor(ruleset: Ruleset, seed: Seed);
     /**
-     * The game a Record leads to, or the first of its moves the rules reject.
+     * The game a Record leads to, or the first of its moves the rules reject. A Record from
+     * another rules version throws: this build can't say how it would replay.
      */
     static open(record: Record): Game | ReplayError;
     /**

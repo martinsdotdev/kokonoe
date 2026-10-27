@@ -48,13 +48,15 @@ impl Game {
         Ok(Game(engine::Game::new(ruleset, seed)))
     }
 
-    /// The game a Record leads to, or the first of its moves the rules reject.
+    /// The game a Record leads to, or the first of its moves the rules reject. A Record from
+    /// another rules version throws: this build can't say how it would replay.
     #[wasm_bindgen(unchecked_return_type = "Game | ReplayError")]
     pub fn open(record: Ts<Record>) -> Result<JsValue, JsError> {
         let record = engine::Record::try_from(js::parse_record(&record.js_value())?)?;
         Ok(match engine::Game::open(&record) {
             Ok(game) => Game(game).into(),
-            Err(error) => ReplayError::from(error).to_js(),
+            Err(engine::OpenError::Illegal(error)) => ReplayError::from(error).to_js(),
+            Err(error @ engine::OpenError::RulesVersion(_)) => return Err(error.into()),
         })
     }
 

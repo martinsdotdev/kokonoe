@@ -8,6 +8,7 @@ use crate::error::ParseError;
 /// Six independent settings, and every combination is a legal game, so the struct has no
 /// cross-field invariant. Each field's type is valid by construction, which is why the fields are
 /// public: a Custom variant editor writes them directly.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Ruleset {
     pub depth: Depth,
@@ -19,6 +20,11 @@ pub struct Ruleset {
 }
 
 /// Levels of nesting. Two is 81 Cells in 9 Local boards; three is 729 Cells in 81 Local boards.
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "u8", into = "u8")
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Depth {
@@ -37,6 +43,7 @@ impl Depth {
 }
 
 /// Whether Decided Boards take moves.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Continuation {
     /// A Decided Board takes no moves, and neither does anything beneath it.
@@ -47,6 +54,7 @@ pub enum Continuation {
 }
 
 /// Who a drawn Board counts for.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DrawnOwner {
     /// A drawn Board counts for nobody.
@@ -59,6 +67,7 @@ pub enum DrawnOwner {
 
 /// What wins the game. Both objectives read only the Global board's children, and meeting the
 /// objective is what winning the Global board means.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Objective {
     /// Three won children of the Global board in a row, column, or diagonal.
@@ -69,10 +78,16 @@ pub enum Objective {
 }
 
 /// The N of `FirstTo(N)`, 1 to 9. Only `TryFrom<u8>` makes one.
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "u8", into = "u8")
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Goal(u8);
 
 /// What decides a game whose Global board children are all Decided with the objective unmet.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Fallback {
     Draw,
@@ -81,6 +96,7 @@ pub enum Fallback {
 }
 
 /// How the game's first moves are chosen.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Opening {
     /// X makes the first move, anywhere.
@@ -93,6 +109,11 @@ pub enum Opening {
 }
 
 /// The k of `Random(k)`, 1 to 8. Only `TryFrom<u8>` makes one.
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "u8", into = "u8")
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RandomPlies(u8);
 

@@ -67,7 +67,8 @@ export class Game {
         return this;
     }
     /**
-     * The game a Record leads to, or the first of its moves the rules reject.
+     * The game a Record leads to, or the first of its moves the rules reject. A Record from
+     * another rules version throws: this build can't say how it would replay.
      * @param {Record} record
      * @returns {Game | ReplayError}
      */

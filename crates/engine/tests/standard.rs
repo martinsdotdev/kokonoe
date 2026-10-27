@@ -1,8 +1,9 @@
 //! Standard at depth 2, through the public API.
 
 use kokonoe_engine::{
-    Board, BoardStatus, Cell, Child, Depth, Game, Goal, IllegalMove, Outcome, ParseError,
-    PlayError, Played, Player, Ply, Preset, RandomPlies, Seed, Sent, Space, Status,
+    Board, BoardStatus, Cell, Child, Depth, Game, Goal, IllegalMove, OpenError, Outcome,
+    ParseError, PlayError, Played, Player, Ply, Preset, RULES_VERSION, RandomPlies, ReplayError,
+    Seed, Sent, Space, Status,
 };
 
 /// Local board `n` of a depth-2 game.
@@ -236,7 +237,19 @@ fn open_replays_a_record_and_stops_at_the_first_illegal_move() {
     let mut record = standard("42 24").record();
     record.moves.push(cell("24"));
     let error = Game::open(&record).err().unwrap();
-    assert_eq!((error.index, error.error), (2, IllegalMove::Occupied));
+    let illegal = ReplayError {
+        index: 2,
+        error: IllegalMove::Occupied,
+    };
+    assert_eq!(error, OpenError::Illegal(illegal));
+
+    let mut future = game.record();
+    future.rules_version += 1;
+    assert_eq!(
+        Game::open(&future).err(),
+        Some(OpenError::RulesVersion(RULES_VERSION + 1)),
+        "another rules version could replay differently"
+    );
 }
 
 #[test]

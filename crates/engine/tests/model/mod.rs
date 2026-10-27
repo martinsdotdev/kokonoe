@@ -1,9 +1,12 @@
 //! A reference model of the depth-2 rules (spec §2.1), written as plainly as possible and
 //! sharing no code with the engine: arrays and loops, no masks, no relaxation walk. Tests play it
-//! beside the engine and ask for the first disagreement after every ply.
+//! beside the engine and ask for the first disagreement after every ply. `deep` is its depth-3
+//! counterpart.
 
 // Each test crate compiles its own copy and uses only part of it.
 #![allow(dead_code)]
+
+pub mod deep;
 
 use kokonoe_engine::{
     Board, BoardStatus, Cell, Child, Continuation, Depth, DrawnOwner, Fallback, Goal, Objective,
@@ -36,6 +39,15 @@ fn opponent(player: Player) -> Player {
 
 /// Every depth-2 Ruleset with a Free opening: 2 × 2 × 10 × 2 = 80 of them.
 pub fn depth_two_rulesets() -> Vec<Ruleset> {
+    rulesets(Depth::Two)
+}
+
+/// Every depth-3 Ruleset with a Free opening, 80 of them too.
+pub fn depth_three_rulesets() -> Vec<Ruleset> {
+    rulesets(Depth::Three)
+}
+
+fn rulesets(depth: Depth) -> Vec<Ruleset> {
     let mut all = Vec::new();
     for continuation in [Continuation::Off, Continuation::On] {
         for drawn_owner in [DrawnOwner::Neither, DrawnOwner::Both] {
@@ -43,7 +55,7 @@ pub fn depth_two_rulesets() -> Vec<Ruleset> {
             for objective in [Objective::Line].into_iter().chain(goals) {
                 for fallback in [Fallback::Draw, Fallback::MostWon] {
                     all.push(Ruleset {
-                        depth: Depth::Two,
+                        depth,
                         continuation,
                         drawn_owner,
                         objective,

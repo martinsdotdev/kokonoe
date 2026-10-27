@@ -216,6 +216,19 @@ impl Board {
         }
     }
 
+    /// The parse boundary for a Board on the wire: its Space path from the Global board down,
+    /// empty for the Global board itself, read under the game's depth.
+    pub fn from_path(depth: Depth, path: &[u8]) -> Result<Board, ParseError> {
+        let mut board = Board::global(depth);
+        for &space in path {
+            board = match board.child(Space::try_from(space)?) {
+                Child::Board(child) => child,
+                Child::Cell(_) => return Err(ParseError::BoardPath(path.len())),
+            };
+        }
+        Ok(board)
+    }
+
     pub const fn depth(self) -> Depth {
         self.depth
     }

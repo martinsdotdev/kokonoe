@@ -22,6 +22,54 @@ pub enum ParseError {
     RandomPlies(u8),
     /// Not 1 to 8.
     Level(u8),
+    /// Not Notation: digits 1 to 9 joined by `·` or `.`.
+    Notation,
+    /// Not a Ruleset code, for the reason given.
+    RulesetCode(CodeError),
+    /// Not 16 lowercase hex digits.
+    Seed,
+    /// A Board path of this many Spaces names a Cell or runs past the Local boards.
+    BoardPath(usize),
+}
+
+/// Why a Ruleset code was refused. Each code has one spelling, so these are the ways to miss it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodeError {
+    /// Nothing between two `+`, or at either end.
+    Empty,
+    /// Not one of `std`, `d3`, `cont`, `both`, `first<N>`, `most` and `rand<K>`.
+    Unknown,
+    /// `std` together with other settings.
+    StdCombined,
+    /// A setting after one that comes later in `d3`, `cont`, `both`, `first`, `most`, `rand`.
+    OutOfOrder,
+    /// The same setting twice.
+    Duplicate,
+    /// A number with a leading zero.
+    LeadingZero,
+}
+
+impl From<CodeError> for ParseError {
+    fn from(error: CodeError) -> ParseError {
+        ParseError::RulesetCode(error)
+    }
+}
+
+impl fmt::Display for CodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            CodeError::Empty => "a Ruleset code has an empty setting",
+            CodeError::Unknown => {
+                "a Ruleset code's settings are std, d3, cont, both, first<N>, most and rand<K>"
+            }
+            CodeError::StdCombined => "std stands alone in a Ruleset code",
+            CodeError::OutOfOrder => {
+                "a Ruleset code's settings go in the order d3, cont, both, first, most, rand"
+            }
+            CodeError::Duplicate => "a Ruleset code names a setting twice",
+            CodeError::LeadingZero => "a Ruleset code's numbers have no leading zero",
+        })
+    }
 }
 
 impl fmt::Display for ParseError {
@@ -34,6 +82,10 @@ impl fmt::Display for ParseError {
             ParseError::Goal(n) => write!(f, "FirstTo({n}) is outside 1 to 9"),
             ParseError::RandomPlies(n) => write!(f, "Random({n}) is outside 1 to 8"),
             ParseError::Level(n) => write!(f, "Level {n} is outside 1 to 8"),
+            ParseError::Notation => f.write_str("Notation is digits 1 to 9 joined by · or ."),
+            ParseError::RulesetCode(error) => error.fmt(f),
+            ParseError::Seed => f.write_str("a Seed is 16 lowercase hex digits"),
+            ParseError::BoardPath(n) => write!(f, "a Board path of {n} Spaces names no Board"),
         }
     }
 }

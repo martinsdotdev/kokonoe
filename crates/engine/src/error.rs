@@ -47,6 +47,10 @@ pub enum CodeError {
     Duplicate,
     /// A number with a leading zero.
     LeadingZero,
+    /// `first` without a number from 1 to 9.
+    FirstTo,
+    /// `rand` without a number from 1 to 8.
+    Random,
 }
 
 impl From<CodeError> for ParseError {
@@ -57,17 +61,22 @@ impl From<CodeError> for ParseError {
 
 impl fmt::Display for CodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Players read these in a sentence on the game screen, so they're plain words without
+        // quotes or apostrophes.
         f.write_str(match self {
             CodeError::Empty => "a Ruleset code has an empty setting",
             CodeError::Unknown => {
-                "a Ruleset code's settings are std, d3, cont, both, first<N>, most and rand<K>"
+                "the settings of a Ruleset code are std, d3, cont, both, first1 to first9, most \
+                 and rand1 to rand8"
             }
             CodeError::StdCombined => "std stands alone in a Ruleset code",
             CodeError::OutOfOrder => {
-                "a Ruleset code's settings go in the order d3, cont, both, first, most, rand"
+                "the settings of a Ruleset code go in the order d3, cont, both, first, most, rand"
             }
             CodeError::Duplicate => "a Ruleset code names a setting twice",
-            CodeError::LeadingZero => "a Ruleset code's numbers have no leading zero",
+            CodeError::LeadingZero => "the numbers in a Ruleset code have no leading zero",
+            CodeError::FirstTo => "first takes a number from 1 to 9, as in first5",
+            CodeError::Random => "rand takes a number from 1 to 8, as in rand4",
         })
     }
 }

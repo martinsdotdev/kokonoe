@@ -113,7 +113,7 @@ test('a Ruleset code in the wrong order says why', async ({ page }) => {
 	await page.goto('/play?rules=most+cont');
 	await expect(
 		page.getByText(
-			"“most+cont”: a Ruleset code's settings go in the order d3, cont, both, first, most, rand."
+			'“most+cont”: the settings of a Ruleset code go in the order d3, cont, both, first, most, rand.'
 		)
 	).toBeVisible();
 });

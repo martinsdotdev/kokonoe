@@ -169,7 +169,7 @@ fn a_line_of_middle_boards_wins() {
     assert!(wins > 0, "some random games end on a line");
 }
 
-/// Found by a guided search, and played by tap in `web/src/routes/games.ts`, which mirrors it: X
+/// Found by a guided search, and played by tap in `web/src/lib/game/games.fixtures.ts`, which mirrors it: X
 /// wins the top row of middle Boards in 53 plies, the fewest it can. X wins every Local board on
 /// its top row, so its Cell's last Space Sends O where O's reply Sends X back into middle Board 1,
 /// 2 or 3; O never wins a Board. On the way O Sends X into a Local board X has won, a Free move

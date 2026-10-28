@@ -1,5 +1,10 @@
 import { expect, test, type Locator } from '@playwright/test';
-import { DRAWN, INTO_A_WON_BOARD, LINE_OF_MIDDLE_BOARDS, TOP_ROW } from './games.js';
+import {
+	DRAWN,
+	INTO_A_WON_BOARD,
+	LINE_OF_MIDDLE_BOARDS,
+	TOP_ROW
+} from '../lib/game/games.fixtures.js';
 import { settledFocus, stepInto, stepThrough, stepped, tally } from './steps.js';
 
 // A phone, set by hand: Playwright's iPhone descriptors bring WebKit and a shorter viewport.
@@ -46,7 +51,7 @@ test('the Global view takes Boards, and only the breadcrumb steps out', async ({
 	// One board at a time: no overview to tap beside it, only a picture inside the way out.
 	await expect(page.getByRole('group', { name: 'The Global board' })).toHaveCount(0);
 	const out = page.getByRole('button', { name: 'Global', exact: true });
-	await expect(out.locator('[role="img"]')).toHaveCount(1);
+	await expect(out.locator('div[aria-hidden="true"]'), 'a picture of the board').toHaveCount(1);
 	await expect(page.locator('[aria-current="location"]')).toHaveText('Board 5');
 	await settledFocus(page);
 	await out.tap();

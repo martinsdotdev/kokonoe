@@ -1,5 +1,5 @@
 import type { Board, BoardStatus, Cell, Game, Player } from '#lib/engine.js';
-import { cellPath, pathOf } from './notation.js';
+import { pathOf } from './notation.js';
 
 /** A Board under the Global board as drawn: a Local board, or at depth 3 a middle Board. */
 export interface BoardState {
@@ -33,8 +33,9 @@ export interface BoardView {
 
 const range = (n: number) => [...Array(n).keys()];
 
-/** A path read as a number in base 9: its place among the Boards of its level. */
-const indexOf = (board: Board) => board.reduce((index, space) => index * 9 + space, 0);
+/** A path read as a number in base 9: a Cell's index, or a Board's place among its level's. */
+export const indexOf = (path: number[]): number =>
+	path.reduce((index, space) => index * 9 + space, 0);
 
 /** What the view holds for `board`, any Board but the Global board. */
 export const at = (view: BoardView, board: Board): BoardState =>
@@ -47,7 +48,7 @@ export const children = (board: Board): Board[] => range(9).map((space) => [...b
 export const cellsOf = (local: Board): Cell[] => children(local).map(indexOf);
 
 /** The Local board `cell` lies in. */
-export const localOf = (cell: Cell, depth: 2 | 3): Board => cellPath(cell, depth).slice(0, -1);
+export const localOf = (cell: Cell, depth: 2 | 3): Board => pathOf(cell, depth).slice(0, -1);
 
 /** Whether two paths name the same Board. Null names none, so it matches nothing. */
 export const same = (a: Board | null | undefined, b: Board | null | undefined): boolean =>
@@ -56,14 +57,15 @@ export const same = (a: Board | null | undefined, b: Board | null | undefined): 
 /** A path as its Spaces' digits, for keys and attributes: `'4'`, `'47'`, or `''` for Global. */
 export const key = (board: Board): string => board.join('');
 
-/** The outermost decided Board on the way down to `board`, if there is one. */
-export const outermostDecided = (view: BoardView, board: Board): Board | null => {
-	for (let length = 1; length <= board.length; length++) {
-		const above = board.slice(0, length);
-		if (at(view, above).status !== 'Open') return above;
-	}
-	return null;
-};
+/** The Boards from the Global board down to `board`, both included: `[[], [4], [4, 7]]`. */
+export const lineage = (board: Board): Board[] =>
+	[...board.keys(), board.length].map((length) => board.slice(0, length));
+
+/** The outermost decided Board above `board`, short of the Global board, if there is one. */
+export const decidedAbove = (view: BoardView, board: Board): Board | null =>
+	lineage(board)
+		.slice(1, -1)
+		.find((above) => at(view, above).status !== 'Open') ?? null;
 
 /** The player who won a Board, or null. */
 export const ownerOf = (board: BoardState): Player | null =>

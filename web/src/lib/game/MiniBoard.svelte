@@ -2,7 +2,8 @@
 	A small, still drawing of a Board for previews, such as Home's Continue card: the Active boards'
 	highlighter, Decided boards' owners and drawn boards' hatching, and the marks in its Local
 	boards. A whole Deep board draws its Local boards without marks, which would be too small to
-	see. One image to assistive technology; `Board` is the board people play on.
+	see. One image to assistive technology, or with no `label` none; `Board` is the board people
+	play on.
 -->
 <script lang="ts">
 	import type { Board } from '#lib/engine.js';
@@ -13,13 +14,22 @@
 		view: BoardView;
 		/** The Board to draw: the Global board unless named. */
 		board?: Board;
-		label: string;
+		/** What the image shows; without one it's only decoration. */
+		label?: string;
 	}
 
 	let { view, board = [], label }: Props = $props();
+
+	/** Marks are drawn one level down from the Board drawn, and no further. */
+	const marked = (tile: Board) => tile.length === board.length + 1;
 </script>
 
-<div class="mini" role="img" aria-label={label}>
+<div
+	class="mini"
+	role={label ? 'img' : undefined}
+	aria-label={label}
+	aria-hidden={label ? undefined : 'true'}
+>
 	{#each children(board) as child (key(child))}
 		{@render tile(child)}
 	{/each}
@@ -35,7 +45,7 @@
 					{@render tile(child)}
 				{/each}
 			</div>
-		{:else if here.length === board.length + 1}
+		{:else if marked(here)}
 			<div class="grid" class:faded={won && !view.continuation}>
 				{#each cellsOf(here) as cell (cell)}
 					{@const mark = view.cells[cell]}

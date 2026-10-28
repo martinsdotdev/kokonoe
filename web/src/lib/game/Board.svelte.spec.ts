@@ -2,23 +2,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { Player } from '#lib/engine.js';
 import Board from './Board.svelte';
-import { at, type BoardView } from './view.js';
+import { at, indexOf, type BoardView } from './view.js';
 import { position } from './view.fixtures.js';
 
 /** Board 3 (Space 2), won by `player` along its top row. */
 const winTopRight = (view: BoardView, player: Player) => {
-	for (const inner of [0, 1, 2]) view.cells[2 * 9 + inner] = player;
+	for (const inner of [0, 1, 2]) view.cells[indexOf([2, inner])] = player;
 	at(view, [2]).status = { Won: player };
 };
 
-const local = (screen: Awaited<ReturnType<typeof render>>, label: string) =>
+const group = (screen: Awaited<ReturnType<typeof render>>, label: string) =>
 	screen.getByRole('group', { name: label, exact: true });
 
 describe('the board grammar', () => {
 	it('washes the Active boards', async () => {
 		const screen = await render(Board, { view: position((v) => (at(v, [5]).active = true)) });
-		await expect.element(local(screen, 'Board 6')).toHaveAttribute('data-active');
-		await expect.element(local(screen, 'Board 5')).not.toHaveAttribute('data-active');
+		await expect.element(group(screen, 'Board 6')).toHaveAttribute('data-active');
+		await expect.element(group(screen, 'Board 5')).not.toHaveAttribute('data-active');
 	});
 
 	it('outlines the Sent target and labels it in Notation', async () => {
@@ -28,7 +28,7 @@ describe('the board grammar', () => {
 				at(v, [5]).active = true;
 			})
 		});
-		await expect.element(local(screen, 'Board 6')).toHaveAttribute('data-sent');
+		await expect.element(group(screen, 'Board 6')).toHaveAttribute('data-sent');
 		await expect.element(screen.getByText('Sent → 6')).toBeVisible();
 	});
 
@@ -45,7 +45,7 @@ describe('the board grammar', () => {
 
 	it('inks a won board and fades its Cells', async () => {
 		const screen = await render(Board, { view: position((v) => winTopRight(v, 'X')) });
-		const board = local(screen, 'Board 3, won by X');
+		const board = group(screen, 'Board 3, won by X');
 		await expect.element(board).toHaveAttribute('data-status', 'won-x');
 		expect(board.element().querySelector('[data-owner="X"]')?.classList).not.toContain('watermark');
 		expect(board.element().querySelector('.cells')?.classList).toContain('faded');
@@ -53,7 +53,7 @@ describe('the board grammar', () => {
 
 	it('cross-hatches a drawn board without fading it', async () => {
 		const screen = await render(Board, { view: position((v) => (at(v, [7]).status = 'Drawn')) });
-		const board = local(screen, 'Board 8, drawn');
+		const board = group(screen, 'Board 8, drawn');
 		await expect.element(board).toHaveAttribute('data-status', 'drawn');
 		expect(board.element().querySelector('.hatch')).not.toBeNull();
 		expect(board.element().querySelector('.cells')?.classList).not.toContain('faded');
@@ -67,7 +67,7 @@ describe('the board grammar', () => {
 				at(v, [2]).active = true;
 			})
 		});
-		const board = local(screen, 'Board 3, won by O');
+		const board = group(screen, 'Board 3, won by O');
 		await expect.element(board).toHaveAttribute('data-active');
 		expect(board.element().querySelector('[data-owner="O"]')?.classList).toContain('watermark');
 		expect(board.element().querySelector('.cells')?.classList).not.toContain('faded');
@@ -85,10 +85,10 @@ describe('the board grammar', () => {
 				for (const space of [0, 1, 3, 4, 5, 6, 7, 8]) at(v, [space]).active = true;
 			})
 		});
-		await expect.element(local(screen, 'Board 3, won by X')).toHaveAttribute('data-sent');
-		await expect.element(local(screen, 'Board 3, won by X')).not.toHaveAttribute('data-active');
+		await expect.element(group(screen, 'Board 3, won by X')).toHaveAttribute('data-sent');
+		await expect.element(group(screen, 'Board 3, won by X')).not.toHaveAttribute('data-active');
 		for (const label of ['Board 1', 'Board 5', 'Board 9']) {
-			await expect.element(local(screen, label)).toHaveAttribute('data-active');
+			await expect.element(group(screen, label)).toHaveAttribute('data-active');
 		}
 	});
 });
@@ -118,15 +118,12 @@ describe('clicks', () => {
 
 	it('flashes the Board an illegal tap names', async () => {
 		const screen = await render(Board, { view: position(), flash: { board: [4], tick: 1 } });
-		await expect.element(local(screen, 'Board 5')).toHaveAttribute('data-flash');
-		await expect.element(local(screen, 'Board 4')).not.toHaveAttribute('data-flash');
+		await expect.element(group(screen, 'Board 5')).toHaveAttribute('data-flash');
+		await expect.element(group(screen, 'Board 4')).not.toHaveAttribute('data-flash');
 	});
 });
 
 describe('a Deep board that steps', () => {
-	/** The Cell at a path of three Spaces. */
-	const cell = (m: number, l: number, c: number) => m * 81 + l * 9 + c;
-
 	const tile = (screen: Awaited<ReturnType<typeof render>>, board: string) =>
 		screen.container.querySelector<HTMLElement>(`[data-board="${board}"]`)!;
 
@@ -150,8 +147,8 @@ describe('a Deep board that steps', () => {
 			at(v, [4]).active = true;
 			at(v, [4, 7]).active = true;
 			v.sent = [4, 7];
-			v.cells[cell(4, 3, 7)] = 'O';
-			v.last = cell(4, 3, 7);
+			v.cells[indexOf([4, 3, 7])] = 'O';
+			v.last = indexOf([4, 3, 7]);
 		}, 3);
 		const screen = await render(Board, { view, onstep: () => {}, flash: { board: [2], tick: 1 } });
 		await expect

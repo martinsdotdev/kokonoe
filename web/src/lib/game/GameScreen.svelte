@@ -23,7 +23,7 @@
 	import { resultText, winner } from './result.js';
 	import type { OfflineGame } from './session.svelte.js';
 	import TurnCard from './TurnCard.svelte';
-	import { outermostDecided } from './view.js';
+	import { decidedAbove } from './view.js';
 
 	let { session }: { session: OfflineGame } = $props();
 
@@ -175,7 +175,7 @@
 			sent={session.status.ToMove.sent}
 			last={session.moves.at(-1)?.notation ?? null}
 			refused={session.refusal !== null}
-			decided={session.view.sent && outermostDecided(session.view, session.view.sent)}
+			decidedAbove={session.view.sent && decidedAbove(session.view, session.view.sent)}
 		/>
 	{/if}
 {/snippet}

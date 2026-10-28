@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { TOP_ROW, notation } from './games.js';
+import { TOP_ROW, notation } from '../lib/game/games.fixtures.js';
 import { stepThrough, stepped } from './steps.js';
 
 const cell = (page: Page, name: string) =>

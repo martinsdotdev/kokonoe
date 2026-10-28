@@ -15,7 +15,7 @@ import { boardLabel, notation } from './notation.js';
 import { resultText, type End } from './result.js';
 import { rulesetCode } from './rules.js';
 import { browserStore, type GameStore, type SavedGame } from './saved.js';
-import { at, boardView, localOf, type BoardView } from './view.js';
+import { at, boardView, lineage, localOf, type BoardView } from './view.js';
 
 /** One row of the move list. */
 export interface Move {
@@ -67,14 +67,12 @@ const named = (illegal: IllegalMove): Board | null => {
 
 /** What `cell` did, read from the board before and after it: the outermost Board it decided. */
 const note = (before: BoardView, after: BoardView, cell: Cell): string => {
-	const local = localOf(cell, after.depth);
-	for (let length = 1; length <= local.length; length++) {
-		const board = local.slice(0, length);
-		const now = at(after, board).status;
-		if (at(before, board).status === 'Open' && now !== 'Open') {
-			const label = boardLabel(board);
-			return now === 'Drawn' ? `Board ${label} drawn` : `Won board ${label}`;
-		}
+	const decided = lineage(localOf(cell, after.depth))
+		.slice(1)
+		.find((board) => at(before, board).status === 'Open' && at(after, board).status !== 'Open');
+	if (decided) {
+		const label = boardLabel(decided);
+		return at(after, decided).status === 'Drawn' ? `Board ${label} drawn` : `Won board ${label}`;
 	}
 	if (after.within) return 'Free move';
 	return after.sent === null ? '' : `Sent → ${boardLabel(after.sent)}`;

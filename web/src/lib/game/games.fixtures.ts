@@ -1,3 +1,5 @@
+import { indexOf } from './view.js';
+
 /**
  * Games the tests play, as the engine's tests write them: each move its Spaces as digits, so
  * `"42"` is Space 4, then Space 2, and at depth 3 `"407"` is Space 4, then 0, then 7.
@@ -34,9 +36,8 @@ export const parse = (moves: string): number[][] =>
 		.filter(Boolean)
 		.map((digits) => [...digits].map(Number));
 
-/** Each move as its Cell index, the path read in base 9. */
-export const cells = (moves: string): number[] =>
-	parse(moves).map((path) => path.reduce((index, space) => index * 9 + space, 0));
+/** Each move as its Cell index. */
+export const cells = (moves: string): number[] => parse(moves).map(indexOf);
 
 /** A move's digits, or any path, as Notation: `"42"` is Cell 5·3. */
 export const notation = (path: string | number[]) =>

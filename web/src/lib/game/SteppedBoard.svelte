@@ -16,7 +16,7 @@
 	import BoardTile from './BoardTile.svelte';
 	import MiniBoard from './MiniBoard.svelte';
 	import { boardName } from './notation.js';
-	import { key, localOf, same, type BoardView } from './view.js';
+	import { key, lineage, localOf, same, type BoardView } from './view.js';
 
 	interface Props {
 		view: BoardView;
@@ -143,10 +143,10 @@
 	<nav aria-label="Where you are">
 		<!-- Safari drops a list's semantics with its bullets, unless it's given the role back. -->
 		<ol role="list">
-			{#each focus.map((_, i) => focus.slice(0, i)) as crumb (key(crumb))}
+			{#each lineage(focus).slice(0, -1) as crumb (key(crumb))}
 				<li>
 					<button type="button" class="crumb out" onclick={() => step(crumb)}>
-						<span class="mini" aria-hidden="true"><MiniBoard {view} board={crumb} label="" /></span>
+						<span class="mini"><MiniBoard {view} board={crumb} /></span>
 						{crumb.length ? boardName(crumb) : 'Global'}
 					</button>
 				</li>
@@ -183,8 +183,9 @@
 		flex-direction: column;
 		gap: 12px;
 		width: 100%;
-		/* On a desktop the whole board fits the window, the breadcrumb and header above it. */
-		max-width: min(600px, 100svh - 12rem);
+		/* On a desktop the whole board fits the window under the header, but never shrinks past
+		   playing size: a short window, or a zoomed one, scrolls instead. */
+		max-width: min(600px, max(20rem, 100svh - 12rem));
 	}
 
 	ol {

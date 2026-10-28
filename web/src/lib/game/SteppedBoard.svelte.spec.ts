@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import SteppedBoard from './SteppedBoard.svelte';
 import { position } from './view.fixtures.js';
-import { at } from './view.js';
+import { at, indexOf } from './view.js';
 
 /** Sent to `space`, after the move that sent there. */
 const sentTo = (space: number, last: number) =>
@@ -120,14 +120,11 @@ describe('keyboard focus', () => {
 });
 
 describe('Deep', () => {
-	/** The Cell at a path of three Spaces. */
-	const cell = (m: number, l: number, c: number) => m * 81 + l * 9 + c;
-
 	/** X's move at `last` Sent O to the Local board it names, or under a Free move, `within`. */
 	const deep = (last: [number, number, number], within: number[] | null = null) =>
 		position((v) => {
-			v.cells[cell(...last)] = 'X';
-			v.last = cell(...last);
+			v.cells[indexOf(last)] = 'X';
+			v.last = indexOf(last);
 			v.sent = last.slice(1);
 			v.within = within;
 		}, 3);

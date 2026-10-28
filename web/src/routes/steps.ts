@@ -1,6 +1,7 @@
 /** Playing on the board that steps into one Board at a time: on a phone, and for Deep. */
 import { expect, type Locator, type Page } from '@playwright/test';
-import { notation, parse } from './games.js';
+import { notation, parse } from '../lib/game/games.fixtures.js';
+import { boardName } from '../lib/game/notation.js';
 
 export const stepped = (page: Page) => page.locator('[data-focus]');
 
@@ -13,12 +14,10 @@ export const settledFocus = async (page: Page): Promise<number[]> => {
 
 /** The button that steps into `board`. */
 export const stepInto = (page: Page, board: number[]) =>
-	page.getByRole('button', {
-		name: new RegExp(`^${board.length === 2 ? 'Local board' : 'Board'} ${notation(board)}(,|$)`)
-	});
+	page.getByRole('button', { name: new RegExp(`^${boardName(board)}(,|$)`) });
 
 /** The longest path both start with. */
-const shared = (a: number[], b: number[]) => {
+const commonPrefix = (a: number[], b: number[]) => {
 	const n = a.findIndex((space, i) => space !== b[i]);
 	return a.slice(0, n === -1 ? a.length : n);
 };
@@ -40,7 +39,7 @@ export const stepThrough = async (
 	for (const [i, path] of played.entries()) {
 		const local = path.slice(0, -1);
 		const sent = i === 0 ? [] : played[i - 1].slice(1);
-		const shown = shared(sent, local);
+		const shown = commonPrefix(sent, local);
 		expect(await settledFocus(page), `before move ${i + 1}`).toEqual(shown);
 		for (let level = shown.length + 1; level <= local.length; level++) {
 			await press(stepInto(page, local.slice(0, level)));
@@ -53,8 +52,8 @@ export const stepThrough = async (
 };
 
 /** How many moves took each number of presses. */
-export const tally = (presses: number[]) =>
-	presses.reduce<Record<number, number>>(
-		(counts, n) => ({ ...counts, [n]: (counts[n] ?? 0) + 1 }),
-		{}
-	);
+export const tally = (presses: number[]) => {
+	const counts: Record<number, number> = {};
+	for (const n of presses) counts[n] = (counts[n] ?? 0) + 1;
+	return counts;
+};

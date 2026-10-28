@@ -1,25 +1,26 @@
 <!--
-	One Local board in the board grammar: pencil between Cells, the highlighter when it's Active, a
-	dashed Sent target, a ring on the last move, an inked owner or a Continuation watermark, and
-	hatching once drawn. It renders its part of a BoardView and reports clicks.
+	One Board under the Global board in the board grammar: pencil between Cells, the highlighter
+	when it's Active, a dashed Sent target, a ring on the last move, an inked owner or a
+	Continuation watermark, and hatching once drawn. It renders its part of a BoardView and reports
+	clicks.
 
-	With `onstep` the whole board is one button that steps into it, and its Cells are only drawn:
+	With `onstep` the whole tile is one button that steps into it, and its Cells are only drawn:
 	the Global view on a phone, where Boards are tapped, not Cells.
 -->
 <script lang="ts">
-	import type { Cell, Player } from '#lib/engine.js';
+	import type { Board, Cell, Player } from '#lib/engine.js';
 	import Mark from './Mark.svelte';
-	import { boardLabel, notation } from './notation.js';
-	import { ownerOf, type BoardView, type LocalView } from './view.js';
+	import { boardLabel, boardName, notation } from './notation.js';
+	import { at, cellsOf, key, ownerOf, same, type BoardView } from './view.js';
 
 	interface Props {
 		view: BoardView;
-		local: LocalView;
+		board: Board;
 		onplay?: (cell: Cell) => void;
-		/** Makes the board a button that steps into it, by its Space. */
-		onstep?: (space: number) => void;
-		/** A Local board to flash, after an illegal tap that names it. A new `tick` flashes again. */
-		flash?: { space: number; tick: number } | null;
+		/** Makes the tile a button that steps into its Board, unless it's drawn `large`. */
+		onstep?: (board: Board) => void;
+		/** A Board to flash, after an illegal tap that names it. A new `tick` flashes again. */
+		flash?: { board: Board; tick: number } | null;
 		/** The game is over: Cells take no clicks. */
 		disabled?: boolean;
 		/** Drawn alone, as large as the screen allows. */
@@ -28,7 +29,7 @@
 
 	let {
 		view,
-		local,
+		board,
 		onplay,
 		onstep,
 		flash = null,
@@ -36,42 +37,43 @@
 		large = false
 	}: Props = $props();
 
-	const SPACES = [...Array(9).keys()];
-
-	const won = $derived(ownerOf(local));
+	const state = $derived(at(view, board));
+	/** The whole tile is a button that steps into it. */
+	const button = $derived(!large && !!onstep);
+	const won = $derived(ownerOf(state));
 	const name = $derived.by(() => {
-		const name = `Board ${boardLabel([local.space])}`;
-		return won ? `${name}, won by ${won}` : local.status === 'Drawn' ? `${name}, drawn` : name;
+		const name = boardName(board);
+		return won ? `${name}, won by ${won}` : state.status === 'Drawn' ? `${name}, drawn` : name;
 	});
 
-	const legal = (cell: Cell) => !disabled && local.active && view.cells[cell] === null;
+	const legal = (cell: Cell) => !disabled && state.active && view.cells[cell] === null;
 </script>
 
 <svelte:element
-	this={onstep ? 'button' : 'div'}
-	type={onstep ? 'button' : undefined}
-	class="local"
+	this={button ? 'button' : 'div'}
+	type={button ? 'button' : undefined}
+	class="tile"
 	class:large
-	role={onstep ? undefined : 'group'}
-	aria-label={onstep && local.active ? `${name}, play here` : name}
-	onclick={onstep && (() => onstep(local.space))}
-	data-space={local.space}
-	data-status={won ? `won-${won.toLowerCase()}` : local.status === 'Drawn' ? 'drawn' : 'open'}
-	data-active={local.active || undefined}
-	data-sent={view.sent === local.space || undefined}
-	data-flash={flash?.space === local.space || undefined}
+	role={button ? undefined : 'group'}
+	aria-label={button && state.active ? `${name}, play here` : name}
+	onclick={button ? () => onstep?.(board) : undefined}
+	data-board={key(board)}
+	data-status={won ? `won-${won.toLowerCase()}` : state.status === 'Drawn' ? 'drawn' : 'open'}
+	data-active={state.active || undefined}
+	data-sent={same(view.sent, board) || undefined}
+	data-flash={same(flash?.board, board) || undefined}
 >
 	<span class="cells" class:faded={won && !view.continuation}>
-		{#each SPACES as inner (inner)}
-			{@const cell = local.space * 9 + inner}
+		<!-- Keyed by Space, so a follow from one Board to another keeps the same Cell buttons. -->
+		{#each cellsOf(board) as cell, space (space)}
 			{@const mark = view.cells[cell]}
-			{#if onstep}
+			{#if button}
 				<span class="cell">{@render face(cell, mark)}</span>
 			{:else}
 				<button
 					type="button"
 					class="cell"
-					aria-label={`Cell ${notation(cell, 2)}${mark ? `, ${mark}` : ''}`}
+					aria-label={`Cell ${notation(cell, view.depth)}${mark ? `, ${mark}` : ''}`}
 					aria-disabled={!legal(cell)}
 					onclick={() => !disabled && onplay?.(cell)}
 				>
@@ -80,7 +82,7 @@
 			{/if}
 		{/each}
 	</span>
-	{#if local.status === 'Drawn'}
+	{#if state.status === 'Drawn'}
 		<span class="hatch" aria-hidden="true"></span>
 	{/if}
 	{#if won}
@@ -101,11 +103,11 @@
 			{/if}
 		</svg>
 	{/if}
-	{#if view.sent === local.space}
+	{#if same(view.sent, board)}
 		<span class="sent" aria-hidden="true"></span>
-		<span class="sent-label">Sent → {boardLabel([local.space])}</span>
+		<span class="sent-label">Sent → {boardLabel(board)}</span>
 	{/if}
-	{#if flash?.space === local.space}
+	{#if flash && same(flash.board, board)}
 		{#key flash.tick}<span class="flash" aria-hidden="true"></span>{/key}
 	{/if}
 </svelte:element>
@@ -116,7 +118,7 @@
 {/snippet}
 
 <style>
-	.local {
+	.tile {
 		/* The ground under Cells: paper, washed with highlighter where the next move may go. */
 		--ground: var(--background);
 		--wash: none;
@@ -127,23 +129,23 @@
 		padding: 8%;
 		background: var(--wash), var(--ground);
 	}
-	.local[data-active] {
+	.tile[data-active] {
 		--wash: linear-gradient(var(--highlighter), var(--highlighter));
 	}
-	button.local {
+	button.tile {
 		margin: 0;
 		border: 0;
 		color: inherit;
 		font: inherit;
 		cursor: pointer;
 	}
-	button.local:focus-visible {
+	button.tile:focus-visible {
 		z-index: 1;
 		outline: 3px solid var(--ring);
 		outline-offset: -3px;
 	}
 	/* One board alone, framed in the ink that parts Local boards on the Global board. */
-	.local.large {
+	.tile.large {
 		width: 100%;
 		max-width: 600px;
 		aspect-ratio: 1;

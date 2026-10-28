@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { Player } from '#lib/engine.js';
 import Board from './Board.svelte';
-import type { BoardView } from './view.js';
+import { at, type BoardView } from './view.js';
 import { position } from './view.fixtures.js';
 
 /** Board 3 (Space 2), won by `player` along its top row. */
 const winTopRight = (view: BoardView, player: Player) => {
 	for (const inner of [0, 1, 2]) view.cells[2 * 9 + inner] = player;
-	view.locals[2].status = { Won: player };
+	at(view, [2]).status = { Won: player };
 };
 
 const local = (screen: Awaited<ReturnType<typeof render>>, label: string) =>
@@ -16,7 +16,7 @@ const local = (screen: Awaited<ReturnType<typeof render>>, label: string) =>
 
 describe('the board grammar', () => {
 	it('washes the Active boards', async () => {
-		const screen = await render(Board, { view: position((v) => (v.locals[5].active = true)) });
+		const screen = await render(Board, { view: position((v) => (at(v, [5]).active = true)) });
 		await expect.element(local(screen, 'Board 6')).toHaveAttribute('data-active');
 		await expect.element(local(screen, 'Board 5')).not.toHaveAttribute('data-active');
 	});
@@ -24,8 +24,8 @@ describe('the board grammar', () => {
 	it('outlines the Sent target and labels it in Notation', async () => {
 		const screen = await render(Board, {
 			view: position((v) => {
-				v.sent = 5;
-				v.locals[5].active = true;
+				v.sent = [5];
+				at(v, [5]).active = true;
 			})
 		});
 		await expect.element(local(screen, 'Board 6')).toHaveAttribute('data-sent');
@@ -52,7 +52,7 @@ describe('the board grammar', () => {
 	});
 
 	it('cross-hatches a drawn board without fading it', async () => {
-		const screen = await render(Board, { view: position((v) => (v.locals[7].status = 'Drawn')) });
+		const screen = await render(Board, { view: position((v) => (at(v, [7]).status = 'Drawn')) });
 		const board = local(screen, 'Board 8, drawn');
 		await expect.element(board).toHaveAttribute('data-status', 'drawn');
 		expect(board.element().querySelector('.hatch')).not.toBeNull();
@@ -64,7 +64,7 @@ describe('the board grammar', () => {
 			view: position((v) => {
 				v.continuation = true;
 				winTopRight(v, 'O');
-				v.locals[2].active = true;
+				at(v, [2]).active = true;
 			})
 		});
 		const board = local(screen, 'Board 3, won by O');
@@ -80,9 +80,9 @@ describe('the board grammar', () => {
 		const screen = await render(Board, {
 			view: position((v) => {
 				winTopRight(v, 'X');
-				v.sent = 2;
-				v.free = true;
-				for (const space of [0, 1, 3, 4, 5, 6, 7, 8]) v.locals[space].active = true;
+				v.sent = [2];
+				v.within = [];
+				for (const space of [0, 1, 3, 4, 5, 6, 7, 8]) at(v, [space]).active = true;
 			})
 		});
 		await expect.element(local(screen, 'Board 3, won by X')).toHaveAttribute('data-sent');
@@ -97,7 +97,7 @@ describe('clicks', () => {
 	it('reports the Cell clicked, legal or not', async () => {
 		const onplay = vi.fn();
 		const screen = await render(Board, {
-			view: position((v) => (v.locals[4].active = true)),
+			view: position((v) => (at(v, [4]).active = true)),
 			onplay
 		});
 		await expect
@@ -117,7 +117,7 @@ describe('clicks', () => {
 	});
 
 	it('flashes the Board an illegal tap names', async () => {
-		const screen = await render(Board, { view: position(), flash: { space: 4, tick: 1 } });
+		const screen = await render(Board, { view: position(), flash: { board: [4], tick: 1 } });
 		await expect.element(local(screen, 'Board 5')).toHaveAttribute('data-flash');
 		await expect.element(local(screen, 'Board 4')).not.toHaveAttribute('data-flash');
 	});

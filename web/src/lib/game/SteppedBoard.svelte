@@ -9,21 +9,21 @@
 	can't play into the Board that just came in.
 -->
 <script lang="ts">
-	import type { Cell } from '#lib/engine.js';
+	import type { Board, Cell } from '#lib/engine.js';
 	import { prefersReducedMotion } from 'svelte/motion';
-	import Board from './Board.svelte';
-	import LocalBoard from './LocalBoard.svelte';
+	import GlobalBoard from './Board.svelte';
+	import BoardTile from './BoardTile.svelte';
 	import MiniBoard from './MiniBoard.svelte';
-	import { boardLabel } from './notation.js';
-	import type { BoardView } from './view.js';
+	import { boardName } from './notation.js';
+	import { key, localOf, same, type BoardView } from './view.js';
 
 	interface Props {
 		view: BoardView;
 		onplay?: (cell: Cell) => void;
-		/** A Local board to flash, after an illegal tap that names it. A new `tick` flashes again. */
-		flash?: { space: number; tick: number } | null;
+		/** A Board to flash, after an illegal tap that names it. A new `tick` flashes again. */
+		flash?: { board: Board; tick: number } | null;
 		/** The last tap was refused: the view steps to the Board the refusal names. */
-		refusal?: { board: number | null; tick: number } | null;
+		refusal?: { board: Board | null; tick: number } | null;
 		/** The game is over: Cells take no clicks. */
 		disabled?: boolean;
 		/** `view` is the computer's move, to show landing before following. */
@@ -39,17 +39,13 @@
 		replied = false
 	}: Props = $props();
 
-	/** The Global board, or a Local board by its Space. */
-	type Focus = 'global' | number;
-
 	/** How long a step takes, as the prototype had it. */
 	const STEP_MS = 220;
 	/** How long the computer's move stays in view before the view follows. */
 	const HOLD_MS = 600;
 
-	/** Where the player to move plays: the Sent target, or anywhere. */
-	const follow = (view: BoardView): Focus =>
-		view.sent === null || view.free ? 'global' : view.sent;
+	/** Where the player to move plays: the Sent target, the Board a Free move is inside, or anywhere. */
+	const follow = (view: BoardView): Board => view.within ?? view.sent ?? [];
 
 	/**
 	 * Holding the computer's move in view. It reads `view` so each new view starts a new hold,
@@ -61,12 +57,12 @@
 	});
 
 	/**
-	 * What's shown: the Board a refusal names, the computer's move, or where to play. A step
-	 * assigns it until the game next changes.
+	 * What's shown, by its path, `[]` being the Global board: the Board a refusal names, the
+	 * computer's move, or where to play. A step assigns it until the game next changes.
 	 */
-	let focus: Focus = $derived.by(() => {
-		if (refusal?.board != null) return refusal.board;
-		if (holding && view.last !== null) return Math.floor(view.last / 9);
+	let focus: Board = $derived.by(() => {
+		if (refusal?.board) return refusal.board;
+		if (holding && view.last !== null) return localOf(view.last, view.depth);
 		return follow(view);
 	});
 
@@ -79,7 +75,7 @@
 	/** No step is animating, so taps go through. Tests wait on it as `data-settled`. */
 	let settled = $state(true);
 
-	const step = (to: Focus) => {
+	const step = (to: Board) => {
 		if (!settled) return;
 		holding = false;
 		focus = to;
@@ -89,7 +85,7 @@
 	let stage: HTMLElement;
 	// Plain variables, not state: the effects below read and write them, and nothing renders them.
 	/** The focus last drawn: the step's animation goes from it. */
-	let drawn: Focus | null = null;
+	let drawn: Board | null = null;
 	/** Keyboard focus was in the board as the view changed, read before the DOM changes. */
 	let focused = false;
 
@@ -102,16 +98,21 @@
 		const to = focus;
 		const from = drawn;
 		drawn = to;
-		if (from === null || from === to) return;
-		// Between the Global view and a Board the focused element is gone, so pass focus on: to the
-		// Board just entered, or to the button of the Board just left. Board to Board keeps its Cells.
+		// Every move builds new paths, so compare them by value.
+		if (from === null || same(from, to)) return;
+		const into = same(from, to.slice(0, from.length));
+		const out = same(to, from.slice(0, to.length));
+		// Stepping in or out, the focused element is gone, so pass focus on: to the Board entered,
+		// or to the button of the Board just left. From Board to Board the Cells stay.
 		if (focused && !root.contains(document.activeElement)) {
-			const next = to === 'global' ? `[data-space="${from}"]` : '[aria-current]';
-			root.querySelector<HTMLElement>(next)?.focus();
+			const next = out
+				? stage.querySelector<HTMLElement>(`[data-board="${key(from.slice(0, to.length + 1))}"]`)
+				: root.querySelector<HTMLElement>('[aria-current]');
+			next?.focus();
 		}
-		// Grow from the place on the Global board of the Board entered, or the Board left.
-		const space = to === 'global' ? from : to;
-		if (prefersReducedMotion.current || space === 'global') return;
+		// Grow from where the Board stepped into, or out of, sits in its parent.
+		const space = out ? from[to.length] : into ? to[from.length] : to[to.length - 1];
+		if (prefersReducedMotion.current) return;
 		stage.style.transformOrigin = `${(space % 3) * 50}% ${Math.floor(space / 3) * 50}%`;
 		settled = false;
 		const animation = stage.animate(
@@ -132,39 +133,45 @@
 	});
 </script>
 
-<div class="stepped" bind:this={root} data-focus={focus} data-settled={settled || undefined}>
+<div
+	class="stepped"
+	bind:this={root}
+	data-focus={focus.length ? key(focus) : 'global'}
+	data-settled={settled || undefined}
+>
 	<nav aria-label="Where you are">
 		<!-- Safari drops a list's semantics with its bullets, unless it's given the role back. -->
 		<ol role="list">
-			{#if focus === 'global'}
-				<li><span class="crumb" aria-current="location">Global</span></li>
-			{:else}
+			{#each focus.map((_, i) => focus.slice(0, i)) as crumb (key(crumb))}
 				<li>
-					<button type="button" class="crumb out" onclick={() => step('global')}>
-						<span class="mini" aria-hidden="true"><MiniBoard {view} label="" /></span>
-						Global
+					<button type="button" class="crumb out" onclick={() => step(crumb)}>
+						<span class="mini" aria-hidden="true"><MiniBoard {view} board={crumb} label="" /></span>
+						{crumb.length ? boardName(crumb) : 'Global'}
 					</button>
 				</li>
-				<li>
-					<h2 class="crumb" aria-current="location" tabindex="-1">
-						Board {boardLabel([focus])}
-					</h2>
-				</li>
-			{/if}
+			{/each}
+			<li>
+				{#if focus.length}
+					<h2 class="crumb" aria-current="location" tabindex="-1">{boardName(focus)}</h2>
+				{:else}
+					<span class="crumb" aria-current="location">Global</span>
+				{/if}
+			</li>
 		</ol>
 	</nav>
 	<div bind:this={stage}>
-		{#if focus === 'global'}
-			<Board {view} {flash} {disabled} onstep={step} />
-		{:else}
-			<LocalBoard
+		{#if focus.length}
+			<BoardTile
 				{view}
-				local={view.locals[focus]}
+				board={focus}
 				{flash}
 				{disabled}
 				large
+				onstep={step}
 				onplay={(cell) => settled && onplay?.(cell)}
 			/>
+		{:else}
+			<GlobalBoard {view} {flash} {disabled} onstep={step} />
 		{/if}
 	</div>
 </div>

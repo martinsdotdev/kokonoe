@@ -15,7 +15,7 @@ import { boardLabel, notation } from './notation.js';
 import { resultText, type End } from './result.js';
 import { rulesetCode } from './rules.js';
 import { browserStore, type GameStore, type SavedGame } from './saved.js';
-import { boardView, type BoardView } from './view.js';
+import { at, boardView, localOf, type BoardView } from './view.js';
 
 /** One row of the move list. */
 export interface Move {
@@ -57,24 +57,27 @@ const seats = (opponent: Opponent): Record<Player, Seat> => {
 	return opponent.seat === 'X' ? { X: you, O: computer } : { X: computer, O: you };
 };
 
-/** The Local board an IllegalMove names, if it names one. */
-const named = (illegal: IllegalMove): number | null => {
+/** The Board an IllegalMove names, if it names one other than the Global board. */
+const named = (illegal: IllegalMove): Board | null => {
 	if (typeof illegal === 'string') return null;
 	const board: Board =
 		'BeneathDecided' in illegal ? illegal.BeneathDecided.board : illegal.OutsideActiveBoards.within;
-	return board.length === 1 ? board[0] : null;
+	return board.length ? board : null;
 };
 
-/** What `cell` did, read from the board before and after it. */
+/** What `cell` did, read from the board before and after it: the outermost Board it decided. */
 const note = (before: BoardView, after: BoardView, cell: Cell): string => {
-	const space = Math.floor(cell / 9);
-	const board = boardLabel([space]);
-	const now = after.locals[space].status;
-	if (before.locals[space].status === 'Open' && now !== 'Open') {
-		return now === 'Drawn' ? `Board ${board} drawn` : `Won board ${board}`;
+	const local = localOf(cell, after.depth);
+	for (let length = 1; length <= local.length; length++) {
+		const board = local.slice(0, length);
+		const now = at(after, board).status;
+		if (at(before, board).status === 'Open' && now !== 'Open') {
+			const label = boardLabel(board);
+			return now === 'Drawn' ? `Board ${label} drawn` : `Won board ${label}`;
+		}
 	}
-	if (after.free) return 'Free move';
-	return after.sent === null ? '' : `Sent → ${boardLabel([after.sent])}`;
+	if (after.within) return 'Free move';
+	return after.sent === null ? '' : `Sent → ${boardLabel(after.sent)}`;
 };
 
 /** Resolves after `ms`, or rejects when `signal` aborts first. */
@@ -109,7 +112,7 @@ const dealt = (game: Game): Move[] =>
 	game.opening().map((cell, i) => ({
 		n: i + 1,
 		player: i % 2 ? 'O' : 'X',
-		notation: notation(cell, 2),
+		notation: notation(cell, game.ruleset().depth),
 		dealt: true,
 		note: ''
 	}));
@@ -151,13 +154,13 @@ export class OfflineGame {
 	moves: Move[];
 	won: Record<Player, number>;
 	resigned: Player | null = $state.raw(null);
-	/** The Local board to flash, with a tick so the same board can flash twice running. */
-	flash: { space: number; tick: number } | null = $state.raw(null);
+	/** The Board to flash, with a tick so the same board can flash twice running. */
+	flash: { board: Board; tick: number } | null = $state.raw(null);
 	/**
-	 * The last tap was refused, until the next change: the Local board the refusal named, if any,
-	 * and a tick for each refusal. Unlike `flash`, it lasts, so the turn line says it once.
+	 * The last tap was refused, until the next change: the Board the refusal named, if any, and a
+	 * tick for each refusal. Unlike `flash`, it lasts, so the turn line says it once.
 	 */
-	refusal: { board: number | null; tick: number } | null = $state.raw(null);
+	refusal: { board: Board | null; tick: number } | null = $state.raw(null);
 	/** The last change was the computer's move, which the phone board shows landing. */
 	replied = $state.raw(false);
 	/** The game's id in the store, and its address once `stored`. A restart gives a new one. */
@@ -337,7 +340,7 @@ export class OfflineGame {
 			{
 				n: this.moves.length + 1,
 				player,
-				notation: notation(cell, 2),
+				notation: notation(cell, this.variant.ruleset.depth),
 				dealt: false,
 				note: note(before, this.view, cell)
 			}
@@ -420,9 +423,9 @@ export class OfflineGame {
 		return { X: this.#game.wonCount('X'), O: this.#game.wonCount('O') };
 	}
 
-	#flash(space: number | null) {
+	#flash(board: Board | null) {
 		clearTimeout(this.#flashTimer);
-		this.flash = space === null ? null : { space, tick: (this.flash?.tick ?? 0) + 1 };
-		if (space !== null) this.#flashTimer = setTimeout(() => (this.flash = null), FLASH_MS);
+		this.flash = board === null ? null : { board, tick: (this.flash?.tick ?? 0) + 1 };
+		if (board !== null) this.#flashTimer = setTimeout(() => (this.flash = null), FLASH_MS);
 	}
 }

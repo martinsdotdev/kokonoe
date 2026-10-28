@@ -4,7 +4,7 @@
  * WASM. A Record carries its own `rules_version`; the database's version covers only its shape.
  */
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { Player, Record } from '#lib/engine.js';
+import type { BoardStatus, Cell, Player, Record } from '#lib/engine.js';
 import type { Opponent } from './launch.js';
 import type { BoardView } from './view.js';
 
@@ -38,7 +38,29 @@ interface Schema extends DBSchema {
 }
 
 export const DATABASE = 'kokonoe';
-const VERSION = 1;
+/** Version 2 names Boards in the stored view by path, which depth 3 needs (KOK-39). */
+const VERSION = 2;
+
+/** A view as version 1 stored it: depth 2, each Local board by its Space. */
+export interface ViewVersion1 {
+	continuation: boolean;
+	cells: (Player | null)[];
+	locals: { space: number; status: BoardStatus; active: boolean }[];
+	sent: number | null;
+	free: boolean;
+	last: Cell | null;
+}
+
+/** A version-1 view as version 2 stores it. Every game was depth 2 then. */
+export const fromVersion1 = (old: ViewVersion1): BoardView => ({
+	depth: 2,
+	continuation: old.continuation,
+	cells: old.cells,
+	boards: [old.locals.map(({ status, active }) => ({ status, active }))],
+	sent: old.sent === null ? null : [old.sent],
+	within: old.free ? [] : null,
+	last: old.last
+});
 
 const databases = new Map<string, Promise<IDBPDatabase<Schema>>>();
 
@@ -50,8 +72,20 @@ const database = (name: string): Promise<IDBPDatabase<Schema>> => {
 		if (databases.get(name) === opening) databases.delete(name);
 	};
 	const opening = openDB<Schema>(name, VERSION, {
-		upgrade(db) {
-			db.createObjectStore('games', { keyPath: 'id' }).createIndex('updated', 'updated');
+		// Only IndexedDB requests may be awaited here, or the upgrade's transaction closes.
+		async upgrade(db, from, _to, transaction) {
+			if (from < 1) {
+				db.createObjectStore('games', { keyPath: 'id' }).createIndex('updated', 'updated');
+				return;
+			}
+			if (from < 2) {
+				let cursor = await transaction.objectStore('games').openCursor();
+				while (cursor) {
+					const view = cursor.value.view as unknown as ViewVersion1;
+					await cursor.update({ ...cursor.value, view: fromVersion1(view) });
+					cursor = await cursor.continue();
+				}
+			}
 		},
 		// A newer build wants to change the store: step aside so its upgrade isn't blocked.
 		blocking() {

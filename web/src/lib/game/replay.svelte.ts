@@ -1,15 +1,25 @@
 /**
- * A saved game shown a ply at a time, in the Replay viewer (spec §7.4): stepped, autoplayed, or
+ * A game shown a ply at a time, in the Replay viewer (spec §7.4): stepped, autoplayed, or
  * jumped to any ply, the dealt opening included. Every position is built once from the Record,
- * so a step only picks one, and no engine Game is held while the page shows them.
+ * so a step only picks one, and no engine Game is held while the page shows them. The game
+ * comes from this device's saved games or from an imported file.
  */
-import type { Game, Player, Status } from '#lib/engine.js';
-import type { Opponent } from './launch.js';
-import { dealtMoves, playedMove, seats, written, type Move, type Seat } from './moves.js';
+import type { Cell, Game, Player, Record as GameRecord, Status } from '#lib/engine.js';
+import { dayOf, type GameFile, type ParsedFile } from './gamefile.js';
+import { againstLabel } from './launch.js';
+import {
+	dealtMoves,
+	playedMove,
+	seatLabel,
+	seats,
+	written,
+	type Move,
+	type Seat
+} from './moves.js';
 import { openRecord } from './record.js';
 import type { End } from './result.js';
 import type { Variant } from './rules.js';
-import { savedVariant, type SavedGame } from './saved.js';
+import type { SavedGame } from './saved.js';
 import { positionView, range, type BoardView } from './view.js';
 
 /** How long autoplay shows each ply. */
@@ -22,9 +32,52 @@ export interface Moment {
 	won: Record<Player, number>;
 }
 
+/** What the viewer shows a game from. Plain data, so a page's history state can keep it. */
+export interface ReplaySource {
+	record: GameRecord;
+	variant: string;
+	seats: Record<Player, Seat>;
+	/** Who the game was against, or where it came from: "Pass and play", "Imported". */
+	against: string;
+	resigned: Player | null;
+	/** The day it began, `2026-10-28`, or '' when no one knows. */
+	date: string;
+}
+
+/** A game saved on this device, to replay. */
+export const fromSaved = (saved: SavedGame): ReplaySource => ({
+	record: saved.record,
+	variant: saved.variant.name,
+	seats: seats(saved.opponent),
+	against: againstLabel(saved.opponent),
+	resigned: saved.resigned,
+	date: dayOf(saved.started)
+});
+
+/** An imported file, to replay, once `openFile` has checked it and found who resigned. */
+export const fromFile = (
+	parsed: ParsedFile,
+	variant: string,
+	resigned: Player | null
+): ReplaySource => {
+	const seat = (player: Player, otherwise: string): Seat => ({
+		name: parsed.tags.get(player)?.trim() || otherwise,
+		detail: null
+	});
+	const date = parsed.tags.get('Date') ?? '';
+	return {
+		record: parsed.record,
+		variant,
+		seats: { X: seat('X', 'Player 1'), O: seat('O', 'Player 2') },
+		against: 'Imported',
+		resigned,
+		date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ''
+	};
+};
+
 export class Replay {
+	readonly source: ReplaySource;
 	readonly variant: Variant;
-	readonly opponent: Opponent;
 	readonly seats: Record<Player, Seat>;
 	/** How the game ended, or null when it was left unfinished. */
 	readonly end: End | null;
@@ -32,6 +85,8 @@ export class Replay {
 	readonly moves: Move[];
 	/** The game after each ply: the empty board at 0, the last ply at `moves.length`. */
 	readonly moments: Moment[];
+	/** The plies the Random opening dealt. */
+	readonly opening: Cell[];
 	/** The ply shown. */
 	ply = $state(0);
 	/** Autoplay is stepping through the plies. */
@@ -39,23 +94,24 @@ export class Replay {
 	#timer: ReturnType<typeof setInterval> | undefined;
 
 	/**
-	 * The Replay of a saved game. Throws an UnplayableGame when this version of Kokonoe can't
-	 * replay its Record.
+	 * The Replay of a game. Throws an UnplayableGame when this version of Kokonoe can't replay
+	 * its Record.
 	 */
-	static open(saved: SavedGame): Replay {
-		const game = openRecord(saved.record);
+	static open(source: ReplaySource): Replay {
+		const game = openRecord(source.record);
 		try {
-			return new Replay(saved, game);
+			return new Replay(source, game);
 		} finally {
 			game.free();
 		}
 	}
 
-	private constructor(saved: SavedGame, game: Game) {
-		this.variant = savedVariant(saved);
-		this.opponent = saved.opponent;
-		this.seats = seats(saved.opponent);
+	private constructor(source: ReplaySource, game: Game) {
+		this.source = source;
+		this.variant = { name: source.variant, ruleset: source.record.ruleset };
+		this.seats = source.seats;
 		const opening = game.opening();
+		this.opening = opening;
 		const plies = [...opening, ...game.moves()];
 		this.moments = range(plies.length + 1).map((ply) => {
 			// Every ply up to the game's own has a State.
@@ -78,11 +134,28 @@ export class Replay {
 			})
 		];
 		const last = this.moments[plies.length].status;
-		this.end = saved.resigned
-			? { resigned: saved.resigned }
+		this.end = source.resigned
+			? { resigned: source.resigned }
 			: 'Over' in last
 				? { outcome: last.Over }
 				: null;
+	}
+
+	/** Who the game was against, or where it came from. */
+	get against(): string {
+		return this.source.against;
+	}
+
+	/** The game as a file holds it, to export. */
+	get file(): GameFile {
+		return {
+			record: this.source.record,
+			variant: this.variant.name,
+			seats: { X: seatLabel(this.seats.X), O: seatLabel(this.seats.O) },
+			date: this.source.date,
+			opening: this.opening,
+			end: this.end
+		};
 	}
 
 	/** The last ply. */

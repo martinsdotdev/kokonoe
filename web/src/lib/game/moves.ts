@@ -67,6 +67,10 @@ export interface Seat {
 	detail: string | null;
 }
 
+/** A seat in one line, as a game file names it: "Player 1", "Computer, Level 3". */
+export const seatLabel = (seat: Seat): string =>
+	seat.detail ? `${seat.name}, ${seat.detail}` : seat.name;
+
 export const seats = (opponent: Opponent): Record<Player, Seat> => {
 	if (opponent.kind === 'hotseat') {
 		return { X: { name: 'Player 1', detail: null }, O: { name: 'Player 2', detail: null } };

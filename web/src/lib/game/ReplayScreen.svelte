@@ -1,9 +1,10 @@
 <!--
-	The Replay viewer (spec §7.4): a saved game a ply at a time, laid out like the game screen. The
-	transport sits under the board on every screen, the caption says what the ply shown did, and
-	each row of the move list jumps to its ply. The stepped board shows each move where it landed.
-	← and → step, and Home and End jump to the start and the end. While autoplay runs, the caption
-	stops announcing each ply, so a screen reader doesn't fall behind.
+	The Replay viewer (spec §7.4): a saved or imported game a ply at a time, laid out like the game
+	screen. The transport sits under the board on every screen, the game's export under it, the
+	caption says what the ply shown did, and each row of the move list jumps to its ply. The
+	stepped board shows each move where it landed. ← and → step, and Home and End jump to the start
+	and the end. While autoplay runs, the caption stops announcing each ply, so a screen reader
+	doesn't fall behind.
 -->
 <script lang="ts">
 	import { MediaQuery } from 'svelte/reactivity';
@@ -14,7 +15,7 @@
 	import SkipBack from '@lucide/svelte/icons/skip-back';
 	import SkipForward from '@lucide/svelte/icons/skip-forward';
 	import Board from './Board.svelte';
-	import { againstLabel } from './launch.js';
+	import ExportButtons from './ExportButtons.svelte';
 	import { moves } from './listing.js';
 	import { playedCount } from './moves.js';
 	import MoveList from './MoveList.svelte';
@@ -34,7 +35,7 @@
 	const phone = new MediaQuery('(width < 40rem)');
 
 	const variant = $derived(replay.variant);
-	const against = $derived(againstLabel(replay.opponent));
+	const against = $derived(replay.against);
 	const shown = $derived(replay.shown);
 	const played = $derived(playedCount(replay.moves));
 	/** One Board at a time: on a phone, and at depth 3 everywhere. */
@@ -88,6 +89,7 @@
 			<section aria-label="Board" class="flex flex-col items-center gap-3">
 				{@render board()}
 				{@render transport()}
+				<ExportButtons file={replay.file} />
 			</section>
 			{@render caption()}
 			<aside aria-label="Players" class="flex flex-col gap-3.5">{@render players()}</aside>
@@ -110,6 +112,7 @@
 				>
 					{@render board()}
 					{@render transport()}
+					<ExportButtons file={replay.file} />
 				</section>
 				<aside
 					aria-label="Moves and rules"

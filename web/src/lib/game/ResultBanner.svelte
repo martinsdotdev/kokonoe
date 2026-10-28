@@ -1,7 +1,12 @@
-<!-- The result in words once the game ends, and, when given, the ways on: its Replay and a new game. -->
+<!--
+	The result in words once the game ends, and, when given, the ways on: its Replay, a new game,
+	and the game as a file.
+-->
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import type { Player } from '#lib/engine.js';
+	import ExportButtons from './ExportButtons.svelte';
+	import type { GameFile } from './gamefile.js';
 	import { replayQuery } from './launch.js';
 
 	interface Props {
@@ -12,9 +17,11 @@
 		game?: string;
 		/** Starts a new game; without it the banner has no button. */
 		onrestart?: () => void;
+		/** The game as a file, to export. */
+		exported?: GameFile;
 	}
 
-	let { headline, detail, winner, game, onrestart }: Props = $props();
+	let { headline, detail, winner, game, onrestart, exported }: Props = $props();
 
 	const ink = $derived(
 		winner === 'X' ? 'var(--x)' : winner === 'O' ? 'var(--o-text)' : 'var(--foreground)'
@@ -63,5 +70,8 @@
 				</button>
 			{/if}
 		</div>
+	{/if}
+	{#if exported}
+		<ExportButtons file={exported} />
 	{/if}
 </section>

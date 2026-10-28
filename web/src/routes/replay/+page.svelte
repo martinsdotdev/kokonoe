@@ -9,7 +9,7 @@
 	import { page } from '$app/state';
 	import { replayQuery } from '#lib/game/launch.js';
 	import { UnplayableGame } from '#lib/game/record.js';
-	import { Replay } from '#lib/game/replay.svelte.js';
+	import { fromSaved, Replay } from '#lib/game/replay.svelte.js';
 	import ReplayScreen from '#lib/game/ReplayScreen.svelte';
 	import PageProblem from '#lib/game/PageProblem.svelte';
 	import { explain, loadSaved, Problem } from '#lib/game/problem.js';
@@ -26,7 +26,7 @@
 		const saved = await loadSaved(id);
 		if (left) return null;
 		try {
-			const opened = Replay.open(saved);
+			const opened = Replay.open(fromSaved(saved));
 			opened.go(Number.parseInt(page.url.searchParams.get('ply') ?? '0', 10) || 0);
 			return opened;
 		} catch (error) {

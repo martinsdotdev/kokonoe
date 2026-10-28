@@ -65,6 +65,7 @@
 				detail={`After ${moves(played)}.`}
 				winner={winner(session.end)}
 				game={session.stored ? session.id : undefined}
+				exported={session.file}
 				onrestart={() => session.restart()}
 			/>
 		{/if}

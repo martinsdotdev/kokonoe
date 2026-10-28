@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadEngine } from '#lib/engine.js';
 import { DEALT, LINE_OF_MIDDLE_BOARDS, TOP_ROW, cells } from './games.fixtures.js';
 import { UnplayableGame } from './record.js';
-import { Replay } from './replay.svelte.js';
+import { fromSaved, Replay } from './replay.svelte.js';
 import type { GameStore, SavedGame } from './saved.js';
 import { OfflineGame } from './session.svelte.js';
 import { SHELF } from './shelf.js';
@@ -41,7 +41,7 @@ const store: GameStore = { save: async () => {} };
 
 describe('a replayed game', () => {
 	it('has a position for every ply, from the empty board to the end', () => {
-		const replay = Replay.open(saved());
+		const replay = Replay.open(fromSaved(saved()));
 		expect(replay.last).toBe(55);
 		expect(replay.moments).toHaveLength(56);
 		expect(replay.moments[0].view.cells.every((mark) => mark === null)).toBe(true);
@@ -52,7 +52,7 @@ describe('a replayed game', () => {
 	});
 
 	it('marks the dealt opening', () => {
-		const replay = Replay.open(saved());
+		const replay = Replay.open(fromSaved(saved()));
 		const dealt = cells(DEALT.opening);
 		expect(replay.moves.slice(0, 3).map((move) => move.dealt)).toEqual([true, true, false]);
 		expect(replay.moments[1].view.dealt).toEqual(dealt.slice(0, 1));
@@ -61,7 +61,7 @@ describe('a replayed game', () => {
 	});
 
 	it('lists the moves and draws the end as the game screen does', () => {
-		const replay = Replay.open(saved());
+		const replay = Replay.open(fromSaved(saved()));
 		const resumed = OfflineGame.resume(saved(), { store });
 		expect(replay.moves).toEqual(resumed.moves);
 		expect(replay.moments[55].view).toEqual(resumed.view);
@@ -75,7 +75,7 @@ describe('a replayed game', () => {
 	});
 
 	it('says what each ply did', () => {
-		const replay = Replay.open(saved());
+		const replay = Replay.open(fromSaved(saved()));
 		expect(replay.caption).toBe('Start. X moves first.');
 		replay.go(2);
 		expect(replay.caption).toBe('Move 2 of 55 · O (1·3·9) · dealt');
@@ -84,7 +84,7 @@ describe('a replayed game', () => {
 	});
 
 	it('steps only between the start and the end', () => {
-		const replay = Replay.open(saved());
+		const replay = Replay.open(fromSaved(saved()));
 		replay.go(-1);
 		expect(replay.ply).toBe(0);
 		replay.go(99);
@@ -94,7 +94,9 @@ describe('a replayed game', () => {
 
 	it('autoplays once a second, stops at the end, and starts again from the start', () => {
 		vi.useFakeTimers();
-		const replay = Replay.open(saved({ ruleset: SHELF[0].ruleset, moves: cells(TOP_ROW) }));
+		const replay = Replay.open(
+			fromSaved(saved({ ruleset: SHELF[0].ruleset, moves: cells(TOP_ROW) }))
+		);
 		replay.toggle();
 		expect(replay.playing).toBe(true);
 		vi.advanceTimersByTime(2000);
@@ -116,7 +118,7 @@ describe('a replayed game', () => {
 	});
 
 	it('refuses a Record it can’t replay', () => {
-		expect(() => Replay.open(saved({ moves: [0, 0] }))).toThrow(UnplayableGame);
-		expect(() => Replay.open(saved({ rules_version: 2 }))).toThrow(UnplayableGame);
+		expect(() => Replay.open(fromSaved(saved({ moves: [0, 0] })))).toThrow(UnplayableGame);
+		expect(() => Replay.open(fromSaved(saved({ rules_version: 2 })))).toThrow(UnplayableGame);
 	});
 });

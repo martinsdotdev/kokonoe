@@ -1,12 +1,15 @@
 //! The computer opponent (spec §6): its ladder, games at every Level finishing, the time cap,
 //! and, from Level 3, never missing an immediate win or handing the opponent one.
 
+mod common;
 mod model;
 
 use kokonoe_engine::{
     Cell, Choice, Depth, Game, Level, ParseError, Player, Preset, Ruleset, Seed, State, Status,
     think,
 };
+
+use common::{Xorshift, advance, cells, game};
 
 const DEPTH_TWO: [Preset; 4] = [
     Preset::Standard,
@@ -22,31 +25,6 @@ fn level(n: u8) -> Level {
 /// A clock that never moves, so only the iteration budget binds.
 fn frozen() -> u32 {
     0
-}
-
-/// Space-separated Cells, each written as its two digits: `"42"` is `4·2`.
-fn cells(text: &str) -> Vec<Cell> {
-    text.split_whitespace()
-        .map(|digits| {
-            let digits: Vec<u8> = digits.bytes().map(|b| b - b'0').collect();
-            Cell::from_digits(&digits).unwrap()
-        })
-        .collect()
-}
-
-/// Plays `cell` as the next move.
-fn advance(game: &mut Game, cell: Cell) {
-    let at = game.state().ply();
-    game.play(at, cell).unwrap();
-}
-
-/// A game under `rules` with `moves` played in order.
-fn game(rules: Ruleset, moves: &str) -> Game {
-    let mut game = Game::new(rules, Seed(0));
-    for cell in cells(moves) {
-        advance(&mut game, cell);
-    }
-    game
 }
 
 fn legal(state: &State) -> Vec<Cell> {
@@ -82,23 +60,11 @@ fn hands_over(state: &State, cell: Cell) -> bool {
     }
 }
 
-/// xorshift64, for random games independent of the engine's generators.
-struct TestRng(u64);
-
-impl TestRng {
-    fn below(&mut self, n: usize) -> usize {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        (self.0 % n as u64) as usize
-    }
-}
-
 /// Every position of 300 seeded random games under `rules`, in a fixed order.
 fn positions(rules: Ruleset) -> impl Iterator<Item = State> {
     (1..=300).flat_map(move |seed| {
         let mut game = Game::new(rules, Seed(seed));
-        let mut rng = TestRng(seed);
+        let mut rng = Xorshift(seed);
         let mut states = Vec::new();
         while let Status::ToMove { moves, .. } = game.state().status() {
             states.push(*game.state());

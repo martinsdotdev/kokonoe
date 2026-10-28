@@ -2,35 +2,19 @@
 //! walks up through the middle Boards, and Continuation and the objective work a level up. The
 //! property test checks every ply against a reference model; these pin the rules by name.
 
+mod common;
+
 use kokonoe_engine::{
     Board, BoardStatus, Cell, Continuation, Depth, Game, Outcome, Player, Preset, Ruleset, Seed,
     Sent, Status,
 };
 
+use common::{Xorshift, cells, game};
+
 const DEEP: Ruleset = Preset::Deep.ruleset();
 
 fn board(path: &[u8]) -> Board {
     Board::from_path(Depth::Three, path).unwrap()
-}
-
-/// Space-separated Cells, each written as its three digits: `"407"` is `4·0·7`.
-fn cells(text: &str) -> Vec<Cell> {
-    text.split_whitespace()
-        .map(|digits| {
-            let digits: Vec<u8> = digits.bytes().map(|b| b - b'0').collect();
-            Cell::from_digits(&digits).unwrap()
-        })
-        .collect()
-}
-
-/// A game under `rules` with `moves` played in order.
-fn game(rules: Ruleset, moves: &str) -> Game {
-    let mut game = Game::new(rules, Seed(0));
-    for cell in cells(moves) {
-        let at = game.state().ply();
-        game.play(at, cell).unwrap();
-    }
-    game
 }
 
 /// The Board one level up: a Local board's middle Board.
@@ -79,22 +63,10 @@ fn relaxation_stops_at_the_middle_board() {
     assert!(moves.iter().all(|cell| cell.local_board() != target));
 }
 
-/// xorshift, for random games independent of the engine's generators.
-struct Random(u64);
-
-impl Random {
-    fn below(&mut self, n: usize) -> usize {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        (self.0 % n as u64) as usize
-    }
-}
-
 /// Plays a random game under `rules` from `seed`, calling `each` with the game after every move.
 fn random_game(rules: Ruleset, seed: u64, mut each: impl FnMut(&Game)) {
     let mut game = Game::new(rules, Seed(seed));
-    let mut random = Random(seed);
+    let mut random = Xorshift(seed);
     while let Status::ToMove { moves, .. } = game.state().status() {
         let at = game.state().ply();
         game.play(at, moves.nth(random.below(moves.len()))).unwrap();

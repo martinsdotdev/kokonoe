@@ -9,7 +9,7 @@ use kokonoe_engine::{
     Sent, Status,
 };
 
-use common::{Xorshift, cells, game};
+use common::{Xorshift, advance, cells, game};
 
 const DEEP: Ruleset = Preset::Deep.ruleset();
 
@@ -167,4 +167,48 @@ fn a_line_of_middle_boards_wins() {
         });
     }
     assert!(wins > 0, "some random games end on a line");
+}
+
+/// Found by a guided search, and played by tap in `web/src/routes/games.ts`, which mirrors it: X
+/// wins the top row of middle Boards in 53 plies, the fewest it can. X wins every Local board on
+/// its top row, so its Cell's last Space Sends O where O's reply Sends X back into middle Board 1,
+/// 2 or 3; O never wins a Board. On the way O Sends X into a Local board X has won, a Free move
+/// inside a middle Board, and into a won middle Board, a Free move anywhere: five of the one and
+/// two of the other, which the phone test counts in taps.
+const LINE_OF_MIDDLE_BOARDS: &str = "280 803 031 313 131 315 151 515 150 504 042 427 271 714 142 \
+    426 262 627 272 728 281 815 152 527 270 703 032 327 261 615 130 304 041 413 132 328 282 827 \
+    260 604 040 403 030 305 052 522 050 503 051 513 140 405 141";
+
+#[test]
+fn a_short_game_wins_on_a_line_of_middle_boards() {
+    let mut game = Game::new(DEEP, Seed(0));
+    let (mut middle, mut global) = (0, 0);
+    for cell in cells(LINE_OF_MIDDLE_BOARDS) {
+        advance(&mut game, cell);
+        match game.state().status() {
+            Status::ToMove {
+                sent: Sent::Free { within, .. },
+                ..
+            } if within == Board::global(Depth::Three) => global += 1,
+            Status::ToMove {
+                sent: Sent::Free { .. },
+                ..
+            } => middle += 1,
+            _ => {}
+        }
+    }
+    let state = game.state();
+    assert_eq!(game.moves().len(), 53);
+    assert_eq!(state.status(), Status::Over(Outcome::Objective(Player::X)));
+    for space in [0, 1, 2] {
+        assert_eq!(
+            state.board_status(board(&[space])),
+            BoardStatus::Won(Player::X)
+        );
+    }
+    assert_eq!(
+        (middle, global),
+        (5, 2),
+        "Free moves inside a middle Board, and anywhere"
+    );
 }

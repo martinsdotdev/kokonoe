@@ -29,6 +29,13 @@ export const LINE_OF_MIDDLE_BOARDS =
 	'152 527 270 703 032 327 261 615 130 304 041 413 132 328 282 827 260 604 040 403 030 305 ' +
 	'052 522 050 503 051 513 140 405 141';
 
+/**
+ * Deep with a two-ply Random opening, whose Seed deals X on 702 and O on 028, Sending X to Local
+ * board 2·8, where `LINE_OF_MIDDLE_BOARDS` starts, so the line plays on to the same win.
+ * `DEALT_SEED` in `crates/engine/tests/deep.rs`, which pins it.
+ */
+export const DEALT = { code: 'd3+rand2', seed: '0000000000000016', opening: '702 028' };
+
 /** Each move as its path of Spaces. */
 export const parse = (moves: string): number[][] =>
 	moves

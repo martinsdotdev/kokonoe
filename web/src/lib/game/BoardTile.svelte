@@ -75,7 +75,7 @@
 	class:still
 	class:middle={!local}
 	role={inert ? undefined : 'group'}
-	aria-label={still ? undefined : button && state.active ? `${name}, play here` : name}
+	aria-label={still ? undefined : button && state.active && !disabled ? `${name}, play here` : name}
 	onclick={button ? () => onstep?.(board) : undefined}
 	data-board={key(board)}
 	data-status={won ? `won-${won.toLowerCase()}` : state.status === 'Drawn' ? 'drawn' : 'open'}

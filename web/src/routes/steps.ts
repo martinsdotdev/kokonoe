@@ -27,18 +27,20 @@ const commonPrefix = (a: number[], b: number[]) => {
  * each move it checks that the view followed the game: into the Local board the last move Sent
  * the player to, to the Board a Free move may go anywhere in, or out to the Global view. Under
  * Continuation off that's as much of the move's way down as it shares with the Sent target.
- * Returns the presses each move took.
+ * After a dealt `opening`, the first move starts where its last ply Sent the player. Returns the
+ * presses each move took.
  */
 export const stepThrough = async (
 	page: Page,
 	moves: string,
-	press: (target: Locator) => Promise<void>
+	press: (target: Locator) => Promise<void>,
+	opening = ''
 ): Promise<number[]> => {
 	const played = parse(moves);
 	const presses: number[] = [];
 	for (const [i, path] of played.entries()) {
 		const local = path.slice(0, -1);
-		const sent = i === 0 ? [] : played[i - 1].slice(1);
+		const sent = (i === 0 ? parse(opening).at(-1) : played[i - 1])?.slice(1) ?? [];
 		const shown = commonPrefix(sent, local);
 		expect(await settledFocus(page), `before move ${i + 1}`).toEqual(shown);
 		for (let level = shown.length + 1; level <= local.length; level++) {

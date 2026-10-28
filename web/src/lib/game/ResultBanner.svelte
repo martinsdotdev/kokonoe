@@ -1,15 +1,20 @@
-<!-- The result in words once the game ends, and the way to a new one. -->
+<!-- The result in words once the game ends, and the ways on: its Replay, and a new game. -->
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import type { Player } from '#lib/engine.js';
+	import { replayQuery } from './launch.js';
 
 	interface Props {
 		headline: string;
 		detail: string;
 		winner: Player | null;
-		onrestart: () => void;
+		/** The saved game's id, for a link to its Replay. */
+		replay?: string;
+		/** Starts a new game; without it the banner has no button. */
+		onrestart?: () => void;
 	}
 
-	let { headline, detail, winner, onrestart }: Props = $props();
+	let { headline, detail, winner, replay, onrestart }: Props = $props();
 
 	const ink = $derived(
 		winner === 'X' ? 'var(--x)' : winner === 'O' ? 'var(--o-text)' : 'var(--foreground)'
@@ -38,11 +43,25 @@
 			<p class="mt-1 mb-0 text-muted-foreground">{detail}</p>
 		</div>
 	</div>
-	<button
-		type="button"
-		class="min-h-12 rounded-md bg-primary px-5 font-semibold text-primary-foreground"
-		onclick={onrestart}
-	>
-		New game
-	</button>
+	{#if replay || onrestart}
+		<div class="flex flex-wrap gap-3">
+			{#if replay}
+				<a
+					href={resolve(`/replay${replayQuery(replay)}`)}
+					class="inline-flex min-h-12 items-center rounded-md border-[1.5px] border-foreground bg-card px-5 font-semibold text-foreground no-underline"
+				>
+					Replay
+				</a>
+			{/if}
+			{#if onrestart}
+				<button
+					type="button"
+					class="min-h-12 rounded-md bg-primary px-5 font-semibold text-primary-foreground"
+					onclick={onrestart}
+				>
+					New game
+				</button>
+			{/if}
+		</div>
+	{/if}
 </section>

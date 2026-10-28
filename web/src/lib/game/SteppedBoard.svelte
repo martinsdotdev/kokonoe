@@ -7,7 +7,8 @@
 	The view follows the game: after each move it shows the Board the player is Sent to, the
 	Board a Free move may go anywhere inside, or the Global view on the first move and once the
 	game is over. The computer's move first lands in view, then the view follows. Taps wait until
-	a step has settled, so a double tap can't play into the Board that just came in.
+	a step has settled, so a double tap can't play into the Board that just came in. In a replay,
+	`landed`, the view shows each move where it landed instead.
 -->
 <script lang="ts">
 	import type { Board, Cell } from '#lib/engine.js';
@@ -29,6 +30,8 @@
 		disabled?: boolean;
 		/** `view` is the computer's move, to show landing before following. */
 		replied?: boolean;
+		/** Shows the last move where it landed, never following: a replay. */
+		landed?: boolean;
 	}
 
 	let {
@@ -37,7 +40,8 @@
 		flash = null,
 		refusal = null,
 		disabled = false,
-		replied = false
+		replied = false,
+		landed = false
 	}: Props = $props();
 
 	/** How long a step takes, as the prototype had it. */
@@ -59,11 +63,11 @@
 
 	/**
 	 * What's shown, by its path, `[]` being the Global board: the Board a refusal names, the
-	 * computer's move, or where to play. A step assigns it until the game next changes.
+	 * last move where it landed, or where to play. A step assigns it until the game next changes.
 	 */
 	let focus: Board = $derived.by(() => {
 		if (refusal?.board) return refusal.board;
-		if (holding && view.last !== null) return localOf(view.last, view.depth);
+		if (holding || landed) return view.last === null ? [] : localOf(view.last, view.depth);
 		return follow(view);
 	});
 

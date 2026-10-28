@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { playQuery, readLaunch, type Launch } from './launch.js';
+import { playQuery, readLaunch, replayQuery, type Launch } from './launch.js';
 
 const read = (query: string) => readLaunch(new URLSearchParams(query));
 
@@ -38,5 +38,13 @@ describe("a game's URL", () => {
 		];
 		for (const launch of launches) expect(read(playQuery(launch).slice(1))).toEqual(launch);
 		expect(playQuery(launches[1])).toBe('?rules=cont%2Bfirst5%2Bmost&vs=computer&level=4&seat=O');
+	});
+});
+
+describe("a replay's URL", () => {
+	it('names the game, and the ply past the start', () => {
+		expect(replayQuery('a1')).toBe('?game=a1');
+		expect(replayQuery('a1', 0)).toBe('?game=a1');
+		expect(replayQuery('a1', 14)).toBe('?game=a1&ply=14');
 	});
 });

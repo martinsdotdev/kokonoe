@@ -1,10 +1,14 @@
 //! Standard at depth 2, through the public API.
 
+mod common;
+
 use kokonoe_engine::{
     Board, BoardStatus, Cell, Child, Depth, Game, Goal, IllegalMove, OpenError, Outcome,
     ParseError, PlayError, Played, Player, Ply, Preset, RULES_VERSION, RandomPlies, ReplayError,
-    Seed, Sent, Space, Status,
+    Sent, Space, Status,
 };
+
+use common::{cells, game};
 
 /// Local board `n` of a depth-2 game.
 fn local(n: usize) -> Board {
@@ -14,28 +18,13 @@ fn local(n: usize) -> Board {
     }
 }
 
-/// Space-separated Cells, each written as its two digits: `"42 24"` is `4·2` then `2·4`.
-fn cells(text: &str) -> Vec<Cell> {
-    text.split_whitespace()
-        .map(|digits| {
-            let digits: Vec<u8> = digits.bytes().map(|b| b - b'0').collect();
-            Cell::from_digits(&digits).unwrap()
-        })
-        .collect()
-}
-
 fn cell(digits: &str) -> Cell {
     cells(digits)[0]
 }
 
 /// A Standard game with `moves` played in order.
 fn standard(moves: &str) -> Game {
-    let mut game = Game::new(Preset::Standard.ruleset(), Seed(0));
-    for cell in cells(moves) {
-        let at = game.state().ply();
-        game.play(at, cell).unwrap();
-    }
-    game
+    game(Preset::Standard.ruleset(), moves)
 }
 
 /// X takes Local boards 0, 1 and 2, each with a row, while O sends X wherever it needs to go.

@@ -3,8 +3,10 @@
 //! panicking, agrees with the reference model of its depth after every ply, dealt ones included,
 //! and replaying the Record reproduces the game.
 
+mod common;
 mod model;
 
+use common::Xorshift;
 use kokonoe_engine::{
     Board, Cell, Child, Depth, Game, Opening, Played, Ply, RandomPlies, Ruleset, Seed, Space,
     State, Status,
@@ -176,13 +178,8 @@ proptest! {
 /// One seeded game under each of the 80 depth-3 Rulesets, played to its end.
 #[test]
 fn every_depth_three_ruleset_plays_like_the_model() {
-    let mut rng = 0x5eed_u64;
-    let mut next = || {
-        rng ^= rng << 13;
-        rng ^= rng >> 7;
-        rng ^= rng << 17;
-        rng as usize
-    };
+    let mut rng = Xorshift(0x5eed);
+    let mut next = || rng.next() as usize;
     for rules in depth_three_rulesets() {
         let choices: Vec<usize> = (0..729).map(|_| next()).collect();
         let sweep = next() % 300;
@@ -276,12 +273,9 @@ fn plays_out_like_play_and_nth(rules: Ruleset, seed: u64) -> Result<(), TestCase
     let game = Game::new(rules, Seed(seed));
     let mut fast = *game.state();
     let mut picks = Vec::new();
-    let mut rng = seed | 1;
+    let mut rng = Xorshift(seed | 1);
     let outcome = fast.playout(|n| {
-        rng ^= rng << 13;
-        rng ^= rng >> 7;
-        rng ^= rng << 17;
-        let k = (rng % n as u64) as usize;
+        let k = rng.below(n);
         picks.push((n, k));
         k
     });

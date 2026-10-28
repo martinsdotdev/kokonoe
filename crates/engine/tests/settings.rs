@@ -2,8 +2,10 @@
 //! FirstTo(N) and the MostWon fallback. Each test plays a game found by seeded random search as
 //! the shortest that shows its rule, and checks the position it relies on before the rule itself.
 
+mod common;
 mod model;
 
+use common::game;
 use kokonoe_engine::{
     Board, BoardStatus, Cell, Continuation, Depth, DrawnOwner, Fallback, Game, Goal, IllegalMove,
     Objective, Outcome, Player, Preset, Ruleset, Seed, Sent, State, Status,
@@ -20,26 +22,6 @@ fn with(edit: impl FnOnce(&mut Ruleset)) -> Ruleset {
 
 fn first_to(n: u8) -> Objective {
     Objective::FirstTo(Goal::try_from(n).unwrap())
-}
-
-/// Space-separated Cells, each written as its two digits: `"42"` is `4·2`.
-fn cells(text: &str) -> Vec<Cell> {
-    text.split_whitespace()
-        .map(|digits| {
-            let digits: Vec<u8> = digits.bytes().map(|b| b - b'0').collect();
-            Cell::from_digits(&digits).unwrap()
-        })
-        .collect()
-}
-
-/// A game under `rules` with `moves` played in order.
-fn game(rules: Ruleset, moves: &str) -> Game {
-    let mut game = Game::new(rules, Seed(0));
-    for cell in cells(moves) {
-        let at = game.state().ply();
-        game.play(at, cell).unwrap();
-    }
-    game
 }
 
 /// The player who made the last move.

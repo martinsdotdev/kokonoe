@@ -1,10 +1,11 @@
 <!--
 	Where the player to move may play, and why: anywhere on the first move, the Sent target, or,
-	under the FREE MOVE stamp, any open board when the target is decided. Its first line is the
-	game's one live announcement, so it names the player, and says when a tap wasn't playable.
+	under the FREE MOVE stamp, anywhere open in the Board above a decided target, which at depth 2
+	is the Global board. Its first line is the game's one live announcement, so it names the
+	player, and says when a tap wasn't playable.
 -->
 <script lang="ts">
-	import type { Player, Sent } from '#lib/engine.js';
+	import type { Board, Player, Sent } from '#lib/engine.js';
 	import { boardLabel } from './notation.js';
 	import { opponent } from './result.js';
 
@@ -15,9 +16,14 @@
 		last: string | null;
 		/** A tap was refused, and nothing has been played since. */
 		refused?: boolean;
+		/**
+		 * On a Free move, the Board that turned the Sent target away: the target, or at depth 3
+		 * the middle Board above it.
+		 */
+		decided?: Board | null;
 	}
 
-	let { player, sent, last, refused = false }: Props = $props();
+	let { player, sent, last, refused = false, decided = null }: Props = $props();
 
 	const turn = $derived.by(() => {
 		const by = `${opponent(player)}’s move ${last ?? ''}`.trim();
@@ -36,11 +42,22 @@
 				why: `${by} Sent ${player} there.`
 			};
 		}
-		const board = boardLabel(sent.Free.target);
+		const { target, within } = sent.Free;
+		const to = `${by} Sent ${player} to board ${boardLabel(target)}`;
+		if (within.length) {
+			const board = boardLabel(within);
+			return {
+				free: true,
+				line: `${player}: play anywhere in board ${board}.`,
+				why: `${to}, which is decided, so every open board in board ${board} is ${player}’s.`
+			};
+		}
+		const inside =
+			decided && decided.length < target.length ? `, inside board ${boardLabel(decided)},` : ',';
 		return {
 			free: true,
 			line: `${player}: play in any open board.`,
-			why: `${by} Sent ${player} to board ${board}, which is decided, so every open board is ${player}’s.`
+			why: `${to}${inside} which is decided, so every open board is ${player}’s.`
 		};
 	});
 	const line = $derived(refused ? `Not playable. ${turn.line}` : turn.line);

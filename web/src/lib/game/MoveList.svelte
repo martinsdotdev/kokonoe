@@ -2,7 +2,7 @@
 <script lang="ts">
 	import type { Move } from './session.svelte.js';
 
-	let { moves }: { moves: Move[] } = $props();
+	let { moves, depth }: { moves: Move[]; depth: 2 | 3 } = $props();
 
 	let list: HTMLOListElement | undefined = $state();
 
@@ -14,7 +14,9 @@
 <section class="overflow-hidden rounded-[10px] border-[1.5px] border-foreground bg-card">
 	<div class="flex items-baseline justify-between border-b px-4 py-3">
 		<h2 class="m-0 font-display text-xl font-semibold">Moves</h2>
-		<span class="font-mono text-xs text-muted-foreground">board·cell</span>
+		<span class="font-mono text-xs text-muted-foreground">
+			{depth === 3 ? 'board·board·cell' : 'board·cell'}
+		</span>
 	</div>
 	{#if moves.length === 0}
 		<p class="m-0 px-4 py-3 text-sm text-muted-foreground">No moves yet.</p>

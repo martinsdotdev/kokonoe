@@ -1,12 +1,13 @@
 <!--
-	The board on a phone (spec §7.3, "Step into boards"): one Board at a time. The Global view
-	shows the whole board, where a tap on a Local board steps into it; inside, that Local board is
-	drawn large and its Cells take the moves. A breadcrumb steps back out.
+	The board on a phone, and for Deep on every screen (spec §7.3, "Step into boards"): one Board
+	at a time. The Global view shows the whole board, where a tap on a Board steps into it, one
+	level a tap: at depth 3 into a middle Board, then one of its Local boards. Inside a Local
+	board, drawn large, the Cells take the moves. A breadcrumb steps back out, a level a crumb.
 
-	The view follows the game: after each move it shows the Board the player is Sent to, or the
-	Global view when the move is Free, the first, or the game is over. The computer's move first
-	lands in view, then the view follows. Taps wait until a step has settled, so a double tap
-	can't play into the Board that just came in.
+	The view follows the game: after each move it shows the Board the player is Sent to, the
+	Board a Free move may go anywhere inside, or the Global view on the first move and once the
+	game is over. The computer's move first lands in view, then the view follows. Taps wait until
+	a step has settled, so a double tap can't play into the Board that just came in.
 -->
 <script lang="ts">
 	import type { Board, Cell } from '#lib/engine.js';
@@ -182,18 +183,21 @@
 		flex-direction: column;
 		gap: 12px;
 		width: 100%;
-		max-width: 600px;
+		/* On a desktop the whole board fits the window, the breadcrumb and header above it. */
+		max-width: min(600px, 100svh - 12rem);
 	}
 
 	ol {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		flex-wrap: wrap;
+		gap: 2px;
 		margin: 0;
 		padding: 0;
 		list-style: none;
-		font: 500 14px/1 var(--font-mono);
-		letter-spacing: 0.06em;
+		/* Three crumbs fit a 390 px phone on one line. */
+		font: 500 13px/1 var(--font-mono);
+		letter-spacing: 0.02em;
 		text-transform: uppercase;
 	}
 	li {
@@ -203,16 +207,17 @@
 	li + li::before {
 		content: '›';
 		content: '›' / '';
-		padding-inline: 4px;
+		padding-inline: 3px;
 	}
 
 	.crumb {
 		display: inline-flex;
 		align-items: center;
-		gap: 10px;
+		gap: 6px;
 		min-height: 44px;
 		margin: 0;
 		font: inherit;
+		white-space: nowrap;
 	}
 	/* The heading takes focus only when the view steps in, so it shows a ring only then. */
 	h2.crumb:focus {
@@ -223,7 +228,7 @@
 		outline-offset: 2px;
 	}
 	.crumb.out {
-		padding: 0 4px 0 0;
+		padding: 0;
 		border: 0;
 		background: none;
 		color: inherit;
@@ -240,6 +245,6 @@
 	}
 	.mini {
 		display: block;
-		width: 40px;
+		width: 28px;
 	}
 </style>

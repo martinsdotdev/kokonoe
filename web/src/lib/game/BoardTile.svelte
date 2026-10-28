@@ -1,9 +1,9 @@
 <!--
 	One Board under the Global board in the board grammar: pencil between Cells, the highlighter
 	when it's Active, a dashed Sent target, a ring on the last move, an inked owner or a
-	Continuation watermark, and hatching once drawn. A Local board holds its Cells, and at depth 3
-	a middle Board holds its nine Local boards, each another tile. It renders its part of a
-	BoardView and reports clicks.
+	Continuation watermark, hatching once drawn, and a Random opening's dealt marks in pencil grey.
+	A Local board holds its Cells, and at depth 3 a middle Board holds its nine Local boards, each
+	another tile. It renders its part of a BoardView and reports clicks.
 
 	It draws its Board one of three ways:
 	- to play on: a group of Cell buttons, or when `large` and given `onstep`, of Local board buttons;
@@ -59,6 +59,12 @@
 	});
 
 	const legal = (cell: Cell) => !disabled && state.active && view.cells[cell] === null;
+	const dealt = (cell: Cell) => view.dealt.includes(cell);
+	/** A Cell as assistive technology names it: `Cell 5·5`, `Cell 5·5, X`, `Cell 5·5, X, dealt`. */
+	const label = (cell: Cell, mark: Player | null) =>
+		[`Cell ${notation(cell, view.depth)}`, mark, mark && dealt(cell) && 'dealt']
+			.filter(Boolean)
+			.join(', ');
 </script>
 
 <svelte:element
@@ -83,13 +89,14 @@
 			{#each cellsOf(board) as cell, space (space)}
 				{@const mark = view.cells[cell]}
 				{#if inert}
-					<span class="cell">{@render face(cell, mark)}</span>
+					<span class="cell" data-dealt={dealt(cell) || undefined}>{@render face(cell, mark)}</span>
 				{:else}
 					<button
 						type="button"
 						class="cell"
-						aria-label={`Cell ${notation(cell, view.depth)}${mark ? `, ${mark}` : ''}`}
+						aria-label={label(cell, mark)}
 						aria-disabled={!legal(cell)}
+						data-dealt={dealt(cell) || undefined}
 						onclick={() => !disabled && onplay?.(cell)}
 					>
 						{@render face(cell, mark)}
@@ -135,7 +142,7 @@
 </svelte:element>
 
 {#snippet face(cell: Cell, mark: Player | null)}
-	{#if mark}<Mark player={mark} class="glyph" />{/if}
+	{#if mark}<Mark player={mark} dealt={dealt(cell)} class="glyph" />{/if}
 	{#if cell === view.last}<span class="ring" data-last></span>{/if}
 {/snippet}
 

@@ -38,8 +38,11 @@ interface Schema extends DBSchema {
 }
 
 export const DATABASE = 'kokonoe';
-/** Version 2 names Boards in the stored view by path, which depth 3 needs (KOK-39). */
-const VERSION = 2;
+/**
+ * Version 2 names Boards in the stored view by path, which depth 3 needs (KOK-39). Version 3
+ * lists the view's dealt Cells (KOK-45).
+ */
+const VERSION = 3;
 
 /** A view as version 1 stored it: depth 2, each Local board by its Space. */
 export interface ViewVersion1 {
@@ -51,7 +54,7 @@ export interface ViewVersion1 {
 	last: Cell | null;
 }
 
-/** A version-1 view as version 2 stores it. Every game was depth 2 then. */
+/** A version-1 view as version 3 stores it. Every game was depth 2 then. */
 export const fromVersion1 = (old: ViewVersion1): BoardView => ({
 	depth: 2,
 	continuation: old.continuation,
@@ -59,8 +62,15 @@ export const fromVersion1 = (old: ViewVersion1): BoardView => ({
 	boards: [old.locals.map(({ status, active }) => ({ status, active }))],
 	sent: old.sent === null ? null : [old.sent],
 	within: old.free ? [] : null,
-	last: old.last
+	last: old.last,
+	dealt: []
 });
+
+/**
+ * A version-2 view as version 3 stores it. Which Cells were dealt needs the engine to deal them
+ * again, so they're drawn as played until the game is next saved.
+ */
+export const fromVersion2 = (old: Omit<BoardView, 'dealt'>): BoardView => ({ ...old, dealt: [] });
 
 const databases = new Map<string, Promise<IDBPDatabase<Schema>>>();
 
@@ -78,11 +88,15 @@ const database = (name: string): Promise<IDBPDatabase<Schema>> => {
 				db.createObjectStore('games', { keyPath: 'id' }).createIndex('updated', 'updated');
 				return;
 			}
-			if (from < 2) {
+			if (from < 3) {
 				let cursor = await transaction.objectStore('games').openCursor();
 				while (cursor) {
-					const view = cursor.value.view as unknown as ViewVersion1;
-					await cursor.update({ ...cursor.value, view: fromVersion1(view) });
+					const old: unknown = cursor.value.view;
+					const view =
+						from < 2
+							? fromVersion1(old as ViewVersion1)
+							: fromVersion2(old as Omit<BoardView, 'dealt'>);
+					await cursor.update({ ...cursor.value, view });
 					cursor = await cursor.continue();
 				}
 			}

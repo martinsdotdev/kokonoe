@@ -93,4 +93,19 @@ describe('saved games in IndexedDB', () => {
 			within: []
 		});
 	});
+
+	it('reads a game version 2 saved, with no dealt Cells', async () => {
+		const db = fresh();
+		const old = await openDB(db, 2, {
+			upgrade(raw) {
+				raw.createObjectStore('games', { keyPath: 'id' }).createIndex('updated', 'updated');
+			}
+		});
+		const { view, ...rest } = game('a', 1);
+		const { dealt, ...stored } = view;
+		expect(dealt).toEqual([]);
+		await old.put('games', { ...rest, view: stored });
+		old.close();
+		expect(await loadGame('a', db)).toEqual(game('a', 1));
+	});
 });

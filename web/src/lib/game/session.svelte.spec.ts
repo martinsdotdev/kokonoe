@@ -3,7 +3,8 @@ import { loadEngine, type Cell, type Record } from '#lib/engine.js';
 import type { Computer } from './computer.js';
 import type { Opponent } from './launch.js';
 import type { GameStore, SavedGame } from './saved.js';
-import { OfflineGame, UnplayableGame } from './session.svelte.js';
+import { UnplayableGame } from './record.js';
+import { OfflineGame } from './session.svelte.js';
 import { INTO_A_WON_BOARD, LINE_OF_MIDDLE_BOARDS, TOP_ROW, cells } from './games.fixtures.js';
 import { SHELF } from './shelf.js';
 

@@ -16,7 +16,8 @@ export const position = (
 		),
 		sent: null,
 		within: null,
-		last: null
+		last: null,
+		dealt: []
 	};
 	edit(view);
 	return view;

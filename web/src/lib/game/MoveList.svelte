@@ -1,6 +1,6 @@
 <!-- The moves so far in Notation, dealt ones in parentheses, the latest highlighted and in view. -->
 <script lang="ts">
-	import type { Move } from './session.svelte.js';
+	import type { Move } from './moves.js';
 
 	let { moves, depth }: { moves: Move[]; depth: 2 | 3 } = $props();
 

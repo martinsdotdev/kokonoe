@@ -73,9 +73,9 @@ describe('a hot-seat game', () => {
 	it('flashes the Board an illegal move names, and plays nothing', () => {
 		const session = after('42');
 		session.play(0);
-		expect(session.flash).toEqual({ space: 2, tick: 1 });
+		expect(session.flash).toEqual({ board: [2], tick: 1 });
 		session.play(0);
-		expect(session.flash).toEqual({ space: 2, tick: 2 });
+		expect(session.flash).toEqual({ board: [2], tick: 2 });
 		session.play(cells('42')[0]);
 		expect(session.flash, 'Occupied names no Board, so nothing flashes').toBeNull();
 		expect(session.moves).toHaveLength(1);
@@ -84,7 +84,7 @@ describe('a hot-seat game', () => {
 	it('keeps a refusal until the next move', () => {
 		const session = after('42');
 		session.play(0);
-		expect(session.refusal).toEqual({ board: 2, tick: 1 });
+		expect(session.refusal).toEqual({ board: [2], tick: 1 });
 		session.play(cells('42')[0]);
 		expect(session.refusal, 'Occupied names no Board').toEqual({ board: null, tick: 2 });
 		session.play(cells('24')[0]);

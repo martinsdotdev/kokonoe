@@ -1,34 +1,54 @@
 <!--
-	A small, still drawing of a BoardView for previews, such as Home's Continue card: the marks, the
-	Active boards' highlighter, Decided boards' owners and drawn boards' hatching. One image to
-	assistive technology; `Board` is the board people play on.
+	A small, still drawing of a Board for previews, such as Home's Continue card: the Active boards'
+	highlighter, Decided boards' owners and drawn boards' hatching, and the marks in its Local
+	boards. A whole Deep board draws its Local boards without marks, which would be too small to
+	see. One image to assistive technology; `Board` is the board people play on.
 -->
 <script lang="ts">
+	import type { Board } from '#lib/engine.js';
 	import Mark from './Mark.svelte';
-	import { ownerOf, type BoardView } from './view.js';
+	import { at, cellsOf, children, key, ownerOf, type BoardView } from './view.js';
 
-	let { view, label }: { view: BoardView; label: string } = $props();
+	interface Props {
+		view: BoardView;
+		/** The Board to draw: the Global board unless named. */
+		board?: Board;
+		label: string;
+	}
 
-	const SPACES = [...Array(9).keys()];
+	let { view, board = [], label }: Props = $props();
 </script>
 
 <div class="mini" role="img" aria-label={label}>
-	{#each view.locals as local (local.space)}
-		{@const won = ownerOf(local)}
-		<div class="local" data-active={local.active || undefined}>
-			<div class="cells" class:faded={won && !view.continuation}>
-				{#each SPACES as inner (inner)}
-					{@const mark = view.cells[local.space * 9 + inner]}
+	{#each children(board) as child (key(child))}
+		{@render tile(child)}
+	{/each}
+</div>
+
+{#snippet tile(here: Board)}
+	{@const state = at(view, here)}
+	{@const won = ownerOf(state)}
+	<div class="tile" data-active={state.active || undefined}>
+		{#if here.length < view.depth - 1}
+			<div class="boards grid" class:faded={won && !view.continuation}>
+				{#each children(here) as child (key(child))}
+					{@render tile(child)}
+				{/each}
+			</div>
+		{:else if here.length === board.length + 1}
+			<div class="grid" class:faded={won && !view.continuation}>
+				{#each cellsOf(here) as cell (cell)}
+					{@const mark = view.cells[cell]}
 					<span class="cell"
 						>{#if mark}<Mark player={mark} class="glyph" />{/if}</span
 					>
 				{/each}
 			</div>
-			{#if local.status === 'Drawn'}<span class="hatch"></span>{/if}
-			{#if won}<Mark player={won} class="owner" />{/if}
-		</div>
-	{/each}
-</div>
+		{/if}
+		{#if state.status === 'Drawn'}<span class="hatch"></span>{/if}
+		{#if won}<Mark player={won} class="owner" />{/if}
+	</div>
+{/snippet}
 
 <style>
 	.mini {
@@ -40,28 +60,40 @@
 		background: var(--foreground);
 	}
 
-	.local {
+	.tile {
 		--ground: var(--background);
 		--wash: none;
 		position: relative;
 		display: flex;
 		min-width: 0;
+		min-height: 0;
 		padding: 6%;
 		background: var(--wash), var(--ground);
 	}
-	.local[data-active] {
+	.tile[data-active] {
 		--wash: linear-gradient(var(--highlighter), var(--highlighter));
 	}
 
-	.cells {
+	.grid {
 		flex: 1;
 		display: grid;
 		grid-template: repeat(3, minmax(0, 1fr)) / repeat(3, minmax(0, 1fr));
 		gap: 1px;
 		background: var(--pencil);
 	}
-	.cells.faded {
+	/* Local boards inside a middle Board, parted in ink rather than pencil. */
+	.grid.boards {
+		background: var(--foreground);
+	}
+	.grid.boards .tile {
+		padding: 0;
+	}
+	.grid.faded {
 		opacity: 0.3;
+	}
+	/* A faded middle Board fades its Local boards once, not twice. */
+	.grid.faded .grid.faded {
+		opacity: 1;
 	}
 
 	.cell {
@@ -86,7 +118,7 @@
 		);
 	}
 
-	.local :global(.owner) {
+	.tile :global(.owner) {
 		position: absolute;
 		inset: 8%;
 		width: 84%;

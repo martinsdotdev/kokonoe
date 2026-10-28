@@ -6,12 +6,15 @@
  */
 import type { Board, Cell } from '#lib/engine.js';
 
-/** A Cell's Spaces from the Global board down, each 0 to 8. */
-export const cellPath = (cell: Cell, depth: 2 | 3): number[] => {
+/** The path `length` Spaces long that `index` names, read in base 9 with the first Space first. */
+export const pathOf = (index: number, length: number): number[] => {
 	const path: number[] = [];
-	for (let n = cell, i = 0; i < depth; i++, n = Math.floor(n / 9)) path.unshift(n % 9);
+	for (let n = index, i = 0; i < length; i++, n = Math.floor(n / 9)) path.unshift(n % 9);
 	return path;
 };
+
+/** A Cell's Spaces from the Global board down, each 0 to 8. */
+export const cellPath = (cell: Cell, depth: 2 | 3): number[] => pathOf(cell, depth);
 
 const label = (path: readonly number[]) => path.map((space) => space + 1).join('·');
 
@@ -19,3 +22,7 @@ export const notation = (cell: Cell, depth: 2 | 3): string => label(cellPath(cel
 
 /** `4`, or `1·8` at depth 3. The Global board, the empty path, has no label. */
 export const boardLabel = (board: Board): string => label(board);
+
+/** A Board as copy names it: `Board 5`, or `Local board 5·8` two levels down at depth 3. */
+export const boardName = (board: Board): string =>
+	`${board.length === 2 ? 'Local board' : 'Board'} ${boardLabel(board)}`;

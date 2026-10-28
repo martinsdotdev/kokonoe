@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { latestUnfinished, loadGame, recentGames, saveGame, type SavedGame } from './saved.js';
+import { openDB } from 'idb';
+import {
+	fromVersion1,
+	latestUnfinished,
+	loadGame,
+	recentGames,
+	saveGame,
+	type SavedGame,
+	type ViewVersion1
+} from './saved.js';
 import { SHELF } from './shelf.js';
+import { position } from './view.fixtures.js';
+import { at } from './view.js';
 
 /** A fresh database for each test, so they share nothing. */
 const fresh = () => `kokonoe-test-${crypto.randomUUID()}`;
@@ -13,14 +24,12 @@ const game = (id: string, updated: number, result: string | null = null): SavedG
 	resigned: null,
 	started: updated,
 	updated,
-	view: {
-		continuation: false,
-		cells: Array(81).fill(null),
-		locals: [...Array(9).keys()].map((space) => ({ space, status: 'Open', active: true })),
-		sent: 4,
-		free: false,
-		last: 40
-	},
+	view: position((view) => {
+		view.cells[40] = 'X';
+		view.sent = [4];
+		at(view, [4]).active = true;
+		view.last = 40;
+	}),
 	toMove: result ? null : 'O',
 	result
 });
@@ -58,5 +67,30 @@ describe('saved games in IndexedDB', () => {
 		expect((await latestUnfinished(db))?.id).toBe('old');
 		await saveGame(game('new', 3), db);
 		expect((await latestUnfinished(db))?.id).toBe('new');
+	});
+
+	it('reads a game version 1 saved, its view moved onto Board paths', async () => {
+		const db = fresh();
+		const old = await openDB(db, 1, {
+			upgrade(raw) {
+				raw.createObjectStore('games', { keyPath: 'id' }).createIndex('updated', 'updated');
+			}
+		});
+		const { view, ...rest } = game('a', 1);
+		const stored: ViewVersion1 = {
+			continuation: false,
+			cells: view.cells,
+			locals: [...Array(9).keys()].map((space) => ({ space, status: 'Open', active: space === 4 })),
+			sent: 4,
+			free: false,
+			last: 40
+		};
+		await old.put('games', { ...rest, view: stored });
+		old.close();
+		expect(await loadGame('a', db)).toEqual(game('a', 1));
+		expect(fromVersion1({ ...stored, sent: 0, free: true })).toMatchObject({
+			sent: [0],
+			within: []
+		});
 	});
 });

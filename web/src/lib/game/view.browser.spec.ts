@@ -1,6 +1,6 @@
 import { beforeAll, expect, it } from 'vitest';
 import { Game, loadEngine, presets, type Cell } from '#lib/engine.js';
-import { boardView } from './view.js';
+import { at, boardView, children, type BoardView } from './view.js';
 
 let standard: () => Game;
 
@@ -18,11 +18,18 @@ const play = (game: Game, moves: string) => {
 	return game;
 };
 
+/** The Active children of `board`. */
+const active = (view: BoardView, board: number[]) =>
+	children(board).filter((child) => at(view, child).active);
+
 it('reads the first move as no Sent target, every board Active', () => {
 	const view = boardView(standard());
 	expect(view.sent).toBeNull();
 	expect(view.last).toBeNull();
-	expect(view.locals.every((local) => local.active)).toBe(true);
+	expect(view.depth).toBe(2);
+	expect(view.within).toBeNull();
+	expect(view.boards).toHaveLength(1);
+	expect(view.boards[0].every((board) => board.active)).toBe(true);
 });
 
 it('reads marks, the Sent target and the last move', () => {
@@ -30,16 +37,16 @@ it('reads marks, the Sent target and the last move', () => {
 	expect(view.cells[38]).toBe('X');
 	expect(view.cells[22]).toBe('O');
 	expect(view.last).toBe(22);
-	expect(view.sent).toBe(4);
-	expect(view.free).toBe(false);
-	expect(view.locals.filter((local) => local.active).map((local) => local.space)).toEqual([4]);
+	expect(view.sent).toEqual([4]);
+	expect(view.within).toBeNull();
+	expect(active(view, [])).toEqual([[4]]);
 });
 
 it('reads a Free move after a send to a decided board', () => {
 	const view = boardView(play(standard(), '03 30 04 40 05 50'));
-	expect(view.locals[0].status).toEqual({ Won: 'X' });
-	expect(view.sent).toBe(0);
-	expect(view.free).toBe(true);
-	expect(view.locals[0].active).toBe(false);
-	expect(view.locals.filter((local) => local.active)).toHaveLength(8);
+	expect(at(view, [0]).status).toEqual({ Won: 'X' });
+	expect(view.sent).toEqual([0]);
+	expect(view.within).toEqual([]);
+	expect(at(view, [0]).active).toBe(false);
+	expect(active(view, [])).toHaveLength(8);
 });

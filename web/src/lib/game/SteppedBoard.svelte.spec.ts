@@ -2,14 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import SteppedBoard from './SteppedBoard.svelte';
 import { position } from './view.fixtures.js';
+import { at } from './view.js';
 
 /** Sent to `space`, after the move that sent there. */
 const sentTo = (space: number, last: number) =>
 	position((v) => {
 		v.cells[last] = 'X';
 		v.last = last;
-		v.sent = space;
-		v.locals[space].active = true;
+		v.sent = [space];
+		at(v, [space]).active = true;
 	});
 
 type Screen = Awaited<ReturnType<typeof render>>;
@@ -32,10 +33,10 @@ describe('following the game', () => {
 
 	it('shows the Global view for the first move and a Free move, where Boards take the taps', async () => {
 		const free = position((v) => {
-			v.locals[0].status = { Won: 'X' };
-			v.sent = 0;
-			v.free = true;
-			for (const space of [1, 2, 3, 4, 5, 6, 7, 8]) v.locals[space].active = true;
+			at(v, [0]).status = { Won: 'X' };
+			v.sent = [0];
+			v.within = [];
+			for (const space of [1, 2, 3, 4, 5, 6, 7, 8]) at(v, [space]).active = true;
 		});
 		const screen = await render(SteppedBoard, { view: free });
 		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', 'global');
@@ -76,7 +77,7 @@ describe('following the game', () => {
 
 	it('steps to the Board a refused tap names', async () => {
 		const screen = await render(SteppedBoard, { view: sentTo(4, 40) });
-		await screen.rerender({ refusal: { board: 7, tick: 1 } });
+		await screen.rerender({ refusal: { board: [7], tick: 1 } });
 		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '7');
 	});
 });

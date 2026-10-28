@@ -4,17 +4,17 @@
 	means is the caller's business. With `onstep`, Boards are tapped instead of Cells.
 -->
 <script lang="ts">
-	import type { Cell } from '#lib/engine.js';
-	import LocalBoard from './LocalBoard.svelte';
-	import type { BoardView } from './view.js';
+	import type { Board, Cell } from '#lib/engine.js';
+	import BoardTile from './BoardTile.svelte';
+	import { children, key, type BoardView } from './view.js';
 
 	interface Props {
 		view: BoardView;
 		onplay?: (cell: Cell) => void;
-		/** Makes each Local board a button that steps into it, by its Space. */
-		onstep?: (space: number) => void;
-		/** A Local board to flash, after an illegal tap that names it. A new `tick` flashes again. */
-		flash?: { space: number; tick: number } | null;
+		/** Makes each Board on it a button that steps into that Board. */
+		onstep?: (board: Board) => void;
+		/** A Board to flash, after an illegal tap that names it. A new `tick` flashes again. */
+		flash?: { board: Board; tick: number } | null;
 		/** The game is over: Cells take no clicks. */
 		disabled?: boolean;
 	}
@@ -23,8 +23,8 @@
 </script>
 
 <div class="board" role="group" aria-label="The Global board">
-	{#each view.locals as local (local.space)}
-		<LocalBoard {view} {local} {onplay} {onstep} {flash} {disabled} />
+	{#each children([]) as board (key(board))}
+		<BoardTile {view} {board} {onplay} {onstep} {flash} {disabled} />
 	{/each}
 </div>
 

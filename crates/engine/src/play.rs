@@ -576,14 +576,8 @@ impl LegalMoves {
         for (w, &word) in (0u16..).zip(&self.bits) {
             let count = word.count_ones() as usize;
             if k < count {
-                let mut word = word;
-                for _ in 0..k {
-                    word &= word.wrapping_sub(1); // clear the lowest set bit
-                }
                 // At most 11 · 64 + 63.
-                let index = w
-                    .wrapping_mul(64)
-                    .wrapping_add(word.trailing_zeros() as u16);
+                let index = w.wrapping_mul(64).wrapping_add(select(word, k));
                 return Cell::new(self.depth, index);
             }
             k = k.wrapping_sub(count);
@@ -610,6 +604,25 @@ impl LegalMoves {
             .zip(&self.bits)
             .any(|(w, &word)| word & word_mask(w, &cells) != 0)
     }
+}
+
+/// The position of the `k`-th set bit of `word`, counting from 0, for `k` below its count: whole
+/// bytes are skipped by their counts, then at most seven bits are cleared within one.
+fn select(word: u64, k: usize) -> u16 {
+    let (mut word, mut k, mut base) = (word, k, 0u16);
+    loop {
+        let byte = (word & 0xFF).count_ones() as usize;
+        if k < byte || word == 0 {
+            break;
+        }
+        k = k.wrapping_sub(byte);
+        word >>= 8;
+        base = base.wrapping_add(8);
+    }
+    for _ in 0..k {
+        word &= word.wrapping_sub(1); // clear the lowest set bit
+    }
+    base.wrapping_add(word.trailing_zeros() as u16)
 }
 
 /// The bits of word `w` whose indices lie in `cells`.

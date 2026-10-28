@@ -134,24 +134,32 @@ impl GenericRepr {
     /// Sets the bit of every legal Cell under `board`, which is not beneath a Decided Board when
     /// continuation is off.
     fn collect(&self, board: Board, continuation: Continuation, bits: &mut [u64; 12]) {
+        let masks = self.masks(board);
         if board.is_local() {
-            let masks = self.masks(board);
+            // A Local board's nine Cells are consecutive bits from its first, so its empty ones
+            // go in with one shift, spilling into the next word at most.
+            let empty = u64::from(!(masks.x | masks.o) & FULL);
             let start = board.cells().start;
-            for space in Space::ALL {
-                if (masks.x | masks.o) & space.bit() == 0 {
-                    set_bit(bits, start.wrapping_add(u16::from(space.index())));
-                }
+            let (word, offset) = (usize::from(start / 64), u32::from(start % 64));
+            if let Some(bits) = bits.get_mut(word) {
+                *bits |= empty << offset;
+            }
+            if offset > 55
+                && let Some(bits) = bits.get_mut(word.wrapping_add(1))
+            {
+                *bits |= empty >> 64u32.wrapping_sub(offset);
             }
             return;
         }
+        // A child's status is its bit in these masks, so they're read once for all nine.
+        let decided = masks.x | masks.o | masks.drawn;
         for space in Space::ALL {
-            let Child::Board(child) = board.child(space) else {
-                continue;
-            };
-            if continuation == Continuation::Off && self.status(child).is_decided() {
+            if continuation == Continuation::Off && decided & space.bit() != 0 {
                 continue;
             }
-            self.collect(child, continuation, bits);
+            if let Child::Board(child) = board.child(space) {
+                self.collect(child, continuation, bits);
+            }
         }
     }
 }
@@ -222,12 +230,6 @@ impl BoardRepr for GenericRepr {
         let mut bits = [0; 12];
         self.collect(scope, continuation, &mut bits);
         LegalMoves::from_bits(self.depth, bits)
-    }
-}
-
-fn set_bit(bits: &mut [u64; 12], index: u16) {
-    if let Some(word) = bits.get_mut(usize::from(index / 64)) {
-        *word |= 1 << (index % 64);
     }
 }
 

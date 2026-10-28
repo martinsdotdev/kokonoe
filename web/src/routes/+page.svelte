@@ -49,6 +49,10 @@
 		'flex min-w-0 flex-[1_1_320px] flex-col gap-3.5 rounded-[10px] border-[1.5px] border-foreground bg-card p-6';
 </script>
 
+<svelte:head>
+	<title>Kokonoe</title>
+</svelte:head>
+
 <div class="notebook min-h-svh">
 	<header
 		class="mx-auto flex max-w-[1240px] flex-wrap items-center justify-between gap-5 px-8 pt-7 pb-3"

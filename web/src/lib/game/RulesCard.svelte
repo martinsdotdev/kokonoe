@@ -1,7 +1,7 @@
 <!-- The game's rules in plain words, as the design overview's game screens list them. -->
 <script lang="ts">
 	import { describeRules } from './rules.js';
-	import type { Variant } from './session.svelte.js';
+	import type { Variant } from './rules.js';
 
 	let { variant }: { variant: Variant } = $props();
 </script>

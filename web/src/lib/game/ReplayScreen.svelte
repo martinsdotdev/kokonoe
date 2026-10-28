@@ -2,10 +2,10 @@
 	The Replay viewer (spec §7.4): a saved game a ply at a time, laid out like the game screen. The
 	transport sits under the board on every screen, the caption says what the ply shown did, and
 	each row of the move list jumps to its ply. The stepped board shows each move where it landed.
-	← and → step, and Home and End jump to the start and the end.
+	← and → step, and Home and End jump to the start and the end. While autoplay runs, the caption
+	stops announcing each ply, so a screen reader doesn't fall behind.
 -->
 <script lang="ts">
-	import { resolve } from '$app/paths';
 	import { MediaQuery } from 'svelte/reactivity';
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -16,13 +16,16 @@
 	import Board from './Board.svelte';
 	import { againstLabel } from './launch.js';
 	import { moves } from './listing.js';
+	import { playedCount } from './moves.js';
 	import MoveList from './MoveList.svelte';
 	import PlayerBar from './PlayerBar.svelte';
 	import type { Replay } from './replay.svelte.js';
 	import { resultText, winner } from './result.js';
 	import ResultBanner from './ResultBanner.svelte';
+	import { counted } from './rules.js';
 	import RulesCard from './RulesCard.svelte';
 	import Scoreboard from './Scoreboard.svelte';
+	import ScreenHeader from './ScreenHeader.svelte';
 	import SteppedBoard from './SteppedBoard.svelte';
 
 	let { replay }: { replay: Replay } = $props();
@@ -33,12 +36,9 @@
 	const variant = $derived(replay.variant);
 	const against = $derived(againstLabel(replay.opponent));
 	const shown = $derived(replay.shown);
-	const played = $derived(replay.moves.filter((move) => !move.dealt).length);
+	const played = $derived(playedCount(replay.moves));
 	/** One Board at a time: on a phone, and at depth 3 everywhere. */
 	const stepped = $derived(phone.current || variant.ruleset.depth === 3);
-	const counted = $derived(
-		variant.ruleset.objective !== 'Line' || variant.ruleset.fallback === 'MostWon'
-	);
 	const atStart = $derived(replay.ply === 0);
 	const atEnd = $derived(replay.ply === replay.last);
 
@@ -49,53 +49,37 @@
 		End: () => replay.last
 	};
 
+	/** Where the keys mean something else: typing, or a control of its own. */
+	const typing = 'input, textarea, select, [contenteditable], [role="slider"]';
+
 	const onkeydown = (event: KeyboardEvent) => {
 		const to = keys[event.key];
-		if (!to || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+		if (!to || event.defaultPrevented) return;
+		if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+		if (event.target instanceof Element && event.target.closest(typing)) return;
 		event.preventDefault();
 		replay.go(to());
 	};
 
+	// aria-disabled rather than disabled, so a control pressed to the end keeps the focus.
 	const control =
-		'inline-flex size-11 items-center justify-center rounded-md border-[1.5px] border-foreground disabled:opacity-40';
+		'inline-flex size-11 items-center justify-center rounded-md border-[1.5px] border-foreground aria-disabled:opacity-40';
 </script>
 
 <svelte:window {onkeydown} />
 
+<svelte:head>
+	<title>Replay: {variant.name} · Kokonoe</title>
+</svelte:head>
+
 <div class="min-h-svh">
-	<header class="border-b-[1.5px] border-foreground bg-card">
-		<div
-			class="mx-auto flex max-w-[1320px] flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 sm:gap-y-4 sm:px-7 sm:py-3"
-		>
-			<div class="flex flex-wrap items-center gap-4">
-				<a
-					href={resolve('/')}
-					class="font-display text-[26px] font-bold text-foreground no-underline">Kokonoe</a
-				>
-				<span
-					class="rounded border-[1.5px] border-foreground px-2.5 py-0.5 font-mono text-[13px]"
-					data-variant
-				>
-					{variant.name}
-				</span>
-				<span class="text-muted-foreground">
-					Replay<span class="max-sm:hidden">{` · ${against}`}</span>
-				</span>
-			</div>
-			<a
-				href={resolve('/')}
-				class="inline-flex min-h-11 items-center px-3.5 font-medium text-foreground"
-			>
-				Home
-			</a>
-		</div>
-	</header>
+	<ScreenHeader variant={variant.name} page="Replay" {against} exit="Home" />
 
 	<main class="mx-auto flex max-w-[1320px] flex-col gap-4 p-4 sm:gap-6 sm:p-7">
 		<h1 class="sr-only">Replay: {variant.name}, {against}</h1>
 		{#if replay.end}
 			<ResultBanner
-				headline={resultText(replay.end, variant.ruleset, replay.moments[replay.last].won)}
+				headline={resultText(replay.end, variant.ruleset, replay.won)}
 				detail={`After ${moves(played)}.`}
 				winner={winner(replay.end)}
 			/>
@@ -151,20 +135,8 @@
 
 {#snippet transport()}
 	<div class="flex gap-2" role="group" aria-label="Replay controls">
-		<button
-			type="button"
-			class="{control} bg-card"
-			aria-label="First move"
-			disabled={atStart}
-			onclick={() => replay.go(0)}><SkipBack aria-hidden="true" /></button
-		>
-		<button
-			type="button"
-			class="{control} bg-card"
-			aria-label="Previous move"
-			disabled={atStart}
-			onclick={() => replay.go(replay.ply - 1)}><ChevronLeft aria-hidden="true" /></button
-		>
+		{@render step('First move', 'Home', atStart, 0, SkipBack)}
+		{@render step('Previous move', 'ArrowLeft', atStart, replay.ply - 1, ChevronLeft)}
 		<button
 			type="button"
 			class="{control} bg-primary text-primary-foreground"
@@ -173,21 +145,20 @@
 		>
 			{#if replay.playing}<Pause aria-hidden="true" />{:else}<Play aria-hidden="true" />{/if}
 		</button>
-		<button
-			type="button"
-			class="{control} bg-card"
-			aria-label="Next move"
-			disabled={atEnd}
-			onclick={() => replay.go(replay.ply + 1)}><ChevronRight aria-hidden="true" /></button
-		>
-		<button
-			type="button"
-			class="{control} bg-card"
-			aria-label="Last move"
-			disabled={atEnd}
-			onclick={() => replay.go(replay.last)}><SkipForward aria-hidden="true" /></button
-		>
+		{@render step('Next move', 'ArrowRight', atEnd, replay.ply + 1, ChevronRight)}
+		{@render step('Last move', 'End', atEnd, replay.last, SkipForward)}
 	</div>
+{/snippet}
+
+{#snippet step(label: string, key: string, off: boolean, to: number, Icon: typeof SkipBack)}
+	<button
+		type="button"
+		class="{control} bg-card"
+		aria-label={label}
+		aria-keyshortcuts={key}
+		aria-disabled={off}
+		onclick={() => !off && replay.go(to)}><Icon aria-hidden="true" /></button
+	>
 {/snippet}
 
 {#snippet caption()}
@@ -196,7 +167,9 @@
 		class="flex flex-col gap-2 rounded-[10px] border-[1.5px] border-foreground bg-card p-4"
 	>
 		<span class="font-mono text-xs tracking-[0.08em] text-muted-foreground">THIS MOVE</span>
-		<p class="m-0 font-semibold" aria-live="polite" data-caption>{replay.caption}</p>
+		<p class="m-0 font-semibold" aria-live={replay.playing ? 'off' : 'polite'} data-caption>
+			{replay.caption}
+		</p>
 	</section>
 {/snippet}
 
@@ -208,7 +181,7 @@
 			toMove={'ToMove' in shown.status && shown.status.ToMove.player === player}
 		/>
 	{/each}
-	{#if counted}
+	{#if counted(variant.ruleset)}
 		<Scoreboard won={shown.won} ruleset={variant.ruleset} />
 	{/if}
 {/snippet}

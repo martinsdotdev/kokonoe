@@ -33,7 +33,8 @@ export interface BoardView {
 	dealt: Cell[];
 }
 
-const range = (n: number) => [...Array(n).keys()];
+/** 0 to `n - 1`. */
+export const range = (n: number) => [...Array(n).keys()];
 
 /** A path read as a number in base 9: a Cell's index, or a Board's place among its level's. */
 export const indexOf = (path: number[]): number =>
@@ -76,8 +77,8 @@ export const ownerOf = (board: BoardState): Player | null =>
 /** What a view reads of a position: a Game's current one, or a State from `Game.stateAt`. */
 export type Position = Pick<State, 'ruleset' | 'status' | 'mark' | 'boardStatus'>;
 
-/** `position`, reached by `plies` in order, the first `dealt` of them dealt by the opening. */
-export const positionView = (position: Position, plies: Cell[], dealt: number): BoardView => {
+/** `position`, its last move `last` and the Cells its opening `dealt`. */
+export const positionView = (position: Position, last: Cell | null, dealt: Cell[]): BoardView => {
 	const depth = position.ruleset().depth;
 	const status = position.status();
 	const moves = 'ToMove' in status ? status.ToMove.moves : [];
@@ -98,11 +99,11 @@ export const positionView = (position: Position, plies: Cell[], dealt: number): 
 		}),
 		sent: sent === 'FirstMove' ? null : 'To' in sent ? sent.To : sent.Free.target,
 		within: sent !== 'FirstMove' && 'Free' in sent ? sent.Free.within : null,
-		last: plies.at(-1) ?? null,
-		dealt: plies.slice(0, dealt)
+		last,
+		dealt
 	};
 };
 
 /** The game as it stands. */
 export const boardView = (game: Game): BoardView =>
-	positionView(game, [...game.opening(), ...game.moves()], game.opening().length);
+	positionView(game, [...game.opening(), ...game.moves()].at(-1) ?? null, game.opening());

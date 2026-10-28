@@ -5,8 +5,9 @@
 	A Local board holds its Cells, and at depth 3 a middle Board holds its nine Local boards, each
 	another tile. It renders its part of a BoardView and reports clicks.
 
-	It draws its Board one of three ways:
+	It draws its Board one of four ways:
 	- to play on: a group of Cell buttons, or when `large` and given `onstep`, of Local board buttons;
+	- to read: `disabled` with no `onplay`, as in a replay, its Cells images named as the buttons are;
 	- to step into: with `onstep`, one button, where what's inside is a picture;
 	- as that picture: `still`, which a tile sets on the tiles inside it, with nothing to press.
 -->
@@ -25,7 +26,7 @@
 		onstep?: (board: Board) => void;
 		/** A Board to flash, after an illegal tap that names it. A new `tick` flashes again. */
 		flash?: { board: Board; tick: number } | null;
-		/** The game is over: Cells take no clicks. */
+		/** The board takes no moves now: the game is over, the computer is to move, or a replay. */
 		disabled?: boolean;
 		/** Drawn alone, as large as the screen allows. */
 		large?: boolean;
@@ -52,6 +53,8 @@
 	/** Nothing inside takes a press: it's in this button, or another. */
 	const inert = $derived(still || button);
 	const tag = $derived(button ? 'button' : still ? 'span' : 'div');
+	/** Its Cells are only to read, so they aren't buttons that would each take a Tab. */
+	const read = $derived(disabled && !onplay);
 	const won = $derived(ownerOf(state));
 	const name = $derived.by(() => {
 		const name = boardName(board);
@@ -90,6 +93,13 @@
 				{@const mark = view.cells[cell]}
 				{#if inert}
 					<span class="cell" data-dealt={dealt(cell) || undefined}>{@render face(cell, mark)}</span>
+				{:else if read}
+					<span
+						class="cell"
+						role="img"
+						aria-label={label(cell, mark)}
+						data-dealt={dealt(cell) || undefined}>{@render face(cell, mark)}</span
+					>
 				{:else}
 					<button
 						type="button"

@@ -51,14 +51,17 @@ describe('a replayed game', () => {
 		for (const space of [0, 1, 2]) expect(at(end.view, [space]).status).toEqual({ Won: 'X' });
 	});
 
-	it('marks the dealt opening, and lists the moves as the game screen does', () => {
+	it('marks the dealt opening', () => {
 		const replay = Replay.open(saved());
 		const dealt = cells(DEALT.opening);
 		expect(replay.moves.slice(0, 3).map((move) => move.dealt)).toEqual([true, true, false]);
 		expect(replay.moments[1].view.dealt).toEqual(dealt.slice(0, 1));
 		expect(replay.moments[2].view.dealt).toEqual(dealt);
 		expect(replay.moments[55].view.dealt).toEqual(dealt);
+	});
 
+	it('lists the moves and draws the end as the game screen does', () => {
+		const replay = Replay.open(saved());
 		const resumed = OfflineGame.resume(saved(), { store });
 		expect(replay.moves).toEqual(resumed.moves);
 		expect(replay.moments[55].view).toEqual(resumed.view);

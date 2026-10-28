@@ -1,4 +1,4 @@
-<!-- The result in words once the game ends, and the ways on: its Replay, and a new game. -->
+<!-- The result in words once the game ends, and, when given, the ways on: its Replay and a new game. -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import type { Player } from '#lib/engine.js';
@@ -9,12 +9,12 @@
 		detail: string;
 		winner: Player | null;
 		/** The saved game's id, for a link to its Replay. */
-		replay?: string;
+		game?: string;
 		/** Starts a new game; without it the banner has no button. */
 		onrestart?: () => void;
 	}
 
-	let { headline, detail, winner, replay, onrestart }: Props = $props();
+	let { headline, detail, winner, game, onrestart }: Props = $props();
 
 	const ink = $derived(
 		winner === 'X' ? 'var(--x)' : winner === 'O' ? 'var(--o-text)' : 'var(--foreground)'
@@ -43,11 +43,11 @@
 			<p class="mt-1 mb-0 text-muted-foreground">{detail}</p>
 		</div>
 	</div>
-	{#if replay || onrestart}
+	{#if game || onrestart}
 		<div class="flex flex-wrap gap-3">
-			{#if replay}
+			{#if game}
 				<a
-					href={resolve(`/replay${replayQuery(replay)}`)}
+					href={resolve(`/replay${replayQuery(game)}`)}
 					class="inline-flex min-h-12 items-center rounded-md border-[1.5px] border-foreground bg-card px-5 font-semibold text-foreground no-underline"
 				>
 					Replay

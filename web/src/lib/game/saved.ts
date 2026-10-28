@@ -6,11 +6,12 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { BoardStatus, Cell, Player, Record } from '#lib/engine.js';
 import type { Opponent } from './launch.js';
+import type { Variant } from './rules.js';
 import type { BoardView } from './view.js';
 
 /** One offline game as stored. */
 export interface SavedGame {
-	/** Also the game's address: `/play?game=<id>`. */
+	/** Also the game's address, `/play?game=<id>`, and its Replay's, `/replay?game=<id>`. */
 	id: string;
 	record: Record;
 	variant: { name: string; code: string };
@@ -143,5 +144,11 @@ export const recentGames = (limit: number, name = DATABASE): Promise<SavedGame[]
 /** The unfinished game played most recently, for Home's "Continue game". */
 export const latestUnfinished = async (name = DATABASE): Promise<SavedGame | undefined> =>
 	(await latest(name, 1, (game) => game.result === null))[0];
+
+/** The variant a saved game plays, its rules read from its Record. */
+export const savedVariant = (saved: SavedGame): Variant => ({
+	name: saved.variant.name,
+	ruleset: saved.record.ruleset
+});
 
 export const browserStore: GameStore = { save: (game) => saveGame(game) };

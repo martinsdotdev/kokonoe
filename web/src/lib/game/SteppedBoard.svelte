@@ -26,7 +26,7 @@
 		flash?: { board: Board; tick: number } | null;
 		/** The last tap was refused: the view steps to the Board the refusal names. */
 		refusal?: { board: Board | null; tick: number } | null;
-		/** The game is over: Cells take no clicks. */
+		/** The board takes no moves now: the game is over, the computer is to move, or a replay. */
 		disabled?: boolean;
 		/** `view` is the computer's move, to show landing before following. */
 		replied?: boolean;
@@ -173,7 +173,7 @@
 				{disabled}
 				large
 				onstep={step}
-				onplay={(cell) => settled && onplay?.(cell)}
+				onplay={onplay && ((cell) => settled && onplay(cell))}
 			/>
 		{:else}
 			<GlobalBoard {view} {flash} {disabled} onstep={step} />

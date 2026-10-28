@@ -58,6 +58,10 @@
 	const legend = 'mb-3 p-0 font-mono text-[13px] tracking-[0.08em] text-muted-foreground';
 </script>
 
+<svelte:head>
+	<title>New game · Kokonoe</title>
+</svelte:head>
+
 <div class="min-h-svh">
 	<header
 		class="mx-auto flex max-w-[1240px] flex-wrap items-center justify-between gap-4 px-8 py-6"

@@ -3,7 +3,7 @@
 	latest during a game, or in the Replay viewer the ply shown, where each row jumps to its ply.
 -->
 <script lang="ts">
-	import type { Move } from './moves.js';
+	import { written, type Move } from './moves.js';
 
 	interface Props {
 		moves: Move[];
@@ -64,7 +64,7 @@
 	<span class="w-4 font-semibold" style:color={move.player === 'X' ? 'var(--x)' : 'var(--o-text)'}
 		>{move.player}</span
 	>
-	<span class="font-mono text-[15px]">{move.dealt ? `(${move.notation})` : move.notation}</span>
+	<span class="font-mono text-[15px]">{written(move)}</span>
 	<span class="ml-auto text-[13px] text-muted-foreground">{move.note}</span>
 {/snippet}
 

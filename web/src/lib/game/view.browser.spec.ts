@@ -68,7 +68,7 @@ describe('a Random opening', () => {
 		const game = play(dealt(), '03');
 		const plies = [...game.opening(), ...game.moves()];
 		const state = game.stateAt(2)!;
-		const view = positionView(state, plies.slice(0, 2), 2);
+		const view = positionView(state, plies[1], plies.slice(0, 2));
 		state.free();
 		expect(view.dealt).toEqual(plies.slice(0, 2));
 		expect(view.last).toBe(plies[1]);

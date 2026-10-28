@@ -7,7 +7,6 @@
 	board.
 -->
 <script lang="ts">
-	import { resolve } from '$app/paths';
 	import { MediaQuery } from 'svelte/reactivity';
 	import type { Player } from '#lib/engine.js';
 	import Board from './Board.svelte';
@@ -17,10 +16,13 @@
 	import ResultBanner from './ResultBanner.svelte';
 	import RulesCard from './RulesCard.svelte';
 	import Scoreboard from './Scoreboard.svelte';
+	import ScreenHeader from './ScreenHeader.svelte';
 	import SteppedBoard from './SteppedBoard.svelte';
 	import { againstLabel } from './launch.js';
 	import { moves } from './listing.js';
+	import { playedCount } from './moves.js';
 	import { resultText, winner } from './result.js';
+	import { counted } from './rules.js';
 	import type { OfflineGame } from './session.svelte.js';
 	import TurnCard from './TurnCard.svelte';
 	import { decidedAbove } from './view.js';
@@ -30,7 +32,7 @@
 	/** Narrower than 40rem, Tailwind's `max-sm`: a phone. */
 	const phone = new MediaQuery('(width < 40rem)');
 
-	const played = $derived(session.moves.filter((move) => !move.dealt).length);
+	const played = $derived(playedCount(session.moves));
 	const opponent = $derived(session.opponent);
 	const variant = $derived(session.variant);
 	const against = $derived(againstLabel(opponent));
@@ -38,9 +40,6 @@
 	const frozen = $derived(session.end !== null || session.computerToMove);
 	/** One Board at a time: on a phone, and at depth 3 everywhere. */
 	const stepped = $derived(phone.current || variant.ruleset.depth === 3);
-	const counted = $derived(
-		variant.ruleset.objective !== 'Line' || variant.ruleset.fallback === 'MostWon'
-	);
 
 	/** What the computer is doing on its move, for its player bar. */
 	const doing = (player: Player) =>
@@ -51,32 +50,12 @@
 			: null;
 </script>
 
+<svelte:head>
+	<title>{variant.name} · Kokonoe</title>
+</svelte:head>
+
 <div class="min-h-svh">
-	<header class="border-b-[1.5px] border-foreground bg-card">
-		<div
-			class="mx-auto flex max-w-[1320px] flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 sm:gap-y-4 sm:px-7 sm:py-3"
-		>
-			<div class="flex flex-wrap items-center gap-4">
-				<a
-					href={resolve('/')}
-					class="font-display text-[26px] font-bold text-foreground no-underline">Kokonoe</a
-				>
-				<span
-					class="rounded border-[1.5px] border-foreground px-2.5 py-0.5 font-mono text-[13px]"
-					data-variant
-				>
-					{variant.name}
-				</span>
-				<span class="text-muted-foreground max-sm:hidden">{against}</span>
-			</div>
-			<a
-				href={resolve('/')}
-				class="inline-flex min-h-11 items-center px-3.5 font-medium text-foreground"
-			>
-				Leave game
-			</a>
-		</div>
-	</header>
+	<ScreenHeader variant={variant.name} {against} exit="Leave game" />
 
 	<main class="mx-auto flex max-w-[1320px] flex-col gap-4 p-4 sm:gap-6 sm:p-7">
 		<h1 class="sr-only">{variant.name}, {against}</h1>
@@ -85,7 +64,7 @@
 				headline={resultText(session.end, variant.ruleset, session.won)}
 				detail={`After ${moves(played)}.`}
 				winner={winner(session.end)}
-				replay={session.stored ? session.id : undefined}
+				game={session.stored ? session.id : undefined}
 				onrestart={() => session.restart()}
 			/>
 		{/if}
@@ -164,7 +143,7 @@
 			</button>
 		</p>
 	{/if}
-	{#if counted}
+	{#if counted(variant.ruleset)}
 		<Scoreboard won={session.won} ruleset={variant.ruleset} />
 	{/if}
 {/snippet}

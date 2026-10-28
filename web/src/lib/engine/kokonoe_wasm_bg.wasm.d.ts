@@ -2,6 +2,7 @@
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_game_free: (a: number, b: number) => void;
+export const __wbg_state_free: (a: number, b: number) => void;
 export const game_boardStatus: (a: number, b: any) => [number, number, number];
 export const game_mark: (a: number, b: any) => [number, number, number];
 export const game_moves: (a: number) => [number, number];
@@ -12,6 +13,7 @@ export const game_play: (a: number, b: any, c: any) => [number, number, number];
 export const game_ply: (a: number) => any;
 export const game_record: (a: number) => any;
 export const game_ruleset: (a: number) => any;
+export const game_stateAt: (a: number, b: any) => [number, number, number];
 export const game_status: (a: number) => any;
 export const game_undo: (a: number) => any;
 export const game_wonCount: (a: number, b: any) => [number, number, number];
@@ -19,6 +21,12 @@ export const notation: (a: any, b: number) => [number, number, number, number];
 export const parseRulesetCode: (a: number, b: number) => [number, number, number];
 export const presets: () => [number, number];
 export const rulesetCode: (a: any) => [number, number, number, number];
+export const state_boardStatus: (a: number, b: any) => [number, number, number];
+export const state_mark: (a: number, b: any) => [number, number, number];
+export const state_ply: (a: number) => any;
+export const state_ruleset: (a: number) => any;
+export const state_status: (a: number) => any;
+export const state_wonCount: (a: number, b: any) => [number, number, number];
 export const think: (a: any, b: number, c: any) => [number, number, number];
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

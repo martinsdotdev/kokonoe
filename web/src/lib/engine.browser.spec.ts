@@ -167,6 +167,34 @@ describe('a Standard game through the bindings', () => {
 		const opened = Game.open(game.record());
 		expect(opened instanceof Game && opened.opening()).toEqual(opening);
 	});
+
+	it('reads the State at any ply, the dealt opening included', () => {
+		const game = new Game({ ...STANDARD, opening: { Random: 4 } }, SEED);
+		game.play(4, cell('03'));
+		const marks = (ply: number) => {
+			const state = game.stateAt(ply)!;
+			try {
+				return [...game.opening(), cell('03')].map((at) => state.mark(at) ?? null);
+			} finally {
+				state.free();
+			}
+		};
+		expect(marks(0)).toEqual([null, null, null, null, null]);
+		expect(marks(2)).toEqual(['X', 'O', null, null, null]);
+		expect(marks(5)).toEqual(['X', 'O', 'X', 'O', 'X']);
+
+		const end = game.stateAt(5)!;
+		expect(end.ply()).toBe(5);
+		expect(end.status()).toEqual(game.status());
+		expect(end.ruleset()).toEqual(game.ruleset());
+		expect(end.boardStatus([1])).toEqual(game.boardStatus([1]));
+		expect(end.wonCount('X')).toBe(game.wonCount('X'));
+		end.free();
+
+		expect(game.stateAt(6), 'past the last ply').toBeUndefined();
+		expect(() => game.stateAt(1.5)).toThrow('a Ply is a whole number');
+		expect(() => game.stateAt(0)!.mark(81)).toThrow();
+	});
 });
 
 describe('values crossing the boundary', () => {

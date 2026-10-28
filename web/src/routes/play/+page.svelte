@@ -69,10 +69,7 @@
 			throw new Problem(`Kokonoe doesn’t know the variant “${code}”: ${(error as Error).message}.`);
 		}
 		const preset = presetByCode(code);
-		const name = preset?.name ?? 'Custom variant';
-		// The board steps into three levels on phones first (KOK-38, KOK-39).
-		if (ruleset.depth === 3) throw new Problem(`${name} arrives soon.`);
-		return { name, ruleset };
+		return { name: preset?.name ?? 'Custom variant', ruleset };
 	};
 
 	open().then(

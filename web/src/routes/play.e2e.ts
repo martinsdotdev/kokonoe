@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { DRAWN, TOP_ROW, notation } from './games.js';
+import { DRAWN, LINE_OF_MIDDLE_BOARDS, TOP_ROW, notation } from './games.js';
+import { stepThrough, stepped, tally } from './steps.js';
 
 const cell = (page: Page, digits: string) =>
 	page.getByRole('button', { name: `Cell ${notation(digits)}`, exact: true });
@@ -106,4 +107,27 @@ test('a Ruleset code in the wrong order says why', async ({ page }) => {
 			'“most+cont”: the settings of a Ruleset code go in the order d3, cont, both, first, most, rand.'
 		)
 	).toBeVisible();
+});
+
+test.describe('Deep on a desktop', () => {
+	test.use({ reducedMotion: 'reduce' });
+
+	test('steps into one Board at a time, and plays to a line of middle Boards', async ({ page }) => {
+		test.slow();
+		await page.goto('/play?rules=d3');
+		await expect(page.locator('[data-variant]')).toHaveText('Deep');
+		await expect(page.getByRole('button', { name: 'Board 5, play here' })).toBeVisible();
+		const clicks = await stepThrough(page, LINE_OF_MIDDLE_BOARDS, (target) => target.click());
+		await expect(page.getByRole('heading', { name: 'X wins on a line' })).toBeVisible();
+		await expect(stepped(page)).toHaveAttribute('data-focus', 'global');
+		expect(tally(clicks)).toEqual({ 1: 45, 2: 5, 3: 3 });
+		await expect(page.getByText('Won board 3', { exact: true })).toBeVisible();
+	});
+
+	test('any depth-3 Ruleset code plays, as a Custom variant', async ({ page }) => {
+		await page.goto('/play?rules=d3+cont+first5');
+		await expect(page.locator('[data-variant]')).toHaveText('Custom variant');
+		await expect(page.locator('[data-score]')).toHaveText('X 0 · O 0 · first to 5');
+		await expect(page.getByRole('button', { name: 'Board 5, play here' })).toBeVisible();
+	});
 });

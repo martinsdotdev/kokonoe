@@ -20,7 +20,7 @@
 	let kind: Opponent['kind'] = $state(params.get('vs') === 'hotseat' ? 'hotseat' : 'computer');
 	let level: Level = $state(asked ?? DEFAULT_LEVEL);
 	let seat = $state<Player | 'Random'>('X');
-	let chosen = $state(prefill?.playable ? prefill.name : 'Standard');
+	let chosen = $state(prefill?.name ?? 'Standard');
 
 	const preset = $derived(SHELF.find((p) => p.name === chosen) ?? SHELF[0]);
 	const summary = $derived([
@@ -138,13 +138,12 @@
 								name="variant"
 								value={option.name}
 								bind:group={chosen}
-								disabled={!option.playable}
 								class="mt-0.5 size-5 accent-foreground"
 							/>
 							<span class="flex flex-col gap-0.5">
 								<span class="font-display text-[19px] font-semibold">{option.name}</span>
 								<span class="text-sm text-muted-foreground">
-									{option.playable ? option.blurb : 'Arrives soon'}
+									{option.blurb}
 								</span>
 							</span>
 						</label>

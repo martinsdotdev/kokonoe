@@ -1,58 +1,26 @@
-import { expect, test, type Page } from '@playwright/test';
-import { DRAWN, TOP_ROW, parse } from './games.js';
+import { expect, test, type Locator } from '@playwright/test';
+import { DRAWN, INTO_A_WON_BOARD, LINE_OF_MIDDLE_BOARDS, TOP_ROW } from './games.js';
+import { settledFocus, stepInto, stepThrough, stepped, tally } from './steps.js';
 
 // A phone, set by hand: Playwright's iPhone descriptors bring WebKit and a shorter viewport.
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-const stepped = (page: Page) => page.locator('[data-focus]');
-
-/** Waits for the view to stop stepping, and reports what it shows. */
-const settledFocus = async (page: Page) => {
-	await expect(stepped(page)).toHaveAttribute('data-settled');
-	return stepped(page).getAttribute('data-focus');
-};
-
-/**
- * Plays `moves` with taps only, and checks before each move that the view followed: to the
- * move's Board when it was Sent there, or the Global view, where a tap on the Board steps in.
- * Returns how many taps it took.
- */
-const tapThrough = async (page: Page, moves: string) => {
-	const played = parse(moves);
-	let taps = 0;
-	for (const [i, { space, inner }] of played.entries()) {
-		const sent = i > 0 && played[i - 1].inner === space;
-		const focus = await settledFocus(page);
-		expect(focus, `before move ${i + 1}`).toBe(sent ? String(space) : 'global');
-		if (!sent) {
-			await page.getByRole('button', { name: new RegExp(`^Board ${space + 1}\\b`) }).tap();
-			taps++;
-			await settledFocus(page);
-		}
-		await page.getByRole('button', { name: `Cell ${space + 1}·${inner + 1}`, exact: true }).tap();
-		taps++;
-	}
-	await expect(stepped(page), 'once the game is over').toHaveAttribute('data-focus', 'global');
-	return taps;
-};
-
-/** How many of `moves` start with a tap on a Board: the first move, and every Free move. */
-const boardTaps = (moves: string) =>
-	parse(moves).filter((move, i, all) => i === 0 || move.space !== all[i - 1].inner).length;
+const tap = (target: Locator) => target.tap();
 
 test('a whole game plays with taps, one per Sent move', async ({ page }) => {
 	await page.goto('/play');
-	const taps = await tapThrough(page, TOP_ROW);
+	const taps = await stepThrough(page, TOP_ROW, tap);
 	await expect(page.getByRole('heading', { name: 'X wins on a line' })).toBeVisible();
-	expect(taps).toBe(parse(TOP_ROW).length + boardTaps(TOP_ROW));
+	await expect(stepped(page), 'once the game is over').toHaveAttribute('data-focus', 'global');
+	expect(taps, 'the first move steps in').toEqual([2, ...Array(16).fill(1)]);
 });
 
 test('a drawn game follows every Free move out to the Global view', async ({ page }) => {
 	await page.goto('/play');
-	const taps = await tapThrough(page, DRAWN);
+	const taps = await stepThrough(page, DRAWN, tap);
 	await expect(page.getByRole('heading', { name: 'Draw' })).toBeVisible();
-	expect(boardTaps(DRAWN), 'the game has Free moves past the first').toBeGreaterThan(1);
-	expect(taps).toBe(parse(DRAWN).length + boardTaps(DRAWN));
+	await expect(stepped(page)).toHaveAttribute('data-focus', 'global');
+	expect(tally(taps)[2], 'the game has Free moves past the first').toBeGreaterThan(1);
 });
 
 test('the board and the turn come first, above the fold', async ({ page }) => {
@@ -132,8 +100,63 @@ test.describe('with reduced motion', () => {
 
 	test('steps without animating, and still follows the game', async ({ page }) => {
 		await page.goto('/play');
-		const taps = await tapThrough(page, TOP_ROW);
+		await stepThrough(page, TOP_ROW, tap);
 		await expect(page.getByRole('heading', { name: 'X wins on a line' })).toBeVisible();
-		expect(taps).toBe(parse(TOP_ROW).length + boardTaps(TOP_ROW));
+	});
+});
+
+test.describe('Deep', () => {
+	test('a whole game plays a level a tap: one tap Sent, two into a middle Board, three anywhere', async ({
+		page
+	}) => {
+		test.slow();
+		await page.goto('/play?rules=d3');
+		const taps = await stepThrough(page, LINE_OF_MIDDLE_BOARDS, tap);
+		await expect(page.getByRole('heading', { name: 'X wins on a line' })).toBeVisible();
+		await expect(stepped(page)).toHaveAttribute('data-focus', 'global');
+		// The first move and two Free moves anywhere take three; five Free moves in a middle Board two.
+		expect(tally(taps)).toEqual({ 1: 45, 2: 5, 3: 3 });
+		await expect(page.getByText('board·board·cell')).toBeVisible();
+	});
+
+	test('highlights where to play at every level after a Free move inside a middle Board', async ({
+		page
+	}) => {
+		await page.goto('/play?rules=d3');
+		await stepThrough(page, INTO_A_WON_BOARD, tap);
+		// O Sent X into Local board 8·7, which X has won: X may play anywhere in Board 8.
+		expect(await settledFocus(page)).toEqual([7]);
+		await expect(page.getByText('X: play anywhere in board 8.')).toBeVisible();
+		const won = page.locator('[data-board="76"]');
+		await expect(won).toHaveAttribute('data-status', 'won-x');
+		await expect(won).toHaveAttribute('data-sent');
+		await expect(won).not.toHaveAttribute('data-active');
+		await expect(page.locator('button[data-board^="7"][data-active]')).toHaveCount(8);
+
+		await page.getByRole('button', { name: 'Global', exact: true }).tap();
+		expect(await settledFocus(page)).toEqual([]);
+		await expect(page.locator('button[data-board][data-active]')).toHaveCount(1);
+		await expect(page.locator('button[data-board="7"]')).toHaveAttribute('data-active');
+
+		await stepInto(page, [7]).tap();
+		await settledFocus(page);
+		await stepInto(page, [7, 0]).tap();
+		expect(await settledFocus(page)).toEqual([7, 0]);
+		await expect(page.locator('[data-board="70"]')).toHaveAttribute('data-active');
+		await expect(page.getByRole('button', { name: 'Cell 8·1·1', exact: true })).toHaveAttribute(
+			'aria-disabled',
+			'false'
+		);
+	});
+
+	test('the computer’s move lands in its Local board before the view follows', async ({ page }) => {
+		await page.goto('/play?rules=d3&vs=computer&level=1&seat=X');
+		await stepThrough(page, '444', tap);
+		// X's 5·5·5 Sends the computer to Local board 5·5, still in view, where its move lands.
+		const reply = page.getByRole('button', { name: /^Cell 5·5·\d, O$/ });
+		await expect(reply).toBeVisible();
+		await expect(stepped(page)).toHaveAttribute('data-focus', '44');
+		const [, to] = (await reply.getAttribute('aria-label'))!.match(/^Cell 5·5·(\d)/)!;
+		await expect(stepped(page)).toHaveAttribute('data-focus', `4${Number(to) - 1}`);
 	});
 });

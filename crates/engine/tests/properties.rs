@@ -268,3 +268,48 @@ fn play_out(
     }
     Ok(())
 }
+
+/// Plays out `rules` from `seed`'s game with `State::playout`, then replays the same picks
+/// through `play` and `LegalMoves::nth`: the counts offered, the end and the whole State must
+/// match, since the playout is only a faster way to make the same moves.
+fn plays_out_like_play_and_nth(rules: Ruleset, seed: u64) -> Result<(), TestCaseError> {
+    let game = Game::new(rules, Seed(seed));
+    let mut fast = *game.state();
+    let mut picks = Vec::new();
+    let mut rng = seed | 1;
+    let outcome = fast.playout(|n| {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        let k = (rng % n as u64) as usize;
+        picks.push((n, k));
+        k
+    });
+    let mut slow = *game.state();
+    for (n, k) in picks {
+        let Status::ToMove { moves, .. } = slow.status() else {
+            return Err(TestCaseError::fail(
+                "the playout moved after the game ended",
+            ));
+        };
+        prop_assert_eq!(moves.len(), n);
+        slow.play(moves.nth(k)).unwrap();
+    }
+    prop_assert_eq!(slow.status(), Status::Over(outcome));
+    prop_assert!(slow == fast, "the playout leaves the State play would");
+    Ok(())
+}
+
+/// Every Ruleset at both depths, each with a different opening drawn from its seed.
+#[test]
+fn every_ruleset_plays_out_like_play_and_nth() {
+    let openings = openings();
+    let rulesets = [depth_two_rulesets(), depth_three_rulesets()].concat();
+    for (seed, rules) in (1u64..).zip(rulesets) {
+        let opening = openings[seed as usize % openings.len()];
+        let rules = Ruleset { opening, ..rules };
+        if let Err(failure) = plays_out_like_play_and_nth(rules, seed) {
+            panic!("{rules:?}: {failure}");
+        }
+    }
+}

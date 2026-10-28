@@ -6,7 +6,7 @@ use core::ops::Range;
 
 use crate::address::{Board, Cell, Child, Space};
 use crate::error::{IllegalMove, OpenError, PlayError, ReplayError};
-use crate::repr::{BoardRepr, Masks, Repr, has_line};
+use crate::repr::{BoardRepr, Masks, Repr, has_line, select};
 use crate::rng::Rng;
 use crate::ruleset::{Continuation, Depth, Fallback, Objective, Opening, Ruleset};
 
@@ -309,80 +309,64 @@ impl State {
         // Nothing below can fail, so a rejected move leaves `self` untouched.
         let decided = self.repr.place(cell, player, self.ruleset.drawn_owner);
         self.ply = Ply(self.ply.0.wrapping_add(1)); // at most 729
-        if let Some(outcome) = self.ended(decided, player) {
+        if let Some(outcome) = self.outcome_after(decided, player) {
             self.status = Status::Over(outcome);
             return Ok(self.status);
         }
-
-        // Sent, then relaxation: walk up from the target to the nearest Board with a legal Cell.
-        // Some child of the Global board is still open, so the walk always finds one.
+        let continuation = self.ruleset.continuation;
         let target = cell.sends_to();
-        let mut within = target;
-        self.status = loop {
-            if let Some(moves) = self.repr.legal_in(within, self.ruleset.continuation) {
-                let sent = if within == target {
+        self.status = match relax(cell, |within| self.repr.legal_in(within, continuation)) {
+            Some((within, moves)) => Status::ToMove {
+                player: player.opponent(),
+                sent: if within == target {
                     Sent::To(target)
                 } else {
                     Sent::Free { target, within }
-                };
-                break Status::ToMove {
-                    player: player.opponent(),
-                    sent,
-                    moves,
-                };
-            }
-            match within.parent() {
-                Some(up) => within = up,
-                None => break Status::Over(self.fallback()), // unreachable, kept total
-            }
+                },
+                moves,
+            },
+            None => Status::Over(self.fallback()), // unreachable, kept total
         };
         Ok(self.status)
     }
 
-    /// Plays uniformly random moves to the end of the game, leaves the State there, and returns
-    /// the outcome: the search's playouts. `pick(n)` chooses among the `n` legal moves by their
-    /// position in address order, so the moves are exactly the ones `play` and
-    /// [`LegalMoves::nth`] would make with the same picks. It's faster because no Status or
-    /// LegalMoves is built along the way: each move is counted and selected in place.
+    /// Plays the game to its end, `pick(n)` choosing each move by its position among the `n`
+    /// legal ones in address order, and returns the outcome, leaving the State at the end. The
+    /// moves are exactly those `play` and [`LegalMoves::nth`] make with the same picks, an answer
+    /// past `n` wrapping as in `nth`, but no Status is built between them, so the search's random
+    /// playouts run at the representation's speed.
     pub fn playout(&mut self, mut pick: impl FnMut(usize) -> usize) -> Outcome {
+        // The first move comes from the moves the last `play` already listed.
         let (mut player, mut cell) = match self.status {
             Status::Over(outcome) => return outcome,
             Status::ToMove { player, moves, .. } => (player, moves.nth(pick(moves.len()))),
         };
+        let continuation = self.ruleset.continuation;
         loop {
             let decided = self.repr.place(cell, player, self.ruleset.drawn_owner);
             self.ply = Ply(self.ply.0.wrapping_add(1)); // at most 729
-            if let Some(outcome) = self.ended(decided, player) {
+            if let Some(outcome) = self.outcome_after(decided, player) {
                 self.status = Status::Over(outcome);
                 return outcome;
             }
             player = player.opponent();
-            // Sent, then relaxation, as in `play`.
-            let mut within = cell.sends_to();
-            cell = loop {
-                if let Some(next) = self
-                    .repr
-                    .pick_in(within, self.ruleset.continuation, &mut pick)
-                {
-                    break next;
+            match relax(cell, |within| {
+                self.repr.pick_in(within, continuation, &mut pick)
+            }) {
+                Some((_, next)) => cell = next,
+                None => {
+                    let outcome = self.fallback(); // unreachable, kept total, as in `play`
+                    self.status = Status::Over(outcome);
+                    return outcome;
                 }
-                match within.parent() {
-                    Some(up) => within = up,
-                    None => {
-                        // Unreachable, as in `play`: some child of the Global board is open.
-                        let outcome = self.fallback();
-                        self.status = Status::Over(outcome);
-                        return outcome;
-                    }
-                }
-            };
+            }
         }
     }
 
     /// The game's end, if `mover`'s move that decided `decided` ended it: the objective, or every
     /// child of the Global board Decided. The game can only end when one of those children was
     /// newly decided.
-    fn ended(&self, decided: Option<Board>, mover: Player) -> Option<Outcome> {
+    fn outcome_after(&self, decided: Option<Board>, mover: Player) -> Option<Outcome> {
         if !decided.is_some_and(|board| board.parent().is_some_and(Board::is_global)) {
             return None;
         }
@@ -538,6 +522,20 @@ impl State {
     }
 }
 
+/// Sent, then relaxation: from the Local board `cell` Sends to, walks up to the nearest Board
+/// where `find` finds the next move, and returns that Board with what it found. The one place
+/// `play` and `playout` both take the rule from. Whenever the game goes on some child of the
+/// Global board is open, so the walk always finds one.
+fn relax<T>(cell: Cell, mut find: impl FnMut(Board) -> Option<T>) -> Option<(Board, T)> {
+    let mut within = cell.sends_to();
+    loop {
+        if let Some(found) = find(within) {
+            return Some((within, found));
+        }
+        within = within.parent()?;
+    }
+}
+
 /// The game's progress. One value, so "whose turn" and "is it over" can't disagree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -648,25 +646,6 @@ impl LegalMoves {
             .zip(&self.bits)
             .any(|(w, &word)| word & word_mask(w, &cells) != 0)
     }
-}
-
-/// The position of the `k`-th set bit of `word`, counting from 0, for `k` below its count: whole
-/// bytes are skipped by their counts, then at most seven bits are cleared within one.
-pub(crate) fn select(word: u64, k: usize) -> u16 {
-    let (mut word, mut k, mut base) = (word, k, 0u16);
-    loop {
-        let byte = (word & 0xFF).count_ones() as usize;
-        if k < byte || word == 0 {
-            break;
-        }
-        k = k.wrapping_sub(byte);
-        word >>= 8;
-        base = base.wrapping_add(8);
-    }
-    for _ in 0..k {
-        word &= word.wrapping_sub(1); // clear the lowest set bit
-    }
-    base.wrapping_add(word.trailing_zeros() as u16)
 }
 
 /// The bits of word `w` whose indices lie in `cells`.

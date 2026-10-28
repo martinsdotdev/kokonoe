@@ -6,7 +6,7 @@
 //! and a 512-entry win table at every level.
 
 use crate::address::{Board, Cell, Child, Space};
-use crate::play::{BoardStatus, LegalMoves, Player, select};
+use crate::play::{BoardStatus, LegalMoves, Player};
 use crate::ruleset::{Continuation, Depth, DrawnOwner};
 
 pub(crate) trait BoardRepr: Copy + Eq {
@@ -41,9 +41,9 @@ pub(crate) trait BoardRepr: Copy + Eq {
     /// openings from the same Seeds and needs a new `RULES_VERSION`. `tests/openings.rs` pins it.
     fn legal_in(&self, scope: Board, continuation: Continuation) -> Option<LegalMoves>;
 
-    /// The Cell `legal_in(scope, continuation)` would list at position `pick(n)` of its `n`, or
-    /// `None` when it would list none, in which case `pick` isn't called. Counted and selected in
-    /// place, for playouts that never need the list.
+    /// Calls `pick(n)` with the number `n` of Cells `legal_in(scope, continuation)` would list,
+    /// and returns the one at that position, without listing them: playouts never need the list.
+    /// `None`, without calling `pick`, when there are none.
     fn pick_in(
         &self,
         scope: Board,
@@ -52,7 +52,8 @@ pub(crate) trait BoardRepr: Copy + Eq {
     ) -> Option<Cell>;
 }
 
-/// Measured at 400k depth-2 playouts/s in WASM, so v1 has no specialized representation.
+/// The prototype ran this representation at about 400k depth-2 playouts/s in WASM, so v1 has no
+/// specialized one. `examples/playouts.rs` measures the engine's.
 pub(crate) type Repr = GenericRepr;
 
 /// Reference representation for any depth. Every Board holds three 9-bit masks over its
@@ -77,6 +78,11 @@ pub(crate) struct Masks {
 const FULL: u16 = 0x1FF;
 
 impl Masks {
+    /// A Local board's empty Cells: its masks hold marks as if they were won children.
+    pub(crate) const fn unmarked(self) -> u16 {
+        !(self.x | self.o) & FULL
+    }
+
     /// The masks `player` and the opponent would complete a line on, a drawn child counting for
     /// both under `DrawnOwner::Both`.
     pub(crate) const fn lines(self, player: Player, drawn: DrawnOwner) -> (u16, u16) {
@@ -129,6 +135,12 @@ impl GenericRepr {
         }
     }
 
+    /// Whether Cells under `scope` may take moves at all: with continuation off, none beneath a
+    /// Decided Board can.
+    fn takes_moves(&self, scope: Board, continuation: Continuation) -> bool {
+        continuation == Continuation::On || !self.decided_at_or_above(scope)
+    }
+
     fn decided_at_or_above(&self, mut board: Board) -> bool {
         loop {
             if self.status(board).is_decided() {
@@ -147,21 +159,21 @@ impl GenericRepr {
         let masks = self.masks(board);
         if board.is_local() {
             // A Local board's nine Cells are consecutive bits from its first, so its empty ones
-            // go in with one shift, spilling into the next word at most.
-            let empty = u64::from(!(masks.x | masks.o) & FULL);
+            // go in with one shift, spilling into the next word when they start in its last 8.
+            let empty = u64::from(masks.unmarked());
             let start = board.cells().start;
             let (word, offset) = (usize::from(start / 64), u32::from(start % 64));
             if let Some(bits) = bits.get_mut(word) {
                 *bits |= empty << offset;
             }
-            if offset > 55
+            if offset > 64 - 9
                 && let Some(bits) = bits.get_mut(word.wrapping_add(1))
             {
                 *bits |= empty >> 64u32.wrapping_sub(offset);
             }
             return;
         }
-        for child in self.children_to_visit(board, masks, continuation) {
+        for child in self.candidate_children(board, masks, continuation) {
             self.collect(child, continuation, bits);
         }
     }
@@ -169,7 +181,7 @@ impl GenericRepr {
     /// The children of an upper Board whose Cells may be legal, in Space order: all of them, or
     /// with continuation off the undecided ones. A child's status is its bit in `masks`, the
     /// Board's own, so they're read once for all nine.
-    fn children_to_visit(
+    fn candidate_children(
         &self,
         board: Board,
         masks: Masks,
@@ -187,13 +199,15 @@ impl GenericRepr {
         })
     }
 
-    /// How many Cells under `board` `collect` would set.
+    /// How many Cells under `board` `collect` would set. `count` and `select` walk the Boards in
+    /// `collect`'s order, so `pick_in` picks what `legal_in` lists; the playout test holds them
+    /// together.
     fn count(&self, board: Board, continuation: Continuation) -> usize {
         let masks = self.masks(board);
         if board.is_local() {
-            return (!(masks.x | masks.o) & FULL).count_ones() as usize;
+            return masks.unmarked().count_ones() as usize;
         }
-        self.children_to_visit(board, masks, continuation)
+        self.candidate_children(board, masks, continuation)
             .map(|child| self.count(child, continuation))
             .fold(0, usize::wrapping_add)
     }
@@ -203,7 +217,7 @@ impl GenericRepr {
     fn select(&self, board: Board, continuation: Continuation, k: usize) -> Result<Cell, usize> {
         let masks = self.masks(board);
         if board.is_local() {
-            let empty = !(masks.x | masks.o) & FULL;
+            let empty = masks.unmarked();
             let count = empty.count_ones() as usize;
             if k >= count {
                 return Err(k.wrapping_sub(count));
@@ -216,7 +230,7 @@ impl GenericRepr {
             ));
         }
         let mut k = k;
-        for child in self.children_to_visit(board, masks, continuation) {
+        for child in self.candidate_children(board, masks, continuation) {
             match self.select(child, continuation, k) {
                 Ok(cell) => return Ok(cell),
                 Err(rest) => k = rest,
@@ -286,7 +300,7 @@ impl BoardRepr for GenericRepr {
     }
 
     fn legal_in(&self, scope: Board, continuation: Continuation) -> Option<LegalMoves> {
-        if continuation == Continuation::Off && self.decided_at_or_above(scope) {
+        if !self.takes_moves(scope, continuation) {
             return None;
         }
         let mut bits = [0; 12];
@@ -300,7 +314,7 @@ impl BoardRepr for GenericRepr {
         continuation: Continuation,
         pick: impl FnOnce(usize) -> usize,
     ) -> Option<Cell> {
-        if continuation == Continuation::Off && self.decided_at_or_above(scope) {
+        if !self.takes_moves(scope, continuation) {
             return None;
         }
         let count = self.count(scope, continuation);
@@ -348,6 +362,25 @@ const fn build_win() -> [bool; 512] {
         mask += 1;
     }
     win
+}
+
+/// The position of the `k`-th set bit of `word`, counting from 0, for `k` below its count: whole
+/// bytes are skipped by their counts, then at most seven bits are cleared within one.
+pub(crate) fn select(word: u64, k: usize) -> u16 {
+    let (mut word, mut k, mut base) = (word, k, 0u16);
+    loop {
+        let byte = (word & 0xFF).count_ones() as usize;
+        if k < byte || word == 0 {
+            break;
+        }
+        k = k.wrapping_sub(byte);
+        word >>= 8;
+        base = base.wrapping_add(8);
+    }
+    for _ in 0..k {
+        word &= word.wrapping_sub(1); // clear the lowest set bit
+    }
+    base.wrapping_add(word.trailing_zeros() as u16)
 }
 
 pub(crate) fn has_line(mask: u16) -> bool {

@@ -1,9 +1,12 @@
 <!--
-	The game screen on desktop (spec §7.4), in the design overview's three columns, which wrap on
-	narrow screens: players and the turn, the board, then the moves and the controls.
+	The game screen (spec §7.4). From 640 px wide it has the design overview's three columns, which
+	wrap on narrower screens: players and the turn, the board, then the moves and the controls. On a
+	phone the board comes first and steps into one Board at a time (§7.3), with the turn under it,
+	then the players, the controls, the moves and the rules, in that order in the page as on screen.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { MediaQuery } from 'svelte/reactivity';
 	import type { Player } from '#lib/engine.js';
 	import Board from './Board.svelte';
 	import GameControls from './GameControls.svelte';
@@ -12,6 +15,7 @@
 	import ResultBanner from './ResultBanner.svelte';
 	import RulesCard from './RulesCard.svelte';
 	import Scoreboard from './Scoreboard.svelte';
+	import SteppedBoard from './SteppedBoard.svelte';
 	import { againstLabel } from './launch.js';
 	import { moves } from './listing.js';
 	import { resultText, winner } from './result.js';
@@ -19,6 +23,9 @@
 	import TurnCard from './TurnCard.svelte';
 
 	let { session }: { session: OfflineGame } = $props();
+
+	/** Tailwind's `max-sm`: a phone. */
+	const phone = new MediaQuery('(width < 40rem)');
 
 	const played = $derived(session.moves.filter((move) => !move.dealt).length);
 	const opponent = $derived(session.opponent);
@@ -39,7 +46,9 @@
 
 <div class="min-h-svh">
 	<header class="border-b-[1.5px] border-foreground bg-card">
-		<div class="mx-auto flex max-w-[1320px] flex-wrap items-center justify-between gap-4 px-7 py-3">
+		<div
+			class="mx-auto flex max-w-[1320px] flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 sm:gap-y-4 sm:px-7 sm:py-3"
+		>
 			<div class="flex flex-wrap items-center gap-4">
 				<a
 					href={resolve('/')}
@@ -51,7 +60,7 @@
 				>
 					{variant.name}
 				</span>
-				<span class="text-muted-foreground">{against}</span>
+				<span class="text-muted-foreground max-sm:hidden">{against}</span>
 			</div>
 			<a
 				href={resolve('/')}
@@ -62,7 +71,7 @@
 		</div>
 	</header>
 
-	<main class="mx-auto flex max-w-[1320px] flex-col gap-6 p-7">
+	<main class="mx-auto flex max-w-[1320px] flex-col gap-4 p-4 sm:gap-6 sm:p-7">
 		<h1 class="sr-only">{variant.name}, {against}</h1>
 		{#if session.end}
 			<ResultBanner
@@ -72,60 +81,103 @@
 				onrestart={() => session.restart()}
 			/>
 		{/if}
-		<div class="flex flex-wrap items-start justify-center gap-8">
-			<aside
-				aria-label="Players and turn"
-				class="flex min-w-0 flex-[1_1_260px] flex-col gap-3.5 lg:max-w-80"
-			>
-				{#each ['X', 'O'] as const as player (player)}
-					<PlayerBar
-						{player}
-						seat={session.seats[player]}
-						toMove={session.toMove === player}
-						doing={doing(player)}
-					/>
-				{/each}
-				{#if session.stuck && !session.end}
-					<p class="m-0 flex flex-wrap items-center gap-3 text-sm" role="alert">
-						The computer couldn’t find its move.
-						<button
-							type="button"
-							class="min-h-11 rounded-md border-[1.5px] border-foreground bg-card px-4 font-semibold"
-							onclick={() => session.retry()}
-						>
-							Try again
-						</button>
-					</p>
-				{/if}
-				{#if counted}
-					<Scoreboard won={session.won} ruleset={variant.ruleset} />
-				{/if}
-				{#if 'ToMove' in session.status}
-					<TurnCard
-						player={session.status.ToMove.player}
-						sent={session.status.ToMove.sent}
-						last={session.moves.at(-1)?.notation ?? null}
-					/>
-				{/if}
-			</aside>
-			<section aria-label="Board" class="flex min-w-0 flex-[0_1_600px] justify-center">
-				<Board
+		{#if phone.current}
+			<section aria-label="Board" class="flex flex-col items-center gap-4">
+				<SteppedBoard
 					view={session.view}
 					flash={session.flash}
 					disabled={session.end !== null || session.computerToMove}
+					replied={session.replied}
 					onplay={(cell) => session.play(cell)}
 				/>
+				<div class="w-full">{@render turn()}</div>
 			</section>
-			<aside aria-label="Moves" class="flex min-w-0 flex-[1_1_260px] flex-col gap-3.5 lg:max-w-80">
-				<MoveList moves={session.moves} />
-				<GameControls
-					canUndo={session.canUndo}
-					resigner={session.resigner}
-					onundo={() => session.undo()}
-					onresign={() => session.resign()}
-				/>
-				<RulesCard {variant} />
+			<aside aria-label="Players" class="flex flex-col gap-3.5">{@render players()}</aside>
+			<aside aria-label="Moves" class="flex flex-col gap-3.5">
+				{@render controls()}
+				{@render list()}
+				{@render rules()}
 			</aside>
-		</div>
+		{:else}
+			<div class="flex flex-wrap items-start justify-center gap-8">
+				<aside
+					aria-label="Players and turn"
+					class="flex min-w-0 flex-[1_1_260px] flex-col gap-3.5 lg:max-w-80"
+				>
+					{@render players()}
+					{@render turn()}
+				</aside>
+				<section aria-label="Board" class="flex min-w-0 flex-[0_1_600px] justify-center">
+					<Board
+						view={session.view}
+						flash={session.flash}
+						disabled={session.end !== null || session.computerToMove}
+						onplay={(cell) => session.play(cell)}
+					/>
+				</section>
+				<aside
+					aria-label="Moves"
+					class="flex min-w-0 flex-[1_1_260px] flex-col gap-3.5 lg:max-w-80"
+				>
+					{@render list()}
+					{@render controls()}
+					{@render rules()}
+				</aside>
+			</div>
+		{/if}
 	</main>
 </div>
+
+{#snippet players()}
+	{#each ['X', 'O'] as const as player (player)}
+		<PlayerBar
+			{player}
+			seat={session.seats[player]}
+			toMove={session.toMove === player}
+			doing={doing(player)}
+		/>
+	{/each}
+	{#if session.stuck && !session.end}
+		<p class="m-0 flex flex-wrap items-center gap-3 text-sm" role="alert">
+			The computer couldn’t find its move.
+			<button
+				type="button"
+				class="min-h-11 rounded-md border-[1.5px] border-foreground bg-card px-4 font-semibold"
+				onclick={() => session.retry()}
+			>
+				Try again
+			</button>
+		</p>
+	{/if}
+	{#if counted}
+		<Scoreboard won={session.won} ruleset={variant.ruleset} />
+	{/if}
+{/snippet}
+
+{#snippet turn()}
+	{#if 'ToMove' in session.status}
+		<TurnCard
+			player={session.status.ToMove.player}
+			sent={session.status.ToMove.sent}
+			last={session.moves.at(-1)?.notation ?? null}
+			refused={session.flash !== null}
+		/>
+	{/if}
+{/snippet}
+
+{#snippet list()}
+	<MoveList moves={session.moves} />
+{/snippet}
+
+{#snippet controls()}
+	<GameControls
+		canUndo={session.canUndo}
+		resigner={session.resigner}
+		onundo={() => session.undo()}
+		onresign={() => session.resign()}
+	/>
+{/snippet}
+
+{#snippet rules()}
+	<RulesCard {variant} />
+{/snippet}

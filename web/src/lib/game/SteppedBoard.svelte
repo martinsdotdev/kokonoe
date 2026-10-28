@@ -22,13 +22,22 @@
 		onplay?: (cell: Cell) => void;
 		/** A Local board to flash, after an illegal tap that names it. A new `tick` flashes again. */
 		flash?: { space: number; tick: number } | null;
+		/** The last tap was refused: the view steps to the Board the refusal names. */
+		refusal?: { board: number | null; tick: number } | null;
 		/** The game is over: Cells take no clicks. */
 		disabled?: boolean;
 		/** `view` is the computer's move, to show landing before following. */
 		replied?: boolean;
 	}
 
-	let { view, onplay, flash = null, disabled = false, replied = false }: Props = $props();
+	let {
+		view,
+		onplay,
+		flash = null,
+		refusal = null,
+		disabled = false,
+		replied = false
+	}: Props = $props();
 
 	/** The Global board, or a Local board by its Space. */
 	type Focus = 'global' | number;
@@ -42,15 +51,21 @@
 	const follow = (view: BoardView): Focus =>
 		view.sent === null || view.free ? 'global' : view.sent;
 
-	/** Holding the computer's move in view. A new view starts a new hold, and a step ends it. */
+	/**
+	 * Holding the computer's move in view. It reads `view` so each new view starts a new hold,
+	 * and the hold's timer or a step ends it by assignment.
+	 */
 	let holding = $derived.by(() => {
 		void view;
 		return replied;
 	});
 
-	/** What's shown: a flashed Board, the computer's move, or where to play. Steps assign it. */
+	/**
+	 * What's shown: the Board a refusal names, the computer's move, or where to play. A step
+	 * assigns it until the game next changes.
+	 */
 	let focus: Focus = $derived.by(() => {
-		if (flash) return flash.space;
+		if (refusal?.board != null) return refusal.board;
 		if (holding && view.last !== null) return Math.floor(view.last / 9);
 		return follow(view);
 	});
@@ -61,7 +76,7 @@
 		return () => clearTimeout(timer);
 	});
 
-	/** No step is animating, so taps go through. */
+	/** No step is animating, so taps go through. Tests wait on it as `data-settled`. */
 	let settled = $state(true);
 
 	const step = (to: Focus) => {
@@ -72,9 +87,10 @@
 
 	let root: HTMLElement;
 	let stage: HTMLElement;
-	/** The focus last drawn, not reactive: the step's animation goes from it. */
+	// Plain variables, not state: the effects below read and write them, and nothing renders them.
+	/** The focus last drawn: the step's animation goes from it. */
 	let drawn: Focus | null = null;
-	/** Keyboard focus was in the board as the view changed. */
+	/** Keyboard focus was in the board as the view changed, read before the DOM changes. */
 	let focused = false;
 
 	$effect.pre(() => {
@@ -118,7 +134,8 @@
 
 <div class="stepped" bind:this={root} data-focus={focus} data-settled={settled || undefined}>
 	<nav aria-label="Where you are">
-		<ol>
+		<!-- Safari drops a list's semantics with its bullets, unless it's given the role back. -->
+		<ol role="list">
 			{#if focus === 'global'}
 				<li><span class="crumb" aria-current="location">Global</span></li>
 			{:else}
@@ -129,14 +146,14 @@
 					</button>
 				</li>
 				<li>
-					<span class="crumb" aria-current="location" tabindex="-1">
+					<h2 class="crumb" aria-current="location" tabindex="-1">
 						Board {boardLabel([focus])}
-					</span>
+					</h2>
 				</li>
 			{/if}
 		</ol>
 	</nav>
-	<div class="stage" bind:this={stage}>
+	<div bind:this={stage}>
 		{#if focus === 'global'}
 			<Board {view} {flash} {disabled} onstep={step} />
 		{:else}
@@ -177,6 +194,7 @@
 		align-items: center;
 	}
 	li + li::before {
+		content: '›';
 		content: '›' / '';
 		padding-inline: 4px;
 	}
@@ -186,7 +204,16 @@
 		align-items: center;
 		gap: 10px;
 		min-height: 44px;
+		margin: 0;
+		font: inherit;
+	}
+	/* The heading takes focus only when the view steps in, so it shows a ring only then. */
+	h2.crumb:focus {
 		outline: none;
+	}
+	h2.crumb:focus-visible {
+		outline: 3px solid var(--ring);
+		outline-offset: 2px;
 	}
 	.crumb.out {
 		padding: 0 4px 0 0;
@@ -207,10 +234,5 @@
 	.mini {
 		display: block;
 		width: 40px;
-	}
-
-	.stage {
-		display: flex;
-		justify-content: center;
 	}
 </style>

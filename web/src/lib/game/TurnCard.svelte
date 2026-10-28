@@ -13,7 +13,7 @@
 		sent: Sent;
 		/** The last move in Notation, which did the sending. */
 		last: string | null;
-		/** A tap was just refused. */
+		/** A tap was refused, and nothing has been played since. */
 		refused?: boolean;
 	}
 
@@ -43,6 +43,7 @@
 			why: `${by} Sent ${player} to board ${board}, which is decided, so every open board is ${player}’s.`
 		};
 	});
+	const line = $derived(refused ? `Not playable. ${turn.line}` : turn.line);
 </script>
 
 <section
@@ -61,8 +62,6 @@
 			FREE MOVE
 		</span>
 	{/if}
-	<p class="m-0 font-semibold" aria-live="polite">
-		{refused ? `Not playable. ${turn.line}` : turn.line}
-	</p>
+	<p class="m-0 font-semibold" aria-live="polite">{line}</p>
 	<p class="m-0 text-sm text-muted-foreground">{turn.why}</p>
 </section>

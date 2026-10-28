@@ -153,6 +153,11 @@ export class OfflineGame {
 	resigned: Player | null = $state.raw(null);
 	/** The Local board to flash, with a tick so the same board can flash twice running. */
 	flash: { space: number; tick: number } | null = $state.raw(null);
+	/**
+	 * The last tap was refused, until the next change: the Local board the refusal named, if any,
+	 * and a tick for each refusal. Unlike `flash`, it lasts, so the turn line says it once.
+	 */
+	refusal: { board: number | null; tick: number } | null = $state.raw(null);
 	/** The last change was the computer's move, which the phone board shows landing. */
 	replied = $state.raw(false);
 	/** The game's id in the store, and its address once `stored`. A restart gives a new one. */
@@ -320,7 +325,11 @@ export class OfflineGame {
 		const before = this.view;
 		const result = this.#game.play(this.#game.ply(), cell);
 		if (typeof result === 'string') return false;
-		if ('Illegal' in result) this.#flash(named(result.Illegal));
+		if ('Illegal' in result) {
+			const board = named(result.Illegal);
+			this.#flash(board);
+			this.refusal = { board, tick: (this.refusal?.tick ?? 0) + 1 };
+		}
 		if (!('Now' in result)) return false;
 		this.#refresh();
 		this.moves = [
@@ -400,6 +409,7 @@ export class OfflineGame {
 	}
 
 	#refresh() {
+		this.refusal = null;
 		this.replied = false;
 		this.view = boardView(this.#game);
 		this.status = this.#game.status();

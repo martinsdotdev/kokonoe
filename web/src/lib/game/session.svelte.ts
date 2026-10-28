@@ -9,7 +9,16 @@ import {
 } from '#lib/engine.js';
 import { WorkerComputer, type Computer } from './computer.js';
 import type { Level, Opponent } from './launch.js';
-import { dealtMoves, playedCount, playedMove, seats, type Move, type Seat } from './moves.js';
+import { dayOf, type GameFile } from './gamefile.js';
+import {
+	dealtMoves,
+	playedCount,
+	playedMove,
+	seatLabel,
+	seats,
+	type Move,
+	type Seat
+} from './moves.js';
 import { illegalMove, openRecord } from './record.js';
 import { resultText, type End } from './result.js';
 import { rulesetCode, type Variant } from './rules.js';
@@ -143,6 +152,18 @@ export class OfflineGame {
 			this.#started = saved.started;
 		}
 		this.#ask();
+	}
+
+	/** The game as a file holds it, to export. */
+	get file(): GameFile {
+		return {
+			record: this.#game.record(),
+			variant: this.variant.name,
+			seats: { X: seatLabel(this.seats.X), O: seatLabel(this.seats.O) },
+			date: dayOf(this.#started ?? Date.now()),
+			opening: this.#game.opening(),
+			end: this.end
+		};
 	}
 
 	get end(): End | null {

@@ -6,7 +6,7 @@
 //! and a 512-entry win table at every level.
 
 use crate::address::{Board, Cell, Child, Space};
-use crate::play::{BoardStatus, LegalMoves, Player};
+use crate::play::{BoardStatus, LegalMoves, Player, select};
 use crate::ruleset::{Continuation, Depth, DrawnOwner};
 
 pub(crate) trait BoardRepr: Copy + Eq {
@@ -40,6 +40,16 @@ pub(crate) trait BoardRepr: Copy + Eq {
     /// A Random opening deals by position in this list, so another order would deal different
     /// openings from the same Seeds and needs a new `RULES_VERSION`. `tests/openings.rs` pins it.
     fn legal_in(&self, scope: Board, continuation: Continuation) -> Option<LegalMoves>;
+
+    /// The Cell `legal_in(scope, continuation)` would list at position `pick(n)` of its `n`, or
+    /// `None` when it would list none, in which case `pick` isn't called. Counted and selected in
+    /// place, for playouts that never need the list.
+    fn pick_in(
+        &self,
+        scope: Board,
+        continuation: Continuation,
+        pick: impl FnOnce(usize) -> usize,
+    ) -> Option<Cell>;
 }
 
 /// Measured at 400k depth-2 playouts/s in WASM, so v1 has no specialized representation.
@@ -151,16 +161,68 @@ impl GenericRepr {
             }
             return;
         }
-        // A child's status is its bit in these masks, so they're read once for all nine.
+        for child in self.children_to_visit(board, masks, continuation) {
+            self.collect(child, continuation, bits);
+        }
+    }
+
+    /// The children of an upper Board whose Cells may be legal, in Space order: all of them, or
+    /// with continuation off the undecided ones. A child's status is its bit in `masks`, the
+    /// Board's own, so they're read once for all nine.
+    fn children_to_visit(
+        &self,
+        board: Board,
+        masks: Masks,
+        continuation: Continuation,
+    ) -> impl Iterator<Item = Board> {
         let decided = masks.x | masks.o | masks.drawn;
-        for space in Space::ALL {
+        Space::ALL.into_iter().filter_map(move |space| {
             if continuation == Continuation::Off && decided & space.bit() != 0 {
-                continue;
+                return None;
             }
-            if let Child::Board(child) = board.child(space) {
-                self.collect(child, continuation, bits);
+            match board.child(space) {
+                Child::Board(child) => Some(child),
+                Child::Cell(_) => None,
+            }
+        })
+    }
+
+    /// How many Cells under `board` `collect` would set.
+    fn count(&self, board: Board, continuation: Continuation) -> usize {
+        let masks = self.masks(board);
+        if board.is_local() {
+            return (!(masks.x | masks.o) & FULL).count_ones() as usize;
+        }
+        self.children_to_visit(board, masks, continuation)
+            .map(|child| self.count(child, continuation))
+            .fold(0, usize::wrapping_add)
+    }
+
+    /// The `k`-th Cell under `board` that `collect` would set, in address order; or, past the
+    /// last, `k` less their count.
+    fn select(&self, board: Board, continuation: Continuation, k: usize) -> Result<Cell, usize> {
+        let masks = self.masks(board);
+        if board.is_local() {
+            let empty = !(masks.x | masks.o) & FULL;
+            let count = empty.count_ones() as usize;
+            if k >= count {
+                return Err(k.wrapping_sub(count));
+            }
+            let space = select(u64::from(empty), k);
+            // A Local board's Cells run on from its first, at most 728.
+            return Ok(Cell::new(
+                self.depth,
+                board.cells().start.wrapping_add(space),
+            ));
+        }
+        let mut k = k;
+        for child in self.children_to_visit(board, masks, continuation) {
+            match self.select(child, continuation, k) {
+                Ok(cell) => return Ok(cell),
+                Err(rest) => k = rest,
             }
         }
+        Err(k)
     }
 }
 
@@ -230,6 +292,25 @@ impl BoardRepr for GenericRepr {
         let mut bits = [0; 12];
         self.collect(scope, continuation, &mut bits);
         LegalMoves::from_bits(self.depth, bits)
+    }
+
+    fn pick_in(
+        &self,
+        scope: Board,
+        continuation: Continuation,
+        pick: impl FnOnce(usize) -> usize,
+    ) -> Option<Cell> {
+        if continuation == Continuation::Off && self.decided_at_or_above(scope) {
+            return None;
+        }
+        let count = self.count(scope, continuation);
+        if count == 0 {
+            return None;
+        }
+        // `pick` answers below `count`; taking it modulo keeps a wrong answer in range, as `nth`
+        // does.
+        let k = pick(count).checked_rem(count).unwrap_or(0);
+        self.select(scope, continuation, k).ok()
     }
 }
 

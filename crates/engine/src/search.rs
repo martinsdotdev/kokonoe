@@ -370,15 +370,7 @@ impl Tree {
 
 /// Uniformly random moves to the end of the game.
 fn playout(mut state: State, rng: &mut Rng) -> Outcome {
-    loop {
-        let moves = match state.status() {
-            Status::Over(outcome) => return outcome,
-            Status::ToMove { moves, .. } => moves,
-        };
-        if state.play(moves.nth(rng.below(moves.len()))).is_err() {
-            return Outcome::Draw; // unreachable: the Cell came from `moves`
-        }
-    }
+    state.playout(|n| rng.below(n))
 }
 
 /// Half-points for `player`: 2 for a win, 1 for a draw.

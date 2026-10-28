@@ -309,22 +309,9 @@ impl State {
         // Nothing below can fail, so a rejected move leaves `self` untouched.
         let decided = self.repr.place(cell, player, self.ruleset.drawn_owner);
         self.ply = Ply(self.ply.0.wrapping_add(1)); // at most 729
-
-        // The game can only end when a child of the Global board was newly decided.
-        if decided.is_some_and(|board| board.parent().is_some_and(Board::is_global)) {
-            if let Some(winner) = self.objective_winner(player) {
-                self.status = Status::Over(Outcome::Objective(winner));
-                return Ok(self.status);
-            }
-            if self
-                .children()
-                .all(|child| self.repr.status(child).is_decided())
-            {
-                // Nothing can change any more. With continuation off this is also the moment no
-                // legal move remains, so a turn with no moves never exists.
-                self.status = Status::Over(self.fallback());
-                return Ok(self.status);
-            }
+        if let Some(outcome) = self.ended(decided, player) {
+            self.status = Status::Over(outcome);
+            return Ok(self.status);
         }
 
         // Sent, then relaxation: walk up from the target to the nearest Board with a legal Cell.
@@ -350,6 +337,63 @@ impl State {
             }
         };
         Ok(self.status)
+    }
+
+    /// Plays uniformly random moves to the end of the game, leaves the State there, and returns
+    /// the outcome: the search's playouts. `pick(n)` chooses among the `n` legal moves by their
+    /// position in address order, so the moves are exactly the ones `play` and
+    /// [`LegalMoves::nth`] would make with the same picks. It's faster because no Status or
+    /// LegalMoves is built along the way: each move is counted and selected in place.
+    pub fn playout(&mut self, mut pick: impl FnMut(usize) -> usize) -> Outcome {
+        let (mut player, mut cell) = match self.status {
+            Status::Over(outcome) => return outcome,
+            Status::ToMove { player, moves, .. } => (player, moves.nth(pick(moves.len()))),
+        };
+        loop {
+            let decided = self.repr.place(cell, player, self.ruleset.drawn_owner);
+            self.ply = Ply(self.ply.0.wrapping_add(1)); // at most 729
+            if let Some(outcome) = self.ended(decided, player) {
+                self.status = Status::Over(outcome);
+                return outcome;
+            }
+            player = player.opponent();
+            // Sent, then relaxation, as in `play`.
+            let mut within = cell.sends_to();
+            cell = loop {
+                if let Some(next) = self
+                    .repr
+                    .pick_in(within, self.ruleset.continuation, &mut pick)
+                {
+                    break next;
+                }
+                match within.parent() {
+                    Some(up) => within = up,
+                    None => {
+                        // Unreachable, as in `play`: some child of the Global board is open.
+                        let outcome = self.fallback();
+                        self.status = Status::Over(outcome);
+                        return outcome;
+                    }
+                }
+            };
+        }
+    }
+
+    /// The game's end, if `mover`'s move that decided `decided` ended it: the objective, or every
+    /// child of the Global board Decided. The game can only end when one of those children was
+    /// newly decided.
+    fn ended(&self, decided: Option<Board>, mover: Player) -> Option<Outcome> {
+        if !decided.is_some_and(|board| board.parent().is_some_and(Board::is_global)) {
+            return None;
+        }
+        if let Some(winner) = self.objective_winner(mover) {
+            return Some(Outcome::Objective(winner));
+        }
+        // Nothing can change any more. With continuation off this is also the moment no legal
+        // move remains, so a turn with no moves never exists.
+        self.children()
+            .all(|child| self.repr.status(child).is_decided())
+            .then(|| self.fallback())
     }
 
     /// `None` for an empty Cell, and for a Cell of the other depth.
@@ -608,7 +652,7 @@ impl LegalMoves {
 
 /// The position of the `k`-th set bit of `word`, counting from 0, for `k` below its count: whole
 /// bytes are skipped by their counts, then at most seven bits are cleared within one.
-fn select(word: u64, k: usize) -> u16 {
+pub(crate) fn select(word: u64, k: usize) -> u16 {
     let (mut word, mut k, mut base) = (word, k, 0u16);
     loop {
         let byte = (word & 0xFF).count_ones() as usize;

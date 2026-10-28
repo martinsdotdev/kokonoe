@@ -5,29 +5,18 @@ import {
 	type Cell,
 	type IllegalMove,
 	type Player,
-	type ReplayError,
 	type Ruleset,
 	type Status
 } from '#lib/engine.js';
 import { WorkerComputer, type Computer } from './computer.js';
 import type { Level, Opponent } from './launch.js';
-import { boardLabel, notation } from './notation.js';
+import { dealtMoves, note, seats, type Move, type Seat } from './moves.js';
+import { notation } from './notation.js';
+import { illegalMove, openRecord } from './record.js';
 import { resultText, type End } from './result.js';
 import { rulesetCode } from './rules.js';
 import { browserStore, type GameStore, type SavedGame } from './saved.js';
-import { at, boardView, lineage, localOf, type BoardView } from './view.js';
-
-/** One row of the move list. */
-export interface Move {
-	/** The ply, counted from 1, the dealt opening included. */
-	n: number;
-	player: Player;
-	notation: string;
-	/** Dealt by a Random opening rather than played. */
-	dealt: boolean;
-	/** What the move did: "Sent → 4", "Won board 3", "Board 8 drawn", "Free move". */
-	note: string;
-}
+import { boardView, type BoardView } from './view.js';
 
 /** How long an illegal tap flashes the Board it names. */
 const FLASH_MS = 700;
@@ -41,41 +30,12 @@ export interface Variant {
 	ruleset: Ruleset;
 }
 
-/** What a player bar says about a seat. */
-export interface Seat {
-	name: string;
-	/** "Level 3" for the computer. */
-	detail: string | null;
-}
-
-const seats = (opponent: Opponent): Record<Player, Seat> => {
-	if (opponent.kind === 'hotseat') {
-		return { X: { name: 'Player 1', detail: null }, O: { name: 'Player 2', detail: null } };
-	}
-	const you: Seat = { name: 'You', detail: null };
-	const computer: Seat = { name: 'Computer', detail: `Level ${opponent.level}` };
-	return opponent.seat === 'X' ? { X: you, O: computer } : { X: computer, O: you };
-};
-
 /** The Board an IllegalMove names, if it names one other than the Global board. */
 const named = (illegal: IllegalMove): Board | null => {
 	if (typeof illegal === 'string') return null;
 	const board: Board =
 		'BeneathDecided' in illegal ? illegal.BeneathDecided.board : illegal.OutsideActiveBoards.within;
 	return board.length ? board : null;
-};
-
-/** What `cell` did, read from the board before and after it: the outermost Board it decided. */
-const note = (before: BoardView, after: BoardView, cell: Cell): string => {
-	const decided = lineage(localOf(cell, after.depth))
-		.slice(1)
-		.find((board) => at(before, board).status === 'Open' && at(after, board).status !== 'Open');
-	if (decided) {
-		const label = boardLabel(decided);
-		return at(after, decided).status === 'Drawn' ? `Board ${label} drawn` : `Won board ${label}`;
-	}
-	if (after.within) return 'Free move';
-	return after.sent === null ? '' : `Sent → ${boardLabel(after.sent)}`;
 };
 
 /** Resolves after `ms`, or rejects when `signal` aborts first. */
@@ -100,20 +60,6 @@ export interface Options {
 	/** Where the game keeps itself: IndexedDB unless a test brings its own. */
 	store?: GameStore;
 }
-
-/** A saved game that can't be played on: its message says why, for the player. */
-export class UnplayableGame extends Error {}
-
-const illegalMove = (index: number) => new UnplayableGame(`Its move ${index + 1} isn’t legal.`);
-
-const dealt = (game: Game): Move[] =>
-	game.opening().map((cell, i) => ({
-		n: i + 1,
-		player: i % 2 ? 'O' : 'X',
-		notation: notation(cell, game.ruleset().depth),
-		dealt: true,
-		note: ''
-	}));
 
 /**
  * A game on this device: passed between two players, or against the computer. It owns the
@@ -172,14 +118,7 @@ export class OfflineGame {
 	 */
 	static resume(saved: SavedGame, options: Options = {}): OfflineGame {
 		// Only `open` checks the Record's rules version, so check with it before replaying.
-		let opened: Game | ReplayError;
-		try {
-			opened = Game.open(saved.record);
-		} catch {
-			throw new UnplayableGame('It was saved in a form this version of Kokonoe can’t read.');
-		}
-		if (!(opened instanceof Game)) throw illegalMove(opened.index);
-		opened.free();
+		openRecord(saved.record).free();
 		const variant = { name: saved.variant.name, ruleset: saved.record.ruleset };
 		return new OfflineGame(variant, saved.opponent, options, saved);
 	}
@@ -199,7 +138,7 @@ export class OfflineGame {
 		this.#game = new Game(variant.ruleset, saved?.record.seed ?? newSeed());
 		this.view = $state.raw(boardView(this.#game));
 		this.status = $state.raw(this.#game.status());
-		this.moves = $state.raw(dealt(this.#game));
+		this.moves = $state.raw(dealtMoves(this.#game.opening(), variant.ruleset.depth));
 		this.won = $state.raw(this.#counts());
 		if (saved) {
 			for (const cell of saved.record.moves) {
@@ -293,7 +232,7 @@ export class OfflineGame {
 		this.stored = false;
 		this.#started = null;
 		this.resigned = null;
-		this.moves = dealt(this.#game);
+		this.moves = dealtMoves(this.#game.opening(), this.variant.ruleset.depth);
 		this.#flash(null);
 		this.#refresh();
 		this.#ask();

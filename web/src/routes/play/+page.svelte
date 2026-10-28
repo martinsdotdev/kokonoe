@@ -13,7 +13,8 @@
 	import { gameQuery, playQuery, readLaunch } from '#lib/game/launch.js';
 	import { rulesetCode } from '#lib/game/rules.js';
 	import { loadGame } from '#lib/game/saved.js';
-	import { OfflineGame, UnplayableGame, type Variant } from '#lib/game/session.svelte.js';
+	import { UnplayableGame } from '#lib/game/record.js';
+	import { OfflineGame, type Variant } from '#lib/game/session.svelte.js';
 	import { presetByCode } from '#lib/game/shelf.js';
 
 	let session: OfflineGame | null = $state(null);

@@ -28,3 +28,14 @@ it('draws a whole Deep board by its Boards, and a middle Board with its Cells', 
 	expect(middle.container.querySelectorAll('.cell')).toHaveLength(81);
 	expect(middle.container.querySelectorAll('.glyph')).toHaveLength(3);
 });
+
+it('draws dealt marks in pencil grey', async () => {
+	const view = position((v) => {
+		v.cells[40] = 'X';
+		v.cells[36] = 'O';
+		v.dealt = [40];
+	});
+	const screen = await render(MiniBoard, { view });
+	expect(screen.container.querySelectorAll('[stroke="var(--dealt)"]')).toHaveLength(1);
+	expect(screen.container.querySelectorAll('[stroke="var(--o)"]')).toHaveLength(1);
+});

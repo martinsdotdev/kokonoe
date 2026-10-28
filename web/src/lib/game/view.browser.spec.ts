@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Game, loadEngine, presets } from '#lib/engine.js';
 import { INTO_A_WON_BOARD, cells } from './games.fixtures.js';
-import { at, boardView, children, type BoardView } from './view.js';
+import { at, boardView, children, positionView, type BoardView } from './view.js';
 
 let standard: () => Game;
 let deep: () => Game;
@@ -49,6 +49,32 @@ it('reads a Free move after a send to a decided board', () => {
 	expect(view.within).toEqual([]);
 	expect(at(view, [0]).active).toBe(false);
 	expect(active(view, [])).toHaveLength(8);
+});
+
+describe('a Random opening', () => {
+	const dealt = () =>
+		new Game({ ...presets()[0].ruleset, opening: { Random: 4 } }, '00000000005eed00');
+
+	it('lists the dealt Cells apart from the moves played', () => {
+		const game = dealt();
+		const opening = game.opening();
+		expect(boardView(game).dealt).toEqual(opening);
+		const view = boardView(play(game, '03'));
+		expect(view.dealt).toEqual(opening);
+		expect(view.last).toBe(cells('03')[0]);
+	});
+
+	it('reads any ply, partway through the deal', () => {
+		const game = play(dealt(), '03');
+		const plies = [...game.opening(), ...game.moves()];
+		const state = game.stateAt(2)!;
+		const view = positionView(state, plies.slice(0, 2), 2);
+		state.free();
+		expect(view.dealt).toEqual(plies.slice(0, 2));
+		expect(view.last).toBe(plies[1]);
+		expect(plies.map((cell) => view.cells[cell])).toEqual(['X', 'O', null, null, null]);
+		expect(view.sent).not.toBeNull();
+	});
 });
 
 describe('Deep', () => {

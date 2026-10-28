@@ -2,7 +2,7 @@
 <script lang="ts">
 	import type { Player } from '#lib/engine.js';
 	import Mark from './Mark.svelte';
-	import type { Seat } from './session.svelte.js';
+	import type { Seat } from './moves.js';
 
 	interface Props {
 		player: Player;

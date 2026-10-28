@@ -1,9 +1,9 @@
 <!--
 	A small, still drawing of a Board for previews, such as Home's Continue card: the Active boards'
 	highlighter, Decided boards' owners and drawn boards' hatching, and the marks in its Local
-	boards. A whole Deep board draws its Local boards without marks, which would be too small to
-	see. One image to assistive technology, or with no `label` none; `Board` is the board people
-	play on.
+	boards, dealt ones in pencil grey. A whole Deep board draws its Local boards without marks, which
+	would be too small to see. One image to assistive technology, or with no `label` none; `Board`
+	is the board people play on.
 -->
 <script lang="ts">
 	import type { Board } from '#lib/engine.js';
@@ -50,7 +50,11 @@
 				{#each cellsOf(here) as cell (cell)}
 					{@const mark = view.cells[cell]}
 					<span class="cell"
-						>{#if mark}<Mark player={mark} class="glyph" />{/if}</span
+						>{#if mark}<Mark
+								player={mark}
+								dealt={view.dealt.includes(cell)}
+								class="glyph"
+							/>{/if}</span
 					>
 				{/each}
 			</div>

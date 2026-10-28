@@ -43,6 +43,22 @@ describe('the board grammar', () => {
 		expect(cell.element().querySelector('[data-last]')).not.toBeNull();
 	});
 
+	it('draws dealt marks apart, and names them dealt', async () => {
+		const screen = await render(Board, {
+			view: position((v) => {
+				v.cells[40] = 'X';
+				v.cells[36] = 'O';
+				v.dealt = [40];
+			})
+		});
+		await expect
+			.element(screen.getByRole('button', { name: 'Cell 5·5, X, dealt' }))
+			.toHaveAttribute('data-dealt');
+		await expect
+			.element(screen.getByRole('button', { name: 'Cell 5·1, O', exact: true }))
+			.not.toHaveAttribute('data-dealt');
+	});
+
 	it('inks a won board and fades its Cells', async () => {
 		const screen = await render(Board, { view: position((v) => winTopRight(v, 'X')) });
 		const board = group(screen, 'Board 3, won by X');

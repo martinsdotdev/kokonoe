@@ -1,4 +1,4 @@
-import type { Board, BoardStatus, Cell, Game, Player } from '#lib/engine.js';
+import type { Board, BoardStatus, Cell, Game, Player, State } from '#lib/engine.js';
 import { pathOf } from './notation.js';
 
 /** A Board under the Global board as drawn: a Local board, or at depth 3 a middle Board. */
@@ -29,6 +29,8 @@ export interface BoardView {
 	/** Under a Free move, the Board the player may play anywhere inside; otherwise null. */
 	within: Board | null;
 	last: Cell | null;
+	/** The Cells a Random opening dealt, drawn fainter than the moves players made. */
+	dealt: Cell[];
 }
 
 const range = (n: number) => [...Array(n).keys()];
@@ -71,27 +73,36 @@ export const decidedAbove = (view: BoardView, board: Board): Board | null =>
 export const ownerOf = (board: BoardState): Player | null =>
 	typeof board.status === 'object' ? board.status.Won : null;
 
-export const boardView = (game: Game): BoardView => {
-	const depth = game.ruleset().depth;
-	const status = game.status();
+/** What a view reads of a position: a Game's current one, or a State from `Game.stateAt`. */
+export type Position = Pick<State, 'ruleset' | 'status' | 'mark' | 'boardStatus'>;
+
+/** `position`, reached by `plies` in order, the first `dealt` of them dealt by the opening. */
+export const positionView = (position: Position, plies: Cell[], dealt: number): BoardView => {
+	const depth = position.ruleset().depth;
+	const status = position.status();
 	const moves = 'ToMove' in status ? status.ToMove.moves : [];
 	const sent = 'ToMove' in status ? status.ToMove.sent : 'FirstMove';
 	return {
 		depth,
-		continuation: game.ruleset().continuation === 'On',
-		cells: range(9 ** depth).map((cell) => game.mark(cell) ?? null),
+		continuation: position.ruleset().continuation === 'On',
+		cells: range(9 ** depth).map((cell) => position.mark(cell) ?? null),
 		boards: range(depth - 1).map((level) => {
 			// A Board's Cells are one run of indices, as long as 9 to the levels below it.
 			const length = level + 1;
 			const run = 9 ** (depth - length);
 			const active = new Set(moves.map((cell) => Math.floor(cell / run)));
 			return range(9 ** length).map((index) => ({
-				status: game.boardStatus(pathOf(index, length)),
+				status: position.boardStatus(pathOf(index, length)),
 				active: active.has(index)
 			}));
 		}),
 		sent: sent === 'FirstMove' ? null : 'To' in sent ? sent.To : sent.Free.target,
 		within: sent !== 'FirstMove' && 'Free' in sent ? sent.Free.within : null,
-		last: [...game.opening(), ...game.moves()].at(-1) ?? null
+		last: plies.at(-1) ?? null,
+		dealt: plies.slice(0, dealt)
 	};
 };
+
+/** The game as it stands. */
+export const boardView = (game: Game): BoardView =>
+	positionView(game, [...game.opening(), ...game.moves()], game.opening().length);

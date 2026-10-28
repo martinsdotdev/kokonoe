@@ -8,7 +8,7 @@ import {
 	type Opening,
 	type Ruleset
 } from '#lib/engine.js';
-import { notation } from './notation.js';
+import { notation, parseNotation } from './notation.js';
 import { rulesetCode } from './rules.js';
 
 beforeAll(() => loadEngine());
@@ -47,6 +47,19 @@ describe('the display formatters, held to the engine', () => {
 			for (let cell = 0; cell < 9 ** depth; cell++) {
 				expect(notation(cell, depth)).toBe(engineNotation(cell, depth));
 			}
+		}
+	});
+
+	it('read every Cell back from the engine’s Notation, with `·` or `.`', () => {
+		for (const depth of [2, 3] as const) {
+			for (let cell = 0; cell < 9 ** depth; cell++) {
+				const written = engineNotation(cell, depth);
+				expect(parseNotation(written, depth)).toBe(cell);
+				expect(parseNotation(written.replaceAll('·', '.'), depth)).toBe(cell);
+			}
+		}
+		for (const text of ['5·5·5', '5', '0·1', '5·10', '5·', 'a·b', '']) {
+			expect(parseNotation(text, 2), text).toBeNull();
 		}
 	});
 

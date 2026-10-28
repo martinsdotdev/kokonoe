@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test';
+import { stepThrough } from './steps.js';
 
-const PLAYABLE = ['Standard', 'Forced continuation', 'Tic-Tac-Ku', 'Count tiebreak'];
+const TWO_LEVELS = ['Standard', 'Forced continuation', 'Tic-Tac-Ku', 'Count tiebreak'];
 
-test('every playable Preset starts pass and play from Home', async ({ page }) => {
-	for (const name of PLAYABLE) {
+test('every Preset at depth 2 starts pass and play from Home', async ({ page }) => {
+	for (const name of TWO_LEVELS) {
 		await page.goto('/');
 		await page.getByRole('link', { name: `Play ${name}, pass and play` }).click();
 		await expect(page.locator('[data-variant]')).toHaveText(name);
@@ -13,11 +14,13 @@ test('every playable Preset starts pass and play from Home', async ({ page }) =>
 	}
 });
 
-test('Deep is on the shelf but not yet playable', async ({ page }) => {
+test('Deep starts from Home, one Board at a time', async ({ page }) => {
 	await page.goto('/');
-	const deep = page.getByRole('article', { name: 'Deep' });
-	await expect(deep.getByText('ARRIVES SOON')).toBeVisible();
-	await expect(deep.getByRole('link')).toHaveCount(0);
+	await page.getByRole('link', { name: 'Play Deep, pass and play' }).click();
+	await expect(page).toHaveURL(/\/play\?rules=d3$/);
+	await expect(page.locator('[data-variant]')).toHaveText('Deep');
+	expect(await stepThrough(page, '444', (target) => target.click())).toEqual([3]);
+	await expect(page.getByRole('button', { name: 'Cell 5·5·5, X' })).toBeVisible();
 });
 
 test('the computer card opens the sheet at the chosen Level', async ({ page }) => {

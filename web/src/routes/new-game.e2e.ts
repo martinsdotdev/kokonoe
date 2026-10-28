@@ -40,7 +40,10 @@ test('pass and play needs no Level or seat', async ({ page }) => {
 	await expect(page.locator('[data-score]')).toHaveText('X 0 · O 0 · most boards wins');
 });
 
-test('Deep can’t be picked yet', async ({ page }) => {
-	await page.goto('/new-game');
-	await expect(page.getByRole('radio', { name: /^Deep/ })).toBeDisabled();
+test('Deep can be picked, and from a link', async ({ page }) => {
+	await page.goto('/new-game?vs=hotseat&rules=d3');
+	await expect(page.getByRole('radio', { name: /^Deep/ })).toBeChecked();
+	await page.getByRole('button', { name: 'Start game' }).click();
+	await expect(page).toHaveURL(/\/play\?rules=d3$/);
+	await expect(page.getByRole('button', { name: 'Board 5, play here' })).toBeVisible();
 });

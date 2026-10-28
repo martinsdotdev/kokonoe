@@ -176,21 +176,15 @@
 								>
 							{/each}
 						</div>
-						{#if preset.playable}
-							<a
-								href={resolve(
-									`/play${playQuery({ code: rulesetCode(preset.ruleset), opponent: { kind: 'hotseat' } })}`
-								)}
-								class="{button} self-start border-[1.5px] border-foreground text-foreground"
-								aria-label={`Play ${preset.name}, pass and play`}
-							>
-								Play
-							</a>
-						{:else}
-							<span class="font-mono text-xs tracking-[0.08em] text-muted-foreground"
-								>ARRIVES SOON</span
-							>
-						{/if}
+						<a
+							href={resolve(
+								`/play${playQuery({ code: rulesetCode(preset.ruleset), opponent: { kind: 'hotseat' } })}`
+							)}
+							class="{button} self-start border-[1.5px] border-foreground text-foreground"
+							aria-label={`Play ${preset.name}, pass and play`}
+						>
+							Play
+						</a>
 					</article>
 				{/each}
 			</div>

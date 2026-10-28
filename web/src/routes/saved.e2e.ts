@@ -1,10 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-
-/** Engine-test digit pairs as Notation: `"42"` (Space 4, then Space 2) is Cell 5·3. */
-const notation = (digits: string) => [...digits].map((digit) => Number(digit) + 1).join('·');
-
-/** X takes Local boards 0, 1 and 2, each with a row, while O sends X wherever it needs to go. */
-const TOP_ROW = '03 30 04 40 05 51 13 31 14 41 15 52 26 62 27 72 28';
+import { TOP_ROW, notation } from './games.js';
+import { stepThrough, stepped } from './steps.js';
 
 const cell = (page: Page, name: string) =>
 	page.getByRole('button', { name: `Cell ${name}`, exact: true });
@@ -65,6 +61,21 @@ test('a finished game reopens at its final position', async ({ page }) => {
 
 	await page.getByRole('button', { name: 'New game' }).click();
 	await expect(page, 'a new game until its first move').toHaveURL(/\/play\?rules=std$/);
+});
+
+test('a Deep game resumes in the Board it stood in, and Home draws it', async ({ page }) => {
+	await page.goto('/play?rules=d3');
+	await stepThrough(page, '444 440', (target) => target.click());
+	await expect(page).toHaveURL(/\/play\?game=[\w-]+$/);
+	await waitForSaved(page, 2);
+	await page.reload();
+	await expect(page.getByText('X: play in board 5·1.')).toBeVisible();
+	await expect(stepped(page)).toHaveAttribute('data-focus', '40');
+
+	await page.getByRole('link', { name: 'Leave game' }).click();
+	const card = page.getByRole('article', { name: 'Continue game' });
+	await expect(card.getByText('Deep · 2 moves')).toBeVisible();
+	await expect(card.getByRole('img', { name: 'The board after 2 moves' })).toBeVisible();
 });
 
 test('an id this device doesn’t know says so', async ({ page }) => {

@@ -20,6 +20,16 @@ const label = (path: readonly number[]) => path.map((space) => space + 1).join('
 
 export const notation = (cell: Cell, depth: 2 | 3): string => label(pathOf(cell, depth));
 
+/**
+ * The Cell `text` names at `depth`, its steps parted by `·` or by `.`, which is easier to type:
+ * `5·1·8` or `5.1.8`. Null when it names no Cell at that depth.
+ */
+export const parseNotation = (text: string, depth: 2 | 3): Cell | null => {
+	const steps = text.split(/[·.]/);
+	if (steps.length !== depth || !steps.every((step) => /^[1-9]$/.test(step))) return null;
+	return steps.reduce((index, step) => index * 9 + Number(step) - 1, 0);
+};
+
 /** `4`, or `1·8` at depth 3. The Global board, the empty path, has no label. */
 export const boardLabel = (board: Board): string => label(board);
 

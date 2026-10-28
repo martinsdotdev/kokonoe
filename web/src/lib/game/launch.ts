@@ -35,6 +35,10 @@ export const playQuery = ({ code, opponent }: Launch): `?${string}` => {
 /** The query string of `/play` for the saved game `id`. */
 export const gameQuery = (id: string): `?${string}` => `?${new URLSearchParams({ game: id })}`;
 
+/** The query string of `/replay` for the saved game `id`, shown at `ply` when it's past the start. */
+export const replayQuery = (id: string, ply = 0): `?${string}` =>
+	`?${new URLSearchParams({ game: id, ...(ply ? { ply: String(ply) } : {}) })}`;
+
 /** Who the game is against, for headers and lists: "vs Computer · Level 3", "Pass and play". */
 export const againstLabel = (opponent: Opponent): string =>
 	opponent.kind === 'computer' ? `vs Computer · Level ${opponent.level}` : 'Pass and play';

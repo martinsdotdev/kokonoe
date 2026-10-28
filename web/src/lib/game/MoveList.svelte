@@ -1,13 +1,32 @@
-<!-- The moves so far in Notation, dealt ones in parentheses, the latest highlighted and in view. -->
+<!--
+	The moves in Notation, dealt ones in parentheses, the one shown highlighted and kept in view: the
+	latest during a game, or in the Replay viewer the ply shown, where each row jumps to its ply.
+-->
 <script lang="ts">
 	import type { Move } from './moves.js';
 
-	let { moves, depth }: { moves: Move[]; depth: 2 | 3 } = $props();
+	interface Props {
+		moves: Move[];
+		depth: 2 | 3;
+		/** The ply shown, counted from 1; the latest unless given. 0 highlights none. */
+		current?: number;
+		/** Makes each row a button that shows its ply. */
+		onjump?: (ply: number) => void;
+	}
+
+	let { moves, depth, current, onjump }: Props = $props();
+
+	const shown = $derived(current ?? moves.length);
 
 	let list: HTMLOListElement | undefined = $state();
 
+	// Scroll the list alone, not the page around it, so autoplay on a phone stays on the board.
 	$effect(() => {
-		if (list && moves.length) list.scrollTop = list.scrollHeight;
+		const row = list?.children[shown - 1] as HTMLElement | undefined;
+		if (!list || !row) return;
+		if (row.offsetTop < list.scrollTop) list.scrollTop = row.offsetTop;
+		const below = row.offsetTop + row.offsetHeight - list.clientHeight;
+		if (below > list.scrollTop) list.scrollTop = below;
 	});
 </script>
 
@@ -21,23 +40,53 @@
 	{#if moves.length === 0}
 		<p class="m-0 px-4 py-3 text-sm text-muted-foreground">No moves yet.</p>
 	{:else}
-		<ol bind:this={list} class="m-0 max-h-[360px] list-none overflow-y-auto py-1.5">
-			{#each moves as move, i (move.n)}
-				<li
-					class="flex items-center gap-3 px-4 py-2"
-					style:background={i === moves.length - 1 ? 'var(--highlighter)' : undefined}
-				>
-					<span class="w-7 font-mono text-[13px] text-muted-foreground">{move.n}</span>
-					<span
-						class="w-4 font-semibold"
-						style:color={move.player === 'X' ? 'var(--x)' : 'var(--o-text)'}>{move.player}</span
-					>
-					<span class="font-mono text-[15px]">
-						{move.dealt ? `(${move.notation})` : move.notation}
-					</span>
-					<span class="ml-auto text-[13px] text-muted-foreground">{move.note}</span>
+		<ol bind:this={list} class="relative m-0 max-h-[360px] list-none overflow-y-auto py-1.5">
+			{#each moves as move (move.n)}
+				<li style:background={move.n === shown ? 'var(--highlighter)' : undefined}>
+					{#if onjump}
+						<button
+							type="button"
+							class="row"
+							aria-current={move.n === shown ? 'step' : undefined}
+							onclick={() => onjump(move.n)}>{@render row(move)}</button
+						>
+					{:else}
+						<div class="row">{@render row(move)}</div>
+					{/if}
 				</li>
 			{/each}
 		</ol>
 	{/if}
 </section>
+
+{#snippet row(move: Move)}
+	<span class="w-7 font-mono text-[13px] text-muted-foreground">{move.n}</span>
+	<span class="w-4 font-semibold" style:color={move.player === 'X' ? 'var(--x)' : 'var(--o-text)'}
+		>{move.player}</span
+	>
+	<span class="font-mono text-[15px]">{move.dealt ? `(${move.notation})` : move.notation}</span>
+	<span class="ml-auto text-[13px] text-muted-foreground">{move.note}</span>
+{/snippet}
+
+<style>
+	.row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		width: 100%;
+		padding: 0.5rem 1rem;
+	}
+	button.row {
+		margin: 0;
+		border: 0;
+		background: none;
+		color: inherit;
+		font: inherit;
+		text-align: start;
+		cursor: pointer;
+	}
+	button.row:focus-visible {
+		outline: 3px solid var(--ring);
+		outline-offset: -3px;
+	}
+</style>

@@ -99,7 +99,9 @@ test('Home continues the latest unfinished game', async ({ page }) => {
 	await expect(marked(page)).toHaveCount(2);
 });
 
-test('Recent games lists finished and unfinished games, and opens them', async ({ page }) => {
+test('Recent games lists finished and unfinished games, and opens finished ones to replay', async ({
+	page
+}) => {
 	await page.goto('/play');
 	await play(page, TOP_ROW);
 	await waitForSaved(page, 17);
@@ -122,9 +124,12 @@ test('Recent games lists finished and unfinished games, and opens them', async (
 	await expect(card).toContainText('O to move · pass and play');
 	await expect(card).toContainText('Forced continuation · 1 move');
 	const finished = page.locator('[data-recent="finished"]');
-	await expect(finished).toContainText('X wins on a line');
+	await expect(finished).toContainText('X wins on a line · Replay');
 	await finished.click();
+	await expect(page).toHaveURL(/\/replay\?game=[\w-]+$/);
 	await expect(page.getByRole('heading', { name: 'X wins on a line' })).toBeVisible();
+	await expect(marked(page)).toHaveCount(0);
+	await page.getByRole('button', { name: 'Last move' }).click();
 	await expect(marked(page)).toHaveCount(17);
 });
 

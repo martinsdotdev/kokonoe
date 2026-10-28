@@ -85,6 +85,7 @@
 				headline={resultText(session.end, variant.ruleset, session.won)}
 				detail={`After ${moves(played)}.`}
 				winner={winner(session.end)}
+				replay={session.stored ? session.id : undefined}
 				onrestart={() => session.restart()}
 			/>
 		{/if}

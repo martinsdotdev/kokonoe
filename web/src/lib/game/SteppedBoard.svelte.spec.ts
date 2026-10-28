@@ -82,6 +82,21 @@ describe('following the game', () => {
 	});
 });
 
+describe('a replay', () => {
+	it('shows each move where it landed, and the Global view before the first', async () => {
+		const screen = await render(SteppedBoard, { view: position(), landed: true, disabled: true });
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', 'global');
+		await screen.rerender({ view: sentTo(4, 40) });
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '4');
+		await settled(screen);
+		await screen.getByRole('button', { name: 'Global', exact: true }).click();
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', 'global');
+		await screen.rerender({ view: sentTo(1, 64) });
+		// Where the move landed, with no hold to end: 64 is Cell 8·2, in Board 8.
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '7');
+	});
+});
+
 describe('taps', () => {
 	it('wait until a step has settled', async () => {
 		const onplay = vi.fn();

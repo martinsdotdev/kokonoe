@@ -13,6 +13,7 @@
 		gameQuery,
 		LEVELS,
 		playQuery,
+		replayQuery,
 		type Level
 	} from '#lib/game/launch.js';
 	import { detailLine, moves, playedWhen, turnLine } from '#lib/game/listing.js';
@@ -38,6 +39,9 @@
 	});
 
 	const saved = (game: SavedGame) => resolve(`/play${gameQuery(game.id)}`);
+	/** A finished game opens in the Replay viewer, and an unfinished one resumes. */
+	const recentLink = (game: SavedGame) =>
+		game.result === null ? saved(game) : resolve(`/replay${replayQuery(game.id)}`);
 
 	const button =
 		'inline-flex min-h-11 items-center justify-center rounded-md px-[18px] font-semibold no-underline';
@@ -199,7 +203,7 @@
 					{#each recent as game (game.id)}
 						<li class="border-b border-[var(--pencil)] last:border-b-0">
 							<a
-								href={saved(game)}
+								href={recentLink(game)}
 								class="flex flex-wrap items-center gap-x-5 gap-y-1 px-5 py-3.5 text-foreground no-underline hover:bg-muted"
 								data-recent={game.result === null ? 'unfinished' : 'finished'}
 							>
@@ -213,7 +217,9 @@
 								<span class="font-mono text-[13px]">{game.variant.name}</span><span class="sr-only"
 									>,
 								</span>
-								<span class="font-semibold">{game.result ?? 'Unfinished · Resume'}</span>
+								<span class="font-semibold"
+									>{game.result === null ? 'Unfinished · Resume' : `${game.result} · Replay`}</span
+								>
 							</a>
 						</li>
 					{/each}

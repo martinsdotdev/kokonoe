@@ -2,6 +2,9 @@
 	One Local board in the board grammar: pencil between Cells, the highlighter when it's Active, a
 	dashed Sent target, a ring on the last move, an inked owner or a Continuation watermark, and
 	hatching once drawn. It renders its part of a BoardView and reports clicks.
+
+	With `onstep` the whole board is one button that steps into it, and its Cells are only drawn:
+	the Global view on a phone, where Boards are tapped, not Cells.
 -->
 <script lang="ts">
 	import type { Cell } from '#lib/engine.js';
@@ -13,47 +16,74 @@
 		view: BoardView;
 		local: LocalView;
 		onplay?: (cell: Cell) => void;
+		/** Makes the board a button that steps into it, by its Space. */
+		onstep?: (space: number) => void;
 		/** A Local board to flash, after an illegal tap that names it. A new `tick` flashes again. */
 		flash?: { space: number; tick: number } | null;
 		/** The game is over: Cells take no clicks. */
 		disabled?: boolean;
+		/** Drawn alone, as large as the screen allows. */
+		large?: boolean;
 	}
 
-	let { view, local, onplay, flash = null, disabled = false }: Props = $props();
+	let {
+		view,
+		local,
+		onplay,
+		onstep,
+		flash = null,
+		disabled = false,
+		large = false
+	}: Props = $props();
 
 	const SPACES = [...Array(9).keys()];
 
 	const won = $derived(ownerOf(local));
-	const name = $derived(`Board ${boardLabel([local.space])}`);
+	const name = $derived.by(() => {
+		const name = `Board ${boardLabel([local.space])}`;
+		return won ? `${name}, won by ${won}` : local.status === 'Drawn' ? `${name}, drawn` : name;
+	});
 
 	const legal = (cell: Cell) => !disabled && local.active && view.cells[cell] === null;
 </script>
 
-<div
+<svelte:element
+	this={onstep ? 'button' : 'div'}
+	type={onstep ? 'button' : undefined}
 	class="local"
-	role="group"
-	aria-label={won ? `${name}, won by ${won}` : local.status === 'Drawn' ? `${name}, drawn` : name}
+	class:large
+	role={onstep ? undefined : 'group'}
+	aria-label={onstep && local.active ? `${name}, play here` : name}
+	onclick={onstep && (() => onstep(local.space))}
+	data-space={local.space}
 	data-status={won ? `won-${won.toLowerCase()}` : local.status === 'Drawn' ? 'drawn' : 'open'}
 	data-active={local.active || undefined}
 	data-sent={view.sent === local.space || undefined}
 	data-flash={flash?.space === local.space || undefined}
 >
-	<div class="cells" class:faded={won && !view.continuation}>
+	<span class="cells" class:faded={won && !view.continuation}>
 		{#each SPACES as inner (inner)}
 			{@const cell = local.space * 9 + inner}
 			{@const mark = view.cells[cell]}
-			<button
-				type="button"
-				class="cell"
-				aria-label={`Cell ${notation(cell, 2)}${mark ? `, ${mark}` : ''}`}
-				aria-disabled={!legal(cell)}
-				onclick={() => !disabled && onplay?.(cell)}
-			>
-				{#if mark}<Mark player={mark} class="glyph" />{/if}
-				{#if cell === view.last}<span class="ring" data-last></span>{/if}
-			</button>
+			{#if onstep}
+				<span class="cell">
+					{#if mark}<Mark player={mark} class="glyph" />{/if}
+					{#if cell === view.last}<span class="ring" data-last></span>{/if}
+				</span>
+			{:else}
+				<button
+					type="button"
+					class="cell"
+					aria-label={`Cell ${notation(cell, 2)}${mark ? `, ${mark}` : ''}`}
+					aria-disabled={!legal(cell)}
+					onclick={() => !disabled && onplay?.(cell)}
+				>
+					{#if mark}<Mark player={mark} class="glyph" />{/if}
+					{#if cell === view.last}<span class="ring" data-last></span>{/if}
+				</button>
+			{/if}
 		{/each}
-	</div>
+	</span>
 	{#if local.status === 'Drawn'}
 		<span class="hatch" aria-hidden="true"></span>
 	{/if}
@@ -82,7 +112,7 @@
 	{#if flash?.space === local.space}
 		{#key flash.tick}<span class="flash" aria-hidden="true"></span>{/key}
 	{/if}
-</div>
+</svelte:element>
 
 <style>
 	.local {
@@ -99,6 +129,26 @@
 	.local[data-active] {
 		--wash: linear-gradient(var(--highlighter), var(--highlighter));
 	}
+	button.local {
+		margin: 0;
+		border: 0;
+		color: inherit;
+		font: inherit;
+		cursor: pointer;
+	}
+	button.local:focus-visible {
+		z-index: 1;
+		outline: 3px solid var(--ring);
+		outline-offset: -3px;
+	}
+	/* One board alone, framed in the ink that parts Local boards on the Global board. */
+	.local.large {
+		width: 100%;
+		max-width: 600px;
+		aspect-ratio: 1;
+		padding: 6%;
+		border: 5px solid var(--foreground);
+	}
 
 	.cells {
 		flex: 1;
@@ -109,6 +159,9 @@
 	}
 	.cells.faded {
 		opacity: 0.3;
+	}
+	.large .cells {
+		gap: 3px;
 	}
 
 	.cell {
@@ -126,8 +179,11 @@
 	.cell[aria-disabled='false'] {
 		cursor: pointer;
 	}
-	.cell[aria-disabled='false']:hover {
-		--ground: color-mix(in oklab, var(--pencil) 35%, var(--background));
+	/* Only for a pointer that hovers: after a tap, touch screens leave :hover on the Cell. */
+	@media (hover: hover) {
+		.cell[aria-disabled='false']:hover {
+			--ground: color-mix(in oklab, var(--pencil) 35%, var(--background));
+		}
 	}
 	.cell:focus-visible {
 		z-index: 1;
@@ -145,6 +201,9 @@
 		border: 2px solid var(--foreground);
 		border-radius: 50%;
 		pointer-events: none;
+	}
+	.large .ring {
+		border-width: 3px;
 	}
 
 	.hatch {
@@ -195,6 +254,9 @@
 		text-transform: uppercase;
 		white-space: nowrap;
 		pointer-events: none;
+	}
+	.large .sent-label {
+		font-size: 14px;
 	}
 
 	.flash {

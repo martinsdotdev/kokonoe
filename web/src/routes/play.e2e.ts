@@ -28,7 +28,7 @@ const open = async (page: Page) => {
 test('the game screen loads the engine in the built app', async ({ page }) => {
 	const wasm = page.waitForResponse((response) => response.url().endsWith('.wasm'));
 	await open(page);
-	await expect(page.getByText('Play anywhere.')).toBeVisible();
+	await expect(page.getByText('X: play anywhere.')).toBeVisible();
 	// Anything else makes the browser compile from a buffered copy, with a console warning.
 	expect((await wasm).headers()['content-type']).toBe('application/wasm');
 });
@@ -39,7 +39,7 @@ test('the engine still loads from a host that sends the wrong type', async ({ pa
 		await route.fulfill({ response, contentType: 'application/octet-stream' });
 	});
 	await open(page);
-	await expect(page.getByText('Play anywhere.')).toBeVisible();
+	await expect(page.getByText('X: play anywhere.')).toBeVisible();
 });
 
 test('a Standard game plays to a line win, and then stays finished', async ({ page }) => {
@@ -52,7 +52,7 @@ test('a Standard game plays to a line win, and then stays finished', async ({ pa
 
 	await page.getByRole('button', { name: 'New game' }).click();
 	await expect(marked(page)).toHaveCount(0);
-	await expect(page.getByText('Play anywhere.')).toBeVisible();
+	await expect(page.getByText('X: play anywhere.')).toBeVisible();
 });
 
 test('a Standard game plays to a draw', async ({ page }) => {
@@ -70,7 +70,7 @@ test('undo walks back to the first move', async ({ page }) => {
 	for (let i = 0; i < 5; i++) await undo.click();
 	await expect(marked(page)).toHaveCount(0);
 	await expect(undo).toBeDisabled();
-	await expect(page.getByText('Play anywhere.')).toBeVisible();
+	await expect(page.getByText('X: play anywhere.')).toBeVisible();
 });
 
 test('an illegal tap flashes the Board it names and plays nothing', async ({ page }) => {

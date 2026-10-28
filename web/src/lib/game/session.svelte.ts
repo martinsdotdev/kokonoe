@@ -153,6 +153,8 @@ export class OfflineGame {
 	resigned: Player | null = $state.raw(null);
 	/** The Local board to flash, with a tick so the same board can flash twice running. */
 	flash: { space: number; tick: number } | null = $state.raw(null);
+	/** The last change was the computer's move, which the phone board shows landing. */
+	replied = $state.raw(false);
 	/** The game's id in the store, and its address once `stored`. A restart gives a new one. */
 	id: string = $state.raw(crypto.randomUUID());
 	/** A save of the game has succeeded, so `id` can be its address. */
@@ -304,8 +306,9 @@ export class OfflineGame {
 		this.#game.free();
 	}
 
-	#play(cell: Cell) {
+	#play(cell: Cell, replied = false) {
 		if (!this.#apply(cell)) return;
+		this.replied = replied;
 		this.#save();
 		this.#ask();
 	}
@@ -376,7 +379,7 @@ export class OfflineGame {
 			]);
 			if (this.#asking !== asking) return;
 			this.#settle('idle');
-			this.#play(cell);
+			this.#play(cell, true);
 		} catch (error) {
 			if (this.#asking !== asking) return;
 			// The screen only says it failed, so say why where a developer can see it.
@@ -397,6 +400,7 @@ export class OfflineGame {
 	}
 
 	#refresh() {
+		this.replied = false;
 		this.view = boardView(this.#game);
 		this.status = this.#game.status();
 		this.won = this.#counts();

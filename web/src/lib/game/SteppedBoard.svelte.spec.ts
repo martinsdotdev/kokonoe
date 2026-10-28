@@ -118,3 +118,75 @@ describe('keyboard focus', () => {
 		expect(document.activeElement?.getAttribute('aria-label')).toBe('Board 5');
 	});
 });
+
+describe('Deep', () => {
+	/** The Cell at a path of three Spaces. */
+	const cell = (m: number, l: number, c: number) => m * 81 + l * 9 + c;
+
+	/** X's move at `last` Sent O to the Local board it names, or under a Free move, `within`. */
+	const deep = (last: [number, number, number], within: number[] | null = null) =>
+		position((v) => {
+			v.cells[cell(...last)] = 'X';
+			v.last = cell(...last);
+			v.sent = last.slice(1);
+			v.within = within;
+		}, 3);
+
+	it('follows into the Local board Sent to, the middle Board a Free move is inside, or out', async () => {
+		const screen = await render(SteppedBoard, { view: deep([0, 4, 7]) });
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '47');
+		await expect.element(screen.getByRole('heading', { name: 'Local board 5·8' })).toBeVisible();
+		await expect
+			.element(screen.getByRole('button', { name: 'Board 5', exact: true }))
+			.toBeVisible();
+		await expect
+			.element(screen.getByRole('button', { name: 'Cell 5·8·1', exact: true }))
+			.toBeVisible();
+		await screen.rerender({ view: deep([0, 4, 7], [4]) });
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '4');
+		await expect.element(screen.getByRole('button', { name: /^Local board 5·1/ })).toBeVisible();
+		await screen.rerender({ view: deep([0, 4, 7], []) });
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', 'global');
+	});
+
+	it('steps in a level a tap, and out a level a crumb', async () => {
+		const screen = await render(SteppedBoard, { view: position(() => {}, 3) });
+		await screen.getByRole('button', { name: 'Board 5' }).click();
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '4');
+		await settled(screen);
+		await screen.getByRole('button', { name: 'Local board 5·8' }).click();
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '47');
+		await settled(screen);
+		await screen.getByRole('button', { name: 'Board 5', exact: true }).click();
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '4');
+		await settled(screen);
+		await screen.getByRole('button', { name: 'Global', exact: true }).click();
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', 'global');
+	});
+
+	it('holds the computer’s move in its Local board, then follows', async () => {
+		const screen = await render(SteppedBoard, { view: deep([4, 4, 2]), replied: true });
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '44');
+		await expect.element(focusOf(screen), { timeout: 2000 }).toHaveAttribute('data-focus', '42');
+	});
+
+	it('steps to the Board a refusal names, at either level', async () => {
+		const screen = await render(SteppedBoard, { view: deep([0, 4, 7]) });
+		await screen.rerender({ refusal: { board: [4], tick: 1 } });
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '4');
+		await screen.rerender({ refusal: { board: [2, 1], tick: 2 } });
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '21');
+	});
+
+	it('passes keyboard focus out a level at a time, to the Board just left', async () => {
+		const screen = await render(SteppedBoard, { view: deep([0, 4, 7]) });
+		await settled(screen);
+		await screen.getByRole('button', { name: 'Board 5', exact: true }).click();
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '4');
+		expect(document.activeElement?.getAttribute('aria-label')).toBe('Local board 5·8');
+		await settled(screen);
+		await screen.getByRole('button', { name: 'Global', exact: true }).click();
+		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', 'global');
+		expect(document.activeElement?.getAttribute('aria-label')).toBe('Board 5');
+	});
+});

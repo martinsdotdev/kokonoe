@@ -4,6 +4,7 @@ import type { Computer } from './computer.js';
 import type { Opponent } from './launch.js';
 import type { GameStore, SavedGame } from './saved.js';
 import { OfflineGame, UnplayableGame } from './session.svelte.js';
+import { INTO_A_WON_BOARD, LINE_OF_MIDDLE_BOARDS, TOP_ROW, cells } from '../../routes/games.js';
 import { SHELF } from './shelf.js';
 
 beforeAll(() => loadEngine());
@@ -24,15 +25,8 @@ class FakeStore implements GameStore {
 const hotseat = (store: GameStore = new FakeStore()) =>
 	new OfflineGame(SHELF[0], { kind: 'hotseat' }, { store });
 
-/** Cells written as engine digit pairs: `"42"` is Space 4, then Space 2. */
-const cells = (moves: string): Cell[] =>
-	moves.split(' ').map((digits) => Number(digits[0]) * 9 + Number(digits[1]));
-
-/** X takes Local boards 0, 1 and 2, each with a row, while O sends X wherever it needs to go. */
-const TOP_ROW = '03 30 04 40 05 51 13 31 14 41 15 52 26 62 27 72 28';
-
-const after = (moves: string, store = new FakeStore()) => {
-	const session = hotseat(store);
+const after = (moves: string, store = new FakeStore(), variant = SHELF[0]) => {
+	const session = new OfflineGame(variant, { kind: 'hotseat' }, { store });
 	for (const cell of cells(moves)) session.play(cell);
 	return session;
 };
@@ -99,6 +93,43 @@ describe('a hot-seat game', () => {
 		expect(session.end).toBeNull();
 		expect(session.moves).toEqual([]);
 		expect(session.toMove).toBe('X');
+	});
+});
+
+describe('a Deep game', () => {
+	const deep = (moves: string) => after(moves, new FakeStore(), SHELF[4]);
+
+	it('writes its moves in three-digit Notation, and notes a Free move inside a middle Board', () => {
+		const session = deep(INTO_A_WON_BOARD);
+		expect(session.moves.slice(-4).map((move) => [move.player, move.notation, move.note])).toEqual([
+			['X', '8·7·5', 'Won board 8·7'],
+			['O', '7·5·1', 'Sent → 5·1'],
+			['X', '5·1·8', 'Sent → 1·8'],
+			['O', '1·8·7', 'Free move']
+		]);
+	});
+
+	it('flashes the Board a refusal names, a middle Board or a Local board', () => {
+		const session = deep(INTO_A_WON_BOARD);
+		session.play(0);
+		expect(session.flash, 'outside the middle Board the move may go in').toEqual({
+			board: [7],
+			tick: 1
+		});
+		session.play(cells('760')[0]);
+		expect(session.flash, 'beneath the won Local board').toEqual({ board: [7, 6], tick: 2 });
+		expect(session.refusal).toEqual({ board: [7, 6], tick: 2 });
+	});
+
+	it('notes each middle Board its line wins', () => {
+		const session = deep(LINE_OF_MIDDLE_BOARDS);
+		expect(session.end).toEqual({ outcome: { Objective: 'X' } });
+		const middles = session.moves.filter((move) => /^Won board \d$/.test(move.note));
+		expect(middles.map((move) => move.note).sort()).toEqual([
+			'Won board 1',
+			'Won board 2',
+			'Won board 3'
+		]);
 	});
 });
 

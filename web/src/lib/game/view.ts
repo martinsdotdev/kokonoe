@@ -56,6 +56,15 @@ export const same = (a: Board | null | undefined, b: Board | null | undefined): 
 /** A path as its Spaces' digits, for keys and attributes: `'4'`, `'47'`, or `''` for Global. */
 export const key = (board: Board): string => board.join('');
 
+/** The outermost decided Board on the way down to `board`, if there is one. */
+export const outermostDecided = (view: BoardView, board: Board): Board | null => {
+	for (let length = 1; length <= board.length; length++) {
+		const above = board.slice(0, length);
+		if (at(view, above).status !== 'Open') return above;
+	}
+	return null;
+};
+
 /** The player who won a Board, or null. */
 export const ownerOf = (board: BoardState): Player | null =>
 	typeof board.status === 'object' ? board.status.Won : null;

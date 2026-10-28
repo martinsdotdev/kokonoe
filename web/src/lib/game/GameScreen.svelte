@@ -3,7 +3,8 @@
 	which wrap on narrower screens: players and the turn, the board, then the moves and the
 	controls. On a phone the board comes first and steps into one Board at a time (§7.3), with the
 	turn under it, then the players, the controls, the moves and the rules, in that order in the
-	page as on screen.
+	page as on screen. Deep steps on every screen: its Cells are too small to play on the whole
+	board.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -22,6 +23,7 @@
 	import { resultText, winner } from './result.js';
 	import type { OfflineGame } from './session.svelte.js';
 	import TurnCard from './TurnCard.svelte';
+	import { outermostDecided } from './view.js';
 
 	let { session }: { session: OfflineGame } = $props();
 
@@ -34,6 +36,8 @@
 	const against = $derived(againstLabel(opponent));
 	/** The board takes no moves: the game is over, or the computer is to move. */
 	const frozen = $derived(session.end !== null || session.computerToMove);
+	/** One Board at a time: on a phone, and at depth 3 everywhere. */
+	const stepped = $derived(phone.current || variant.ruleset.depth === 3);
 	const counted = $derived(
 		variant.ruleset.objective !== 'Line' || variant.ruleset.fallback === 'MostWon'
 	);
@@ -85,21 +89,12 @@
 			/>
 		{/if}
 		{#if phone.current}
-			<section aria-label="Board" class="flex justify-center">
-				<SteppedBoard
-					view={session.view}
-					flash={session.flash}
-					refusal={session.refusal}
-					disabled={frozen}
-					replied={session.replied}
-					onplay={(cell) => session.play(cell)}
-				/>
-			</section>
+			<section aria-label="Board" class="flex justify-center">{@render board()}</section>
 			{@render turn()}
 			<aside aria-label="Players" class="flex flex-col gap-3.5">{@render players()}</aside>
 			<aside aria-label="Moves and controls" class="flex flex-col gap-3.5">
 				{@render controls()}
-				<MoveList moves={session.moves} />
+				<MoveList moves={session.moves} depth={variant.ruleset.depth} />
 				<RulesCard {variant} />
 			</aside>
 		{:else}
@@ -112,18 +107,13 @@
 					{@render turn()}
 				</aside>
 				<section aria-label="Board" class="flex min-w-0 flex-[0_1_600px] justify-center">
-					<Board
-						view={session.view}
-						flash={session.flash}
-						disabled={frozen}
-						onplay={(cell) => session.play(cell)}
-					/>
+					{@render board()}
 				</section>
 				<aside
 					aria-label="Moves and controls"
 					class="flex min-w-0 flex-[1_1_260px] flex-col gap-3.5 lg:max-w-80"
 				>
-					<MoveList moves={session.moves} />
+					<MoveList moves={session.moves} depth={variant.ruleset.depth} />
 					{@render controls()}
 					<RulesCard {variant} />
 				</aside>
@@ -131,6 +121,26 @@
 		{/if}
 	</main>
 </div>
+
+{#snippet board()}
+	{#if stepped}
+		<SteppedBoard
+			view={session.view}
+			flash={session.flash}
+			refusal={session.refusal}
+			disabled={frozen}
+			replied={session.replied}
+			onplay={(cell) => session.play(cell)}
+		/>
+	{:else}
+		<Board
+			view={session.view}
+			flash={session.flash}
+			disabled={frozen}
+			onplay={(cell) => session.play(cell)}
+		/>
+	{/if}
+{/snippet}
 
 {#snippet players()}
 	{#each ['X', 'O'] as const as player (player)}
@@ -165,6 +175,7 @@
 			sent={session.status.ToMove.sent}
 			last={session.moves.at(-1)?.notation ?? null}
 			refused={session.refusal !== null}
+			decided={session.view.sent && outermostDecided(session.view, session.view.sent)}
 		/>
 	{/if}
 {/snippet}

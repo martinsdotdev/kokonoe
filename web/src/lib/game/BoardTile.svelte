@@ -1,23 +1,26 @@
 <!--
 	One Board under the Global board in the board grammar: pencil between Cells, the highlighter
 	when it's Active, a dashed Sent target, a ring on the last move, an inked owner or a
-	Continuation watermark, and hatching once drawn. It renders its part of a BoardView and reports
-	clicks.
+	Continuation watermark, and hatching once drawn. A Local board holds its Cells, and at depth 3
+	a middle Board holds its nine Local boards, each another tile. It renders its part of a
+	BoardView and reports clicks.
 
-	With `onstep` the whole tile is one button that steps into it, and its Cells are only drawn:
-	the Global view on a phone, where Boards are tapped, not Cells.
+	With `onstep` the whole tile is one button that steps into it, and what's inside is only drawn:
+	a view of Boards to tap, not Cells. `large` draws it alone, where `onstep` makes its Local
+	boards the buttons instead. `still` draws it inside such a button, with nothing to press.
 -->
 <script lang="ts">
 	import type { Board, Cell, Player } from '#lib/engine.js';
+	import BoardTile from './BoardTile.svelte';
 	import Mark from './Mark.svelte';
 	import { boardLabel, boardName, notation } from './notation.js';
-	import { at, cellsOf, key, ownerOf, same, type BoardView } from './view.js';
+	import { at, cellsOf, children, key, ownerOf, same, type BoardView } from './view.js';
 
 	interface Props {
 		view: BoardView;
 		board: Board;
 		onplay?: (cell: Cell) => void;
-		/** Makes the tile a button that steps into its Board, unless it's drawn `large`. */
+		/** Makes the tile a button that steps into its Board, or when `large`, its Local boards. */
 		onstep?: (board: Board) => void;
 		/** A Board to flash, after an illegal tap that names it. A new `tick` flashes again. */
 		flash?: { board: Board; tick: number } | null;
@@ -25,6 +28,8 @@
 		disabled?: boolean;
 		/** Drawn alone, as large as the screen allows. */
 		large?: boolean;
+		/** Drawn inside a button that steps into a Board: a picture, with nothing to press. */
+		still?: boolean;
 	}
 
 	let {
@@ -34,12 +39,17 @@
 		onstep,
 		flash = null,
 		disabled = false,
-		large = false
+		large = false,
+		still = false
 	}: Props = $props();
 
 	const state = $derived(at(view, board));
+	/** It holds Cells; otherwise it's a middle Board, which holds Local boards. */
+	const local = $derived(board.length === view.depth - 1);
 	/** The whole tile is a button that steps into it. */
-	const button = $derived(!large && !!onstep);
+	const button = $derived(!still && !large && !!onstep);
+	/** What's inside is only drawn, in this button or another. */
+	const drawn = $derived(still || button);
 	const won = $derived(ownerOf(state));
 	const name = $derived.by(() => {
 		const name = boardName(board);
@@ -50,12 +60,14 @@
 </script>
 
 <svelte:element
-	this={button ? 'button' : 'div'}
+	this={button ? 'button' : still ? 'span' : 'div'}
 	type={button ? 'button' : undefined}
 	class="tile"
 	class:large
-	role={button ? undefined : 'group'}
-	aria-label={button && state.active ? `${name}, play here` : name}
+	class:still
+	class:middle={!local}
+	role={drawn ? undefined : 'group'}
+	aria-label={still ? undefined : button && state.active ? `${name}, play here` : name}
 	onclick={button ? () => onstep?.(board) : undefined}
 	data-board={key(board)}
 	data-status={won ? `won-${won.toLowerCase()}` : state.status === 'Drawn' ? 'drawn' : 'open'}
@@ -63,25 +75,33 @@
 	data-sent={same(view.sent, board) || undefined}
 	data-flash={same(flash?.board, board) || undefined}
 >
-	<span class="cells" class:faded={won && !view.continuation}>
-		<!-- Keyed by Space, so a follow from one Board to another keeps the same Cell buttons. -->
-		{#each cellsOf(board) as cell, space (space)}
-			{@const mark = view.cells[cell]}
-			{#if button}
-				<span class="cell">{@render face(cell, mark)}</span>
-			{:else}
-				<button
-					type="button"
-					class="cell"
-					aria-label={`Cell ${notation(cell, view.depth)}${mark ? `, ${mark}` : ''}`}
-					aria-disabled={!legal(cell)}
-					onclick={() => !disabled && onplay?.(cell)}
-				>
-					{@render face(cell, mark)}
-				</button>
-			{/if}
-		{/each}
-	</span>
+	<!-- Keyed by Space, so a follow from one Board to another keeps the same buttons. -->
+	{#if local}
+		<span class="cells" class:faded={won && !view.continuation}>
+			{#each cellsOf(board) as cell, space (space)}
+				{@const mark = view.cells[cell]}
+				{#if drawn}
+					<span class="cell">{@render face(cell, mark)}</span>
+				{:else}
+					<button
+						type="button"
+						class="cell"
+						aria-label={`Cell ${notation(cell, view.depth)}${mark ? `, ${mark}` : ''}`}
+						aria-disabled={!legal(cell)}
+						onclick={() => !disabled && onplay?.(cell)}
+					>
+						{@render face(cell, mark)}
+					</button>
+				{/if}
+			{/each}
+		</span>
+	{:else}
+		<span class="boards" class:faded={won && !view.continuation}>
+			{#each children(board) as child, space (space)}
+				<BoardTile {view} board={child} {onplay} {onstep} {flash} {disabled} still={drawn} />
+			{/each}
+		</span>
+	{/if}
 	{#if state.status === 'Drawn'}
 		<span class="hatch" aria-hidden="true"></span>
 	{/if}
@@ -105,7 +125,7 @@
 	{/if}
 	{#if same(view.sent, board)}
 		<span class="sent" aria-hidden="true"></span>
-		<span class="sent-label">Sent → {boardLabel(board)}</span>
+		{#if !still}<span class="sent-label">Sent → {boardLabel(board)}</span>{/if}
 	{/if}
 	{#if flash && same(flash.board, board)}
 		{#key flash.tick}<span class="flash" aria-hidden="true"></span>{/key}
@@ -153,18 +173,42 @@
 		border: 5px solid var(--foreground);
 	}
 
-	.cells {
+	/* A middle Board: its Local boards parted in ink, as the Global board parts its own. */
+	.tile.middle {
+		padding: 4%;
+	}
+	/* Small enough inside a middle Board's button that a Cell is about 10 px on a phone. */
+	.tile.still {
+		padding: 5%;
+	}
+
+	.cells,
+	.boards {
 		flex: 1;
 		display: grid;
 		grid-template: repeat(3, minmax(0, 1fr)) / repeat(3, minmax(0, 1fr));
 		gap: 2px;
 		background: var(--pencil);
 	}
-	.cells.faded {
+	.boards {
+		gap: 3px;
+		background: var(--foreground);
+	}
+	.still .cells {
+		gap: 1px;
+	}
+	.faded {
 		opacity: 0.3;
 	}
-	.large .cells {
+	/* A faded middle Board fades its Local boards once, not twice: they're tiles of their own. */
+	.faded :global(.faded) {
+		opacity: 1;
+	}
+	.large > .cells {
 		gap: 3px;
+	}
+	.large > .boards {
+		gap: 4px;
 	}
 
 	.cell {
@@ -205,8 +249,12 @@
 		border-radius: 50%;
 		pointer-events: none;
 	}
-	.large .ring {
+	.large > .cells .ring {
 		border-width: 3px;
+	}
+	.still .ring {
+		inset: 4%;
+		border-width: 1px;
 	}
 
 	.hatch {
@@ -258,8 +306,12 @@
 		white-space: nowrap;
 		pointer-events: none;
 	}
-	.large .sent-label {
+	.large > .sent-label {
 		font-size: 14px;
+	}
+	.still > .sent {
+		inset: 0;
+		border-width: 1.5px;
 	}
 
 	.flash {

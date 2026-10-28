@@ -122,3 +122,61 @@ describe('clicks', () => {
 		await expect.element(local(screen, 'Board 4')).not.toHaveAttribute('data-flash');
 	});
 });
+
+describe('a Deep board that steps', () => {
+	/** The Cell at a path of three Spaces. */
+	const cell = (m: number, l: number, c: number) => m * 81 + l * 9 + c;
+
+	const tile = (screen: Awaited<ReturnType<typeof render>>, board: string) =>
+		screen.container.querySelector<HTMLElement>(`[data-board="${board}"]`)!;
+
+	it('offers its middle Boards to step into, and no Cells', async () => {
+		const onstep = vi.fn();
+		const view = position((v) => {
+			for (const space of [0, 1, 2, 3, 4, 5, 6, 7, 8]) at(v, [space]).active = true;
+		}, 3);
+		const screen = await render(Board, { view, onstep });
+		expect(screen.getByRole('button').all()).toHaveLength(9);
+		expect(screen.getByRole('group').all(), 'the pictures inside have no role').toHaveLength(1);
+		await screen.getByRole('button', { name: 'Board 5, play here' }).click();
+		expect(onstep.mock.calls).toEqual([[[4]]]);
+	});
+
+	it('draws the board grammar at both levels', async () => {
+		const view = position((v) => {
+			at(v, [0]).status = { Won: 'X' };
+			at(v, [0, 4]).status = { Won: 'X' };
+			at(v, [8]).status = 'Drawn';
+			at(v, [4]).active = true;
+			at(v, [4, 7]).active = true;
+			v.sent = [4, 7];
+			v.cells[cell(4, 3, 7)] = 'O';
+			v.last = cell(4, 3, 7);
+		}, 3);
+		const screen = await render(Board, { view, onstep: () => {}, flash: { board: [2], tick: 1 } });
+		await expect
+			.element(screen.getByRole('button', { name: 'Board 1, won by X' }))
+			.toHaveAttribute('data-status', 'won-x');
+		expect(tile(screen, '0').querySelector('.boards')?.classList).toContain('faded');
+		expect(tile(screen, '04').dataset.status).toBe('won-x');
+		expect(tile(screen, '8').querySelector('.hatch')).not.toBeNull();
+		expect(tile(screen, '4').dataset.active).toBe('true');
+		expect(tile(screen, '47').dataset.active).toBe('true');
+		expect(tile(screen, '47').dataset.sent).toBe('true');
+		expect(tile(screen, '3').dataset.active).toBeUndefined();
+		expect(screen.container.textContent, 'no room for the label').not.toContain('Sent →');
+		expect(tile(screen, '43').querySelector('[data-last]')).not.toBeNull();
+		expect(tile(screen, '2').dataset.flash).toBe('true');
+	});
+
+	it('watermarks a won middle Board that still takes moves under Continuation', async () => {
+		const view = position((v) => {
+			v.continuation = true;
+			at(v, [6]).status = { Won: 'O' };
+			at(v, [6]).active = true;
+		}, 3);
+		const screen = await render(Board, { view, onstep: () => {} });
+		expect(tile(screen, '6').querySelector('[data-owner="O"]')?.classList).toContain('watermark');
+		expect(tile(screen, '6').querySelector('.boards')?.classList).not.toContain('faded');
+	});
+});

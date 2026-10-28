@@ -35,3 +35,45 @@ describe('the turn', () => {
 		await expect.element(screen.getByText('Not playable. O: play in board 3.')).toBeVisible();
 	});
 });
+
+describe('the turn in Deep', () => {
+	it('names a Local board in three-digit Notation', async () => {
+		const screen = await render(TurnCard, { player: 'O', sent: { To: [4, 7] }, last: '3·5·8' });
+		await expect.element(screen.getByText('O: play in board 5·8.')).toBeVisible();
+	});
+
+	it('frees a move inside the middle Board above a decided target', async () => {
+		const screen = await render(TurnCard, {
+			player: 'X',
+			sent: { Free: { target: [7, 6], within: [7] } },
+			last: '1·8·7',
+			decided: [7, 6]
+		});
+		await expect.element(screen.getByText('FREE MOVE')).toBeVisible();
+		await expect.element(screen.getByText('X: play anywhere in board 8.')).toBeVisible();
+		await expect
+			.element(
+				screen.getByText(
+					'O’s move 1·8·7 Sent X to board 8·7, which is decided, so every open board in board 8 is X’s.'
+				)
+			)
+			.toBeVisible();
+	});
+
+	it('names the decided middle Board when the move may go anywhere', async () => {
+		const screen = await render(TurnCard, {
+			player: 'X',
+			sent: { Free: { target: [4, 7], within: [] } },
+			last: '2·5·8',
+			decided: [4]
+		});
+		await expect.element(screen.getByText('X: play in any open board.')).toBeVisible();
+		await expect
+			.element(
+				screen.getByText(
+					'O’s move 2·5·8 Sent X to board 5·8, inside board 5, which is decided, so every open board is X’s.'
+				)
+			)
+			.toBeVisible();
+	});
+});

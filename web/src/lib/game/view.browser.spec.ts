@@ -1,20 +1,20 @@
-import { beforeAll, expect, it } from 'vitest';
-import { Game, loadEngine, presets, type Cell } from '#lib/engine.js';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { Game, loadEngine, presets } from '#lib/engine.js';
+import { INTO_A_WON_BOARD, cells } from '../../routes/games.js';
 import { at, boardView, children, type BoardView } from './view.js';
 
 let standard: () => Game;
+let deep: () => Game;
 
 beforeAll(async () => {
 	await loadEngine();
 	standard = () => new Game(presets()[0].ruleset, '00000000005eed00');
+	deep = () => new Game(presets()[4].ruleset, '00000000005eed00');
 });
 
-/** Plays Cells written as engine digit pairs: `"42"` is Space 4, then Space 2. */
+/** Plays moves written as the engine's tests write them: `"42"` is Space 4, then Space 2. */
 const play = (game: Game, moves: string) => {
-	for (const digits of moves.split(' ')) {
-		const cell: Cell = Number(digits[0]) * 9 + Number(digits[1]);
-		expect(game.play(game.ply(), cell)).toHaveProperty('Now');
-	}
+	for (const cell of cells(moves)) expect(game.play(game.ply(), cell)).toHaveProperty('Now');
 	return game;
 };
 
@@ -49,4 +49,32 @@ it('reads a Free move after a send to a decided board', () => {
 	expect(view.within).toEqual([]);
 	expect(at(view, [0]).active).toBe(false);
 	expect(active(view, [])).toHaveLength(8);
+});
+
+describe('Deep', () => {
+	it('reads the first move as every Board Active, at both levels', () => {
+		const view = boardView(deep());
+		expect(view.depth).toBe(3);
+		expect(view.cells).toHaveLength(729);
+		expect(view.boards.map((level) => level.length)).toEqual([9, 81]);
+		expect(view.boards.flat().every((board) => board.active)).toBe(true);
+	});
+
+	it('reads the Sent target as a Local board’s path, and only its Boards as Active', () => {
+		const view = boardView(play(deep(), '407'));
+		expect(view.sent).toEqual([0, 7]);
+		expect(view.within).toBeNull();
+		expect(active(view, [])).toEqual([[0]]);
+		expect(active(view, [0])).toEqual([[0, 7]]);
+	});
+
+	it('reads a Free move inside a middle Board, after a send to a won Local board', () => {
+		const view = boardView(play(deep(), INTO_A_WON_BOARD));
+		expect(view.sent).toEqual([7, 6]);
+		expect(view.within).toEqual([7]);
+		expect(at(view, [7, 6])).toEqual({ status: { Won: 'X' }, active: false });
+		expect(at(view, [7])).toEqual({ status: 'Open', active: true });
+		expect(active(view, [])).toEqual([[7]]);
+		expect(active(view, [7])).toHaveLength(8);
+	});
 });

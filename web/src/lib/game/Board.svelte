@@ -1,7 +1,8 @@
 <!--
-	The Global board at depth 2, drawn in the design overview's grammar: heavy ink between Local
-	boards, and each Local board in its own. It renders a BoardView and reports clicks: what a click
-	means is the caller's business. With `onstep`, Boards are tapped instead of Cells.
+	The Global board, drawn in the design overview's grammar: heavy ink between its nine Boards,
+	Local boards at depth 2 and middle Boards at depth 3, each drawn by a BoardTile. It renders a
+	BoardView and reports clicks: what a click means is the caller's business. With `onstep`,
+	Boards are tapped instead of Cells.
 -->
 <script lang="ts">
 	import type { Board, Cell } from '#lib/engine.js';

@@ -46,8 +46,7 @@ describe('the turn in Deep', () => {
 		const screen = await render(TurnCard, {
 			player: 'X',
 			sent: { Free: { target: [7, 6], within: [7] } },
-			last: '1·8·7',
-			decided: [7, 6]
+			last: '1·8·7'
 		});
 		await expect.element(screen.getByText('FREE MOVE')).toBeVisible();
 		await expect.element(screen.getByText('X: play anywhere in board 8.')).toBeVisible();
@@ -65,7 +64,7 @@ describe('the turn in Deep', () => {
 			player: 'X',
 			sent: { Free: { target: [4, 7], within: [] } },
 			last: '2·5·8',
-			decided: [4]
+			decidedAbove: [4]
 		});
 		await expect.element(screen.getByText('X: play in any open board.')).toBeVisible();
 		await expect

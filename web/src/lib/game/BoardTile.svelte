@@ -5,9 +5,10 @@
 	a middle Board holds its nine Local boards, each another tile. It renders its part of a
 	BoardView and reports clicks.
 
-	With `onstep` the whole tile is one button that steps into it, and what's inside is only drawn:
-	a view of Boards to tap, not Cells. `large` draws it alone, where `onstep` makes its Local
-	boards the buttons instead. `still` draws it inside such a button, with nothing to press.
+	It draws its Board one of three ways:
+	- to play on: a group of Cell buttons, or when `large` and given `onstep`, of Local board buttons;
+	- to step into: with `onstep`, one button, where what's inside is a picture;
+	- as that picture: `still`, which a tile sets on the tiles inside it, with nothing to press.
 -->
 <script lang="ts">
 	import type { Board, Cell, Player } from '#lib/engine.js';
@@ -28,7 +29,7 @@
 		disabled?: boolean;
 		/** Drawn alone, as large as the screen allows. */
 		large?: boolean;
-		/** Drawn inside a button that steps into a Board: a picture, with nothing to press. */
+		/** Drawn inside a button that steps into a Board, with nothing to press. Tiles set it. */
 		still?: boolean;
 	}
 
@@ -48,8 +49,9 @@
 	const local = $derived(board.length === view.depth - 1);
 	/** The whole tile is a button that steps into it. */
 	const button = $derived(!still && !large && !!onstep);
-	/** What's inside is only drawn, in this button or another. */
-	const drawn = $derived(still || button);
+	/** Nothing inside takes a press: it's in this button, or another. */
+	const inert = $derived(still || button);
+	const tag = $derived(button ? 'button' : still ? 'span' : 'div');
 	const won = $derived(ownerOf(state));
 	const name = $derived.by(() => {
 		const name = boardName(board);
@@ -60,13 +62,13 @@
 </script>
 
 <svelte:element
-	this={button ? 'button' : still ? 'span' : 'div'}
+	this={tag}
 	type={button ? 'button' : undefined}
 	class="tile"
 	class:large
 	class:still
 	class:middle={!local}
-	role={drawn ? undefined : 'group'}
+	role={inert ? undefined : 'group'}
 	aria-label={still ? undefined : button && state.active ? `${name}, play here` : name}
 	onclick={button ? () => onstep?.(board) : undefined}
 	data-board={key(board)}
@@ -80,7 +82,7 @@
 		<span class="cells" class:faded={won && !view.continuation}>
 			{#each cellsOf(board) as cell, space (space)}
 				{@const mark = view.cells[cell]}
-				{#if drawn}
+				{#if inert}
 					<span class="cell">{@render face(cell, mark)}</span>
 				{:else}
 					<button
@@ -98,7 +100,7 @@
 	{:else}
 		<span class="boards" class:faded={won && !view.continuation}>
 			{#each children(board) as child, space (space)}
-				<BoardTile {view} board={child} {onplay} {onstep} {flash} {disabled} still={drawn} />
+				<BoardTile {view} board={child} {onplay} {onstep} {flash} {disabled} still={inert} />
 			{/each}
 		</span>
 	{/if}

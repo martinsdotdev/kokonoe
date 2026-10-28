@@ -16,14 +16,11 @@
 		last: string | null;
 		/** A tap was refused, and nothing has been played since. */
 		refused?: boolean;
-		/**
-		 * On a Free move, the Board that turned the Sent target away: the target, or at depth 3
-		 * the middle Board above it.
-		 */
-		decided?: Board | null;
+		/** At depth 3, a decided middle Board above the Sent target, which turned the move away. */
+		decidedAbove?: Board | null;
 	}
 
-	let { player, sent, last, refused = false, decided = null }: Props = $props();
+	let { player, sent, last, refused = false, decidedAbove = null }: Props = $props();
 
 	const turn = $derived.by(() => {
 		const by = `${opponent(player)}’s move ${last ?? ''}`.trim();
@@ -52,8 +49,7 @@
 				why: `${to}, which is decided, so every open board in board ${board} is ${player}’s.`
 			};
 		}
-		const inside =
-			decided && decided.length < target.length ? `, inside board ${boardLabel(decided)},` : ',';
+		const inside = decidedAbove ? `, inside board ${boardLabel(decidedAbove)},` : ',';
 		return {
 			free: true,
 			line: `${player}: play in any open board.`,

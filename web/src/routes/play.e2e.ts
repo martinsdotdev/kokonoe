@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { DRAWN, LINE_OF_MIDDLE_BOARDS, TOP_ROW, notation } from './games.js';
+import { DRAWN, LINE_OF_MIDDLE_BOARDS, TOP_ROW, notation } from '../lib/game/games.fixtures.js';
 import { stepThrough, stepped, tally } from './steps.js';
 
 const cell = (page: Page, digits: string) =>

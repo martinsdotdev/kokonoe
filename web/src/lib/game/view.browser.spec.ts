@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Game, loadEngine, presets } from '#lib/engine.js';
-import { INTO_A_WON_BOARD, cells } from '../../routes/games.js';
+import { INTO_A_WON_BOARD, cells } from './games.fixtures.js';
 import { at, boardView, children, type BoardView } from './view.js';
 
 let standard: () => Game;

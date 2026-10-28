@@ -7,7 +7,7 @@
 	the Global view on a phone, where Boards are tapped, not Cells.
 -->
 <script lang="ts">
-	import type { Cell } from '#lib/engine.js';
+	import type { Cell, Player } from '#lib/engine.js';
 	import Mark from './Mark.svelte';
 	import { boardLabel, notation } from './notation.js';
 	import { ownerOf, type BoardView, type LocalView } from './view.js';
@@ -66,10 +66,7 @@
 			{@const cell = local.space * 9 + inner}
 			{@const mark = view.cells[cell]}
 			{#if onstep}
-				<span class="cell">
-					{#if mark}<Mark player={mark} class="glyph" />{/if}
-					{#if cell === view.last}<span class="ring" data-last></span>{/if}
-				</span>
+				<span class="cell">{@render face(cell, mark)}</span>
 			{:else}
 				<button
 					type="button"
@@ -78,8 +75,7 @@
 					aria-disabled={!legal(cell)}
 					onclick={() => !disabled && onplay?.(cell)}
 				>
-					{#if mark}<Mark player={mark} class="glyph" />{/if}
-					{#if cell === view.last}<span class="ring" data-last></span>{/if}
+					{@render face(cell, mark)}
 				</button>
 			{/if}
 		{/each}
@@ -113,6 +109,11 @@
 		{#key flash.tick}<span class="flash" aria-hidden="true"></span>{/key}
 	{/if}
 </svelte:element>
+
+{#snippet face(cell: Cell, mark: Player | null)}
+	{#if mark}<Mark player={mark} class="glyph" />{/if}
+	{#if cell === view.last}<span class="ring" data-last></span>{/if}
+{/snippet}
 
 <style>
 	.local {

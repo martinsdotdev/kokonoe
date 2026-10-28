@@ -1,8 +1,9 @@
 <!--
-	The game screen (spec §7.4). From 640 px wide it has the design overview's three columns, which
-	wrap on narrower screens: players and the turn, the board, then the moves and the controls. On a
-	phone the board comes first and steps into one Board at a time (§7.3), with the turn under it,
-	then the players, the controls, the moves and the rules, in that order in the page as on screen.
+	The game screen (spec §7.4). Wider than a phone it has the design overview's three columns,
+	which wrap on narrower screens: players and the turn, the board, then the moves and the
+	controls. On a phone the board comes first and steps into one Board at a time (§7.3), with the
+	turn under it, then the players, the controls, the moves and the rules, in that order in the
+	page as on screen.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -24,13 +25,15 @@
 
 	let { session }: { session: OfflineGame } = $props();
 
-	/** Tailwind's `max-sm`: a phone. */
+	/** Narrower than 40rem, Tailwind's `max-sm`: a phone. */
 	const phone = new MediaQuery('(width < 40rem)');
 
 	const played = $derived(session.moves.filter((move) => !move.dealt).length);
 	const opponent = $derived(session.opponent);
 	const variant = $derived(session.variant);
 	const against = $derived(againstLabel(opponent));
+	/** The board takes no moves: the game is over, or the computer is to move. */
+	const frozen = $derived(session.end !== null || session.computerToMove);
 	const counted = $derived(
 		variant.ruleset.objective !== 'Line' || variant.ruleset.fallback === 'MostWon'
 	);
@@ -82,21 +85,22 @@
 			/>
 		{/if}
 		{#if phone.current}
-			<section aria-label="Board" class="flex flex-col items-center gap-4">
+			<section aria-label="Board" class="flex justify-center">
 				<SteppedBoard
 					view={session.view}
 					flash={session.flash}
-					disabled={session.end !== null || session.computerToMove}
+					refusal={session.refusal}
+					disabled={frozen}
 					replied={session.replied}
 					onplay={(cell) => session.play(cell)}
 				/>
-				<div class="w-full">{@render turn()}</div>
 			</section>
+			{@render turn()}
 			<aside aria-label="Players" class="flex flex-col gap-3.5">{@render players()}</aside>
-			<aside aria-label="Moves" class="flex flex-col gap-3.5">
+			<aside aria-label="Moves and controls" class="flex flex-col gap-3.5">
 				{@render controls()}
-				{@render list()}
-				{@render rules()}
+				<MoveList moves={session.moves} />
+				<RulesCard {variant} />
 			</aside>
 		{:else}
 			<div class="flex flex-wrap items-start justify-center gap-8">
@@ -111,17 +115,17 @@
 					<Board
 						view={session.view}
 						flash={session.flash}
-						disabled={session.end !== null || session.computerToMove}
+						disabled={frozen}
 						onplay={(cell) => session.play(cell)}
 					/>
 				</section>
 				<aside
-					aria-label="Moves"
+					aria-label="Moves and controls"
 					class="flex min-w-0 flex-[1_1_260px] flex-col gap-3.5 lg:max-w-80"
 				>
-					{@render list()}
+					<MoveList moves={session.moves} />
 					{@render controls()}
-					{@render rules()}
+					<RulesCard {variant} />
 				</aside>
 			</div>
 		{/if}
@@ -160,13 +164,9 @@
 			player={session.status.ToMove.player}
 			sent={session.status.ToMove.sent}
 			last={session.moves.at(-1)?.notation ?? null}
-			refused={session.flash !== null}
+			refused={session.refusal !== null}
 		/>
 	{/if}
-{/snippet}
-
-{#snippet list()}
-	<MoveList moves={session.moves} />
 {/snippet}
 
 {#snippet controls()}
@@ -176,8 +176,4 @@
 		onundo={() => session.undo()}
 		onresign={() => session.resign()}
 	/>
-{/snippet}
-
-{#snippet rules()}
-	<RulesCard {variant} />
 {/snippet}

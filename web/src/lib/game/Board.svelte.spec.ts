@@ -3,22 +3,7 @@ import { render } from 'vitest-browser-svelte';
 import type { Player } from '#lib/engine.js';
 import Board from './Board.svelte';
 import type { BoardView } from './view.js';
-
-const range = (n: number) => [...Array(n).keys()];
-
-/** An empty board, then `edit` sets up the position under test. */
-const position = (edit: (view: BoardView) => void = () => {}): BoardView => {
-	const view: BoardView = {
-		continuation: false,
-		cells: range(81).map(() => null),
-		locals: range(9).map((space) => ({ space, status: 'Open', active: false })),
-		sent: null,
-		free: false,
-		last: null
-	};
-	edit(view);
-	return view;
-};
+import { position } from './view.fixtures.js';
 
 /** Board 3 (Space 2), won by `player` along its top row. */
 const winTopRight = (view: BoardView, player: Player) => {

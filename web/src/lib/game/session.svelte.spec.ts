@@ -81,6 +81,16 @@ describe('a hot-seat game', () => {
 		expect(session.moves).toHaveLength(1);
 	});
 
+	it('keeps a refusal until the next move', () => {
+		const session = after('42');
+		session.play(0);
+		expect(session.refusal).toEqual({ board: 2, tick: 1 });
+		session.play(cells('42')[0]);
+		expect(session.refusal, 'Occupied names no Board').toEqual({ board: null, tick: 2 });
+		session.play(cells('24')[0]);
+		expect(session.refusal).toBeNull();
+	});
+
 	it('resigns for the player to move, and restarts', () => {
 		const session = after('42');
 		session.resign();
@@ -173,8 +183,10 @@ describe('a game against the computer', () => {
 		expect(computer.asks[0].record.moves).toEqual([C42]);
 		session.play(C24);
 		expect(session.moves, 'not the player’s move to make').toHaveLength(1);
+		expect(session.replied).toBe(false);
 		computer.asks[0].answer(C24);
 		await settle();
+		expect(session.replied, 'the last move is the computer’s').toBe(true);
 		expect(session.thinking).toBe(false);
 		expect(session.moves.map((move) => [move.player, move.notation])).toEqual([
 			['X', '5·3'],

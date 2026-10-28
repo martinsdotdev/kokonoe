@@ -1,23 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import SteppedBoard from './SteppedBoard.svelte';
-import type { BoardView } from './view.js';
-
-const range = (n: number) => [...Array(n).keys()];
-
-/** An empty board, then `edit` sets up the position under test. */
-const position = (edit: (view: BoardView) => void = () => {}): BoardView => {
-	const view: BoardView = {
-		continuation: false,
-		cells: range(81).map(() => null),
-		locals: range(9).map((space) => ({ space, status: 'Open', active: false })),
-		sent: null,
-		free: false,
-		last: null
-	};
-	edit(view);
-	return view;
-};
+import { position } from './view.fixtures.js';
 
 /** Sent to `space`, after the move that sent there. */
 const sentTo = (space: number, last: number) =>
@@ -28,10 +12,11 @@ const sentTo = (space: number, last: number) =>
 		v.locals[space].active = true;
 	});
 
-const focusOf = (screen: Awaited<ReturnType<typeof render>>) =>
-	screen.container.querySelector<HTMLElement>('[data-focus]')!;
+type Screen = Awaited<ReturnType<typeof render>>;
 
-const settled = async (screen: Awaited<ReturnType<typeof render>>) =>
+const focusOf = (screen: Screen) => screen.container.querySelector<HTMLElement>('[data-focus]')!;
+
+const settled = async (screen: Screen) =>
 	expect.element(focusOf(screen)).toHaveAttribute('data-settled');
 
 describe('following the game', () => {
@@ -50,7 +35,7 @@ describe('following the game', () => {
 			v.locals[0].status = { Won: 'X' };
 			v.sent = 0;
 			v.free = true;
-			for (const space of range(9).slice(1)) v.locals[space].active = true;
+			for (const space of [1, 2, 3, 4, 5, 6, 7, 8]) v.locals[space].active = true;
 		});
 		const screen = await render(SteppedBoard, { view: free });
 		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', 'global');
@@ -89,9 +74,9 @@ describe('following the game', () => {
 		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', 'global');
 	});
 
-	it('steps to the Board an illegal tap names', async () => {
+	it('steps to the Board a refused tap names', async () => {
 		const screen = await render(SteppedBoard, { view: sentTo(4, 40) });
-		await screen.rerender({ flash: { space: 7, tick: 1 } });
+		await screen.rerender({ refusal: { board: 7, tick: 1 } });
 		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '7');
 	});
 });

@@ -6,7 +6,7 @@ const result = { headline: 'X wins on a line', detail: 'After 9 moves.', winner:
 
 it('offers the game’s Replay and a new game', async () => {
 	const onrestart = vi.fn();
-	const screen = await render(ResultBanner, { ...result, replay: 'a', onrestart });
+	const screen = await render(ResultBanner, { ...result, game: 'a', onrestart });
 	await expect
 		.element(screen.getByRole('link', { name: 'Replay' }))
 		.toHaveAttribute('href', '/replay?game=a');

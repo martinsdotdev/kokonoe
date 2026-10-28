@@ -19,18 +19,21 @@ export interface Move {
 	note: string;
 }
 
-/** The rows of a dealt opening, which X begins and which do nothing worth a note. */
+/** Who made ply `n`, counted from 1: X moves first and turns alternate, the deal included. */
+export const playerAt = (n: number): Player => (n % 2 ? 'X' : 'O');
+
+/** The rows of a dealt opening, which do nothing worth a note. */
 export const dealtMoves = (opening: Cell[], depth: 2 | 3): Move[] =>
 	opening.map((cell, i) => ({
 		n: i + 1,
-		player: i % 2 ? 'O' : 'X',
+		player: playerAt(i + 1),
 		notation: notation(cell, depth),
 		dealt: true,
 		note: ''
 	}));
 
 /** What `cell` did, read from the board before and after it: the outermost Board it decided. */
-export const note = (before: BoardView, after: BoardView, cell: Cell): string => {
+const note = (before: BoardView, after: BoardView, cell: Cell): string => {
 	const decided = lineage(localOf(cell, after.depth))
 		.slice(1)
 		.find((board) => at(before, board).status === 'Open' && at(after, board).status !== 'Open');
@@ -41,6 +44,21 @@ export const note = (before: BoardView, after: BoardView, cell: Cell): string =>
 	if (after.within) return 'Free move';
 	return after.sent === null ? '' : `Sent → ${boardLabel(after.sent)}`;
 };
+
+/** The row of ply `n`, `cell`, read from the board `before` and `after` it. */
+export const playedMove = (n: number, cell: Cell, before: BoardView, after: BoardView): Move => ({
+	n,
+	player: playerAt(n),
+	notation: notation(cell, after.depth),
+	dealt: false,
+	note: note(before, after, cell)
+});
+
+/** A move as the list writes it: a dealt one in parentheses, `(5·5)`. */
+export const written = (move: Move): string => (move.dealt ? `(${move.notation})` : move.notation);
+
+/** How many moves the players made, the deal aside. */
+export const playedCount = (moves: Move[]): number => moves.filter((move) => !move.dealt).length;
 
 /** What a player bar says about a seat. */
 export interface Seat {

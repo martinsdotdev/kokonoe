@@ -5,13 +5,12 @@
  */
 import type { Game, Player, Status } from '#lib/engine.js';
 import type { Opponent } from './launch.js';
-import { dealtMoves, note, seats, type Move, type Seat } from './moves.js';
-import { notation } from './notation.js';
+import { dealtMoves, playedMove, seats, written, type Move, type Seat } from './moves.js';
 import { openRecord } from './record.js';
 import type { End } from './result.js';
-import type { SavedGame } from './saved.js';
-import type { Variant } from './session.svelte.js';
-import { positionView, type BoardView } from './view.js';
+import type { Variant } from './rules.js';
+import { savedVariant, type SavedGame } from './saved.js';
+import { positionView, range, type BoardView } from './view.js';
 
 /** How long autoplay shows each ply. */
 const TICK_MS = 1000;
@@ -22,8 +21,6 @@ export interface Moment {
 	status: Status;
 	won: Record<Player, number>;
 }
-
-const range = (n: number) => [...Array(n).keys()];
 
 export class Replay {
 	readonly variant: Variant;
@@ -55,17 +52,17 @@ export class Replay {
 	}
 
 	private constructor(saved: SavedGame, game: Game) {
-		const { ruleset } = saved.record;
-		this.variant = { name: saved.variant.name, ruleset };
+		this.variant = savedVariant(saved);
 		this.opponent = saved.opponent;
 		this.seats = seats(saved.opponent);
 		const opening = game.opening();
 		const plies = [...opening, ...game.moves()];
 		this.moments = range(plies.length + 1).map((ply) => {
+			// Every ply up to the game's own has a State.
 			const state = game.stateAt(ply)!;
 			try {
 				return {
-					view: positionView(state, plies.slice(0, ply), Math.min(ply, opening.length)),
+					view: positionView(state, plies[ply - 1] ?? null, opening.slice(0, ply)),
 					status: state.status(),
 					won: { X: state.wonCount('X'), O: state.wonCount('O') }
 				};
@@ -74,17 +71,10 @@ export class Replay {
 			}
 		});
 		this.moves = [
-			...dealtMoves(opening, ruleset.depth),
-			...plies.slice(opening.length).map((cell, i): Move => {
+			...dealtMoves(opening, this.variant.ruleset.depth),
+			...plies.slice(opening.length).map((cell, i) => {
 				const n = opening.length + i + 1;
-				return {
-					n,
-					// X moves first and turns alternate, the deal included.
-					player: n % 2 ? 'X' : 'O',
-					notation: notation(cell, ruleset.depth),
-					dealt: false,
-					note: note(this.moments[n - 1].view, this.moments[n].view, cell)
-				};
+				return playedMove(n, cell, this.moments[n - 1].view, this.moments[n].view);
 			})
 		];
 		const last = this.moments[plies.length].status;
@@ -105,13 +95,17 @@ export class Replay {
 		return this.moments[this.ply];
 	}
 
+	/** Each player's count of won Boards at the end, which a count result quotes. */
+	get won(): Record<Player, number> {
+		return this.moments[this.last].won;
+	}
+
 	/** The ply shown, in words: "Start. X moves first.", "Move 14 of 55 · X 5·1·8 · Won board 5". */
 	get caption(): string {
 		const move = this.moves[this.ply - 1];
 		if (!move) return 'Start. X moves first.';
-		const played = move.dealt ? `(${move.notation})` : move.notation;
 		const what = move.dealt ? 'dealt' : move.note;
-		return [`Move ${move.n} of ${this.last}`, `${move.player} ${played}`, what]
+		return [`Move ${move.n} of ${this.last}`, `${move.player} ${written(move)}`, what]
 			.filter(Boolean)
 			.join(' · ');
 	}

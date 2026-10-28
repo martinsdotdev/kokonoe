@@ -1,5 +1,15 @@
 import type { Ruleset } from '#lib/engine.js';
 
+/** A Preset or Custom variant: the rules and what to call them. */
+export interface Variant {
+	name: string;
+	ruleset: Ruleset;
+}
+
+/** The game counts won Boards, so the screen shows the count: under FirstTo or MostWon. */
+export const counted = (rules: Ruleset): boolean =>
+	rules.objective !== 'Line' || rules.fallback === 'MostWon';
+
 /**
  * The Ruleset code (spec §4.2): `std` for Standard, otherwise the settings that differ from
  * Standard joined by `+` in the fixed order `d3`, `cont`, `both`, `first<N>`, `most`, `rand<K>`.

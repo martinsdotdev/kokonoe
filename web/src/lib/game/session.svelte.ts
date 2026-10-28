@@ -5,17 +5,15 @@ import {
 	type Cell,
 	type IllegalMove,
 	type Player,
-	type Ruleset,
 	type Status
 } from '#lib/engine.js';
 import { WorkerComputer, type Computer } from './computer.js';
 import type { Level, Opponent } from './launch.js';
-import { dealtMoves, note, seats, type Move, type Seat } from './moves.js';
-import { notation } from './notation.js';
+import { dealtMoves, playedCount, playedMove, seats, type Move, type Seat } from './moves.js';
 import { illegalMove, openRecord } from './record.js';
 import { resultText, type End } from './result.js';
-import { rulesetCode } from './rules.js';
-import { browserStore, type GameStore, type SavedGame } from './saved.js';
+import { rulesetCode, type Variant } from './rules.js';
+import { browserStore, savedVariant, type GameStore, type SavedGame } from './saved.js';
 import { boardView, type BoardView } from './view.js';
 
 /** How long an illegal tap flashes the Board it names. */
@@ -23,12 +21,6 @@ const FLASH_MS = 700;
 
 /** The computer never moves sooner than this after the player (spec §6). */
 const PACE_MS = 500;
-
-/** A Preset or Custom variant: the rules and what to call them. */
-export interface Variant {
-	name: string;
-	ruleset: Ruleset;
-}
 
 /** The Board an IllegalMove names, if it names one other than the Global board. */
 const named = (illegal: IllegalMove): Board | null => {
@@ -119,8 +111,7 @@ export class OfflineGame {
 	static resume(saved: SavedGame, options: Options = {}): OfflineGame {
 		// Only `open` checks the Record's rules version, so check with it before replaying.
 		openRecord(saved.record).free();
-		const variant = { name: saved.variant.name, ruleset: saved.record.ruleset };
-		return new OfflineGame(variant, saved.opponent, options, saved);
+		return new OfflineGame(savedVariant(saved), saved.opponent, options, saved);
 	}
 
 	/** A new game, or with `saved`, the one `resume` continues. */
@@ -144,7 +135,7 @@ export class OfflineGame {
 			for (const cell of saved.record.moves) {
 				if (this.#apply(cell)) continue;
 				this.dispose();
-				throw illegalMove(this.moves.filter((move) => !move.dealt).length);
+				throw illegalMove(playedCount(this.moves));
 			}
 			this.id = saved.id;
 			this.resigned = saved.resigned;
@@ -260,8 +251,7 @@ export class OfflineGame {
 
 	/** Plays `cell` for the side to move and lists it, or flashes the Board a refusal names. */
 	#apply(cell: Cell): boolean {
-		const player = this.toMove;
-		if (this.end || !player) return false;
+		if (this.end || !this.toMove) return false;
 		const before = this.view;
 		const result = this.#game.play(this.#game.ply(), cell);
 		if (typeof result === 'string') return false;
@@ -272,16 +262,7 @@ export class OfflineGame {
 		}
 		if (!('Now' in result)) return false;
 		this.#refresh();
-		this.moves = [
-			...this.moves,
-			{
-				n: this.moves.length + 1,
-				player,
-				notation: notation(cell, this.variant.ruleset.depth),
-				dealt: false,
-				note: note(before, this.view, cell)
-			}
-		];
+		this.moves = [...this.moves, playedMove(this.moves.length + 1, cell, before, this.view)];
 		return true;
 	}
 

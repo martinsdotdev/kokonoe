@@ -128,9 +128,11 @@ test('Recent games lists finished and unfinished games, and opens finished ones 
 	await finished.click();
 	await expect(page).toHaveURL(/\/replay\?game=[\w-]+$/);
 	await expect(page.getByRole('heading', { name: 'X wins on a line' })).toBeVisible();
-	await expect(marked(page)).toHaveCount(0);
+	// A replay's Cells are images to read, not buttons.
+	const shown = page.getByRole('img', { name: /^Cell \S+, [XO]$/ });
+	await expect(shown).toHaveCount(0);
 	await page.getByRole('button', { name: 'Last move' }).click();
-	await expect(marked(page)).toHaveCount(17);
+	await expect(shown).toHaveCount(17);
 });
 
 test('a saved game the rules refuse says why it can’t be resumed', async ({ page }) => {

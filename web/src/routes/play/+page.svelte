@@ -11,27 +11,17 @@
 	import { loadEngine, parseRulesetCode, type Ruleset } from '#lib/engine.js';
 	import GameScreen from '#lib/game/GameScreen.svelte';
 	import { gameQuery, playQuery, readLaunch } from '#lib/game/launch.js';
-	import { rulesetCode } from '#lib/game/rules.js';
-	import { loadGame } from '#lib/game/saved.js';
+	import { rulesetCode, type Variant } from '#lib/game/rules.js';
+	import PageProblem from '#lib/game/PageProblem.svelte';
+	import { ENGINE, explain, failed, loadSaved, Problem } from '#lib/game/problem.js';
 	import { UnplayableGame } from '#lib/game/record.js';
-	import { OfflineGame, type Variant } from '#lib/game/session.svelte.js';
+	import { OfflineGame } from '#lib/game/session.svelte.js';
 	import { presetByCode } from '#lib/game/shelf.js';
 
 	let session: OfflineGame | null = $state(null);
 	let problem: string | null = $state(null);
 	/** The page was left, perhaps before the engine loaded. */
 	let left = false;
-
-	/** A failure the page explains to the player, rather than only logging it. */
-	class Problem extends Error {}
-
-	/** Throws `message` for the page to show, with the cause logged where a developer can see it. */
-	const failed = (message: string) => (error: unknown) => {
-		console.error(message, error);
-		throw new Problem(message);
-	};
-
-	const ENGINE = 'The engine didn’t load. Reload the page to try again.';
 
 	/**
 	 * The game the address names: a saved one by its id, or a new one by its launch query. Null
@@ -40,11 +30,7 @@
 	const open = async (): Promise<OfflineGame | null> => {
 		const id = page.url.searchParams.get('game');
 		if (id !== null) {
-			const [saved] = await Promise.all([
-				loadGame(id).catch(failed('Saved games can’t be read in this browser.')),
-				loadEngine().catch(failed(ENGINE))
-			]);
-			if (!saved) throw new Problem('This game isn’t saved on this device.');
+			const saved = await loadSaved(id);
 			try {
 				return left ? null : OfflineGame.resume(saved);
 			} catch (error) {
@@ -75,13 +61,7 @@
 
 	open().then(
 		(game) => (session = game),
-		(error: unknown) => {
-			if (!(error instanceof Problem)) console.error('The game couldn’t start.', error);
-			problem =
-				error instanceof Problem
-					? error.message
-					: 'Something went wrong. Reload the page to try again.';
-		}
+		(error: unknown) => (problem = explain(error, 'The game couldn’t start.'))
 	);
 
 	// The address follows the game: its id once saved, or the new game a restart begins.
@@ -102,13 +82,5 @@
 {#if session}
 	<GameScreen {session} />
 {:else}
-	<main class="mx-auto flex min-h-svh max-w-xl flex-col justify-center gap-3 px-4">
-		{#if problem}
-			<h1 class="font-display text-3xl font-semibold">This game can’t start</h1>
-			<p class="text-muted-foreground">{problem}</p>
-			<a href={resolve('/new-game')} class="font-semibold text-foreground">Choose a new game</a>
-		{:else}
-			<p class="text-muted-foreground">Loading the engine…</p>
-		{/if}
-	</main>
+	<PageProblem {problem} title="This game can’t start" to="/new-game" link="Choose a new game" />
 {/if}

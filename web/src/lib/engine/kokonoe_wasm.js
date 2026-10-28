@@ -125,6 +125,19 @@ export class Game {
         return ret;
     }
     /**
+     * The State after `at` plies, the dealt opening included, where 0 is the empty board: a
+     * replay's position at any ply. `undefined` past the last ply.
+     * @param {Ply} at
+     * @returns {State | undefined}
+     */
+    stateAt(at) {
+        const ret = wasm.game_stateAt(this.__wbg_ptr, at);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] === 0 ? undefined : State.__wrap(ret[0]);
+    }
+    /**
      * @returns {Status}
      */
     status() {
@@ -154,6 +167,84 @@ export class Game {
     }
 }
 if (Symbol.dispose) Game.prototype[Symbol.dispose] = Game.prototype.free;
+
+/**
+ * The game at one ply, to read and not to play on: what [`Game::state_at`] returns.
+ */
+export class State {
+    static __wrap(ptr) {
+        const obj = Object.create(State.prototype);
+        obj.__wbg_ptr = ptr;
+        StateFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        StateFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_state_free(ptr, 0);
+    }
+    /**
+     * @param {Board} board
+     * @returns {BoardStatus}
+     */
+    boardStatus(board) {
+        const ret = wasm.state_boardStatus(this.__wbg_ptr, board);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @param {Cell} cell
+     * @returns {Player | undefined}
+     */
+    mark(cell) {
+        const ret = wasm.state_mark(this.__wbg_ptr, cell);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @returns {Ply}
+     */
+    ply() {
+        const ret = wasm.state_ply(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Ruleset}
+     */
+    ruleset() {
+        const ret = wasm.state_ruleset(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Status}
+     */
+    status() {
+        const ret = wasm.state_status(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * How many children of the Global board count as won for `player`, as a Game counts them.
+     * @param {Player} player
+     * @returns {number}
+     */
+    wonCount(player) {
+        const ret = wasm.state_wonCount(this.__wbg_ptr, player);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0];
+    }
+}
+if (Symbol.dispose) State.prototype[Symbol.dispose] = State.prototype.free;
 
 /**
  * A Cell in Notation: `5·5` at depth 2, `5·1·8` at depth 3.
@@ -354,6 +445,9 @@ function __wbg_get_imports() {
 const GameFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_game_free(ptr, 1));
+const StateFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_state_free(ptr, 1));
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();

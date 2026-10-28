@@ -139,6 +139,11 @@ export class Game {
     ply(): Ply;
     record(): Record;
     ruleset(): Ruleset;
+    /**
+     * The State after `at` plies, the dealt opening included, where 0 is the empty board: a
+     * replay's position at any ply. `undefined` past the last ply.
+     */
+    stateAt(at: Ply): State | undefined;
     status(): Status;
     /**
      * Takes back the last move, never the dealt opening, and returns it.
@@ -147,6 +152,24 @@ export class Game {
     /**
      * How many children of the Global board count as won for `player`: the ones it won, plus
      * the drawn ones when drawn Boards count for both. FirstTo and MostWon compare this.
+     */
+    wonCount(player: Player): number;
+}
+
+/**
+ * The game at one ply, to read and not to play on: what [`Game::state_at`] returns.
+ */
+export class State {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    boardStatus(board: Board): BoardStatus;
+    mark(cell: Cell): Player | undefined;
+    ply(): Ply;
+    ruleset(): Ruleset;
+    status(): Status;
+    /**
+     * How many children of the Global board count as won for `player`, as a Game counts them.
      */
     wonCount(player: Player): number;
 }
@@ -185,6 +208,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_game_free: (a: number, b: number) => void;
+    readonly __wbg_state_free: (a: number, b: number) => void;
     readonly game_boardStatus: (a: number, b: any) => [number, number, number];
     readonly game_mark: (a: number, b: any) => [number, number, number];
     readonly game_moves: (a: number) => [number, number];
@@ -195,6 +219,7 @@ export interface InitOutput {
     readonly game_ply: (a: number) => any;
     readonly game_record: (a: number) => any;
     readonly game_ruleset: (a: number) => any;
+    readonly game_stateAt: (a: number, b: any) => [number, number, number];
     readonly game_status: (a: number) => any;
     readonly game_undo: (a: number) => any;
     readonly game_wonCount: (a: number, b: any) => [number, number, number];
@@ -202,6 +227,12 @@ export interface InitOutput {
     readonly parseRulesetCode: (a: number, b: number) => [number, number, number];
     readonly presets: () => [number, number];
     readonly rulesetCode: (a: any) => [number, number, number, number];
+    readonly state_boardStatus: (a: number, b: any) => [number, number, number];
+    readonly state_mark: (a: number, b: any) => [number, number, number];
+    readonly state_ply: (a: number) => any;
+    readonly state_ruleset: (a: number) => any;
+    readonly state_status: (a: number) => any;
+    readonly state_wonCount: (a: number, b: any) => [number, number, number];
     readonly think: (a: any, b: number, c: any) => [number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

@@ -64,7 +64,7 @@ impl Game {
     /// is `"Already"`, so a resend is harmless. Any other ply but the next is `OutOfOrder`.
     pub fn play(&mut self, at: Ts<Ply>, cell: Ts<Cell>) -> Result<Ts<PlayResult>, JsError> {
         let at = js::parse_ply(&at.js_value())?;
-        let cell = js::parse_cell(&cell.js_value())?.at_depth(self.depth())?;
+        let cell = js::parse_cell(&cell.js_value())?.at_depth(self.0.state().ruleset().depth)?;
         let result = match at.in_range() {
             Some(ply) => PlayResult::from(self.0.play(ply, cell)),
             // Past any ply a game reaches, so never the next one.
@@ -82,37 +82,42 @@ impl Game {
     }
 
     pub fn status(&self) -> Ts<Status> {
-        typed(Status::from(self.0.state().status()).to_js())
+        read::status(self.0.state())
     }
 
     pub fn ply(&self) -> Ts<Ply> {
-        typed(Ply::from(self.0.state().ply()).to_js())
+        read::ply(self.0.state())
     }
 
     pub fn ruleset(&self) -> Ts<Ruleset> {
-        typed(Ruleset::from(self.0.state().ruleset()).to_js())
+        read::ruleset(self.0.state())
     }
 
     pub fn mark(&self, cell: Ts<Cell>) -> Result<Option<Ts<Player>>, JsError> {
-        let cell = js::parse_cell(&cell.js_value())?.at_depth(self.depth())?;
-        let mark = self.0.state().mark(cell);
-        Ok(mark.map(|player| typed(Player::from(player).to_js())))
+        read::mark(self.0.state(), cell)
     }
 
     #[wasm_bindgen(js_name = boardStatus)]
     pub fn board_status(&self, board: Ts<Board>) -> Result<Ts<BoardStatus>, JsError> {
-        let board = js::parse_board(&board.js_value())?.at_depth(self.depth())?;
-        Ok(typed(
-            BoardStatus::from(self.0.state().board_status(board)).to_js(),
-        ))
+        read::board_status(self.0.state(), board)
     }
 
     /// How many children of the Global board count as won for `player`: the ones it won, plus
     /// the drawn ones when drawn Boards count for both. FirstTo and MostWon compare this.
     #[wasm_bindgen(js_name = wonCount)]
     pub fn won_count(&self, player: Ts<Player>) -> Result<u8, JsError> {
-        let player = js::parse_player(&player.js_value())?;
-        Ok(self.0.state().won_count(player.into()))
+        read::won_count(self.0.state(), player)
+    }
+
+    /// The State after `at` plies, the dealt opening included, where 0 is the empty board: a
+    /// replay's position at any ply. `undefined` past the last ply.
+    #[wasm_bindgen(js_name = stateAt)]
+    pub fn state_at(&self, at: Ts<Ply>) -> Result<Option<State>, JsError> {
+        let at = js::parse_ply(&at.js_value())?;
+        Ok(at
+            .in_range()
+            .and_then(|ply| self.0.state_at(ply))
+            .map(State))
     }
 
     pub fn record(&self) -> Ts<Record> {
@@ -130,9 +135,74 @@ impl Game {
     }
 }
 
-impl Game {
-    fn depth(&self) -> engine::Depth {
-        self.0.state().ruleset().depth
+/// The game at one ply, to read and not to play on: what [`Game::state_at`] returns.
+#[wasm_bindgen]
+pub struct State(engine::State);
+
+#[wasm_bindgen]
+impl State {
+    pub fn status(&self) -> Ts<Status> {
+        read::status(&self.0)
+    }
+
+    pub fn ply(&self) -> Ts<Ply> {
+        read::ply(&self.0)
+    }
+
+    pub fn ruleset(&self) -> Ts<Ruleset> {
+        read::ruleset(&self.0)
+    }
+
+    pub fn mark(&self, cell: Ts<Cell>) -> Result<Option<Ts<Player>>, JsError> {
+        read::mark(&self.0, cell)
+    }
+
+    #[wasm_bindgen(js_name = boardStatus)]
+    pub fn board_status(&self, board: Ts<Board>) -> Result<Ts<BoardStatus>, JsError> {
+        read::board_status(&self.0, board)
+    }
+
+    /// How many children of the Global board count as won for `player`, as a Game counts them.
+    #[wasm_bindgen(js_name = wonCount)]
+    pub fn won_count(&self, player: Ts<Player>) -> Result<u8, JsError> {
+        read::won_count(&self.0, player)
+    }
+}
+
+/// What a Game and a State read alike, from one engine State.
+mod read {
+    use super::*;
+
+    pub fn status(state: &engine::State) -> Ts<Status> {
+        typed(Status::from(state.status()).to_js())
+    }
+
+    pub fn ply(state: &engine::State) -> Ts<Ply> {
+        typed(Ply::from(state.ply()).to_js())
+    }
+
+    pub fn ruleset(state: &engine::State) -> Ts<Ruleset> {
+        typed(Ruleset::from(state.ruleset()).to_js())
+    }
+
+    pub fn mark(state: &engine::State, cell: Ts<Cell>) -> Result<Option<Ts<Player>>, JsError> {
+        let cell = js::parse_cell(&cell.js_value())?.at_depth(state.ruleset().depth)?;
+        Ok(state
+            .mark(cell)
+            .map(|player| typed(Player::from(player).to_js())))
+    }
+
+    pub fn board_status(
+        state: &engine::State,
+        board: Ts<Board>,
+    ) -> Result<Ts<BoardStatus>, JsError> {
+        let board = js::parse_board(&board.js_value())?.at_depth(state.ruleset().depth)?;
+        Ok(typed(BoardStatus::from(state.board_status(board)).to_js()))
+    }
+
+    pub fn won_count(state: &engine::State, player: Ts<Player>) -> Result<u8, JsError> {
+        let player = js::parse_player(&player.js_value())?;
+        Ok(state.won_count(player.into()))
     }
 }
 

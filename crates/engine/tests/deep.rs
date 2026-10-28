@@ -5,8 +5,8 @@
 mod common;
 
 use kokonoe_engine::{
-    Board, BoardStatus, Cell, Continuation, Depth, Game, Outcome, Player, Preset, Ruleset, Seed,
-    Sent, Status,
+    Board, BoardStatus, Cell, Continuation, Depth, Game, Opening, Outcome, Player, Ply, Preset,
+    RandomPlies, Ruleset, Seed, Sent, Status,
 };
 
 use common::{Xorshift, advance, cells, game};
@@ -211,4 +211,39 @@ fn a_short_game_wins_on_a_line_of_middle_boards() {
         (5, 2),
         "Free moves inside a middle Board, and anywhere"
     );
+}
+
+/// The Seed whose two-ply Deep deal, X on 702 then O on 028 (8·1·3 and 1·3·9 in Notation), Sends
+/// X to Local board 2·8, where `LINE_OF_MIDDLE_BOARDS` starts, and leaves the game to end as
+/// before. Found by searching Seeds
+/// from 0; `web/src/lib/game/games.fixtures.ts` mirrors it as `DEALT`, which the Replay viewer's
+/// tests replay.
+const DEALT_SEED: Seed = Seed(22);
+
+#[test]
+fn a_short_game_after_a_dealt_opening_replays_ply_by_ply() {
+    let rules = Ruleset {
+        opening: Opening::Random(RandomPlies::try_from(2).unwrap()),
+        ..DEEP
+    };
+    let mut game = Game::new(rules, DEALT_SEED);
+    let opening: [Cell; 2] = cells("702 028").try_into().unwrap();
+    assert_eq!(game.opening(), opening);
+    for cell in cells(LINE_OF_MIDDLE_BOARDS) {
+        advance(&mut game, cell);
+    }
+    assert_eq!(
+        game.state().status(),
+        Status::Over(Outcome::Objective(Player::X))
+    );
+
+    let at = |ply: u16| game.state_at(Ply::new(ply)).unwrap();
+    let marks = |ply: u16| opening.map(|cell| at(ply).mark(cell));
+    assert_eq!(marks(0), [None, None], "the empty board");
+    assert_eq!(marks(1), [Some(Player::X), None]);
+    assert_eq!(marks(2), [Some(Player::X), Some(Player::O)]);
+    let end = game.state().ply();
+    assert_eq!(end, Ply::new(55));
+    assert!(game.state_at(end) == Some(*game.state()));
+    assert!(game.state_at(Ply::new(56)).is_none());
 }

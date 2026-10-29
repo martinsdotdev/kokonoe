@@ -128,12 +128,12 @@ fn the_ladder_is_spec_section_6() {
     assert_eq!(
         ladder,
         [
-            (30, 1_000, 3_000, sample(2.0), false, 1),
-            (100, 1_000, 3_000, sample(2.0), false, 1),
-            (300, 1_000, 3_000, sample(1.0), true, 1),
-            (1_000, 1_000, 3_000, sample(1.0), true, 1),
-            (3_000, 2_000, 6_000, sample(0.5), true, 4),
-            (10_000, 2_000, 6_000, sample(0.5), true, 4),
+            (30, 1_000, 3_000, Choice::MostVisited, false, 1),
+            (100, 1_000, 3_000, sample(0.15), false, 1),
+            (300, 1_000, 3_000, sample(0.25), true, 1),
+            (1_000, 1_000, 3_000, sample(0.25), true, 1),
+            (3_000, 2_000, 6_000, sample(0.1), true, 4),
+            (10_000, 2_000, 6_000, sample(0.1), true, 4),
             (30_000, 3_000, 9_000, Choice::MostVisited, true, 4),
             (100_000, 3_000, 9_000, Choice::MostVisited, true, 4),
         ]

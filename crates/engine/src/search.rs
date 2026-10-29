@@ -141,18 +141,21 @@ impl Level {
                 parallel,
             }
         }
-        const LOOSE: Choice = Choice::Sample { tau: 2.0 };
-        const FAIR: Choice = Choice::Sample { tau: 1.0 };
-        const TIGHT: Choice = Choice::Sample { tau: 0.5 };
+        const fn tau(tau: f32) -> Choice {
+            Choice::Sample { tau }
+        }
+        const MOST: Choice = Choice::MostVisited;
+        // Tuned by self-play (LADDER.md) so each Level beats the one below 65–75%. Sampling τ
+        // moves strength more than iterations do, so every Level samples tightly.
         match self.0 {
-            1 => rung(30, [1_000, 3_000], LOOSE, false, false),
-            2 => rung(100, [1_000, 3_000], LOOSE, false, false),
-            3 => rung(300, [1_000, 3_000], FAIR, true, false),
-            4 => rung(1_000, [1_000, 3_000], FAIR, true, false),
-            5 => rung(3_000, [2_000, 6_000], TIGHT, true, true),
-            6 => rung(10_000, [2_000, 6_000], TIGHT, true, true),
-            7 => rung(30_000, [3_000, 9_000], Choice::MostVisited, true, true),
-            _ => rung(100_000, [3_000, 9_000], Choice::MostVisited, true, true), // 8
+            1 => rung(30, [1_000, 3_000], MOST, false, false),
+            2 => rung(100, [1_000, 3_000], tau(0.15), false, false),
+            3 => rung(300, [1_000, 3_000], tau(0.25), true, false),
+            4 => rung(1_000, [1_000, 3_000], tau(0.25), true, false),
+            5 => rung(3_000, [2_000, 6_000], tau(0.1), true, true),
+            6 => rung(10_000, [2_000, 6_000], tau(0.1), true, true),
+            7 => rung(30_000, [3_000, 9_000], MOST, true, true),
+            _ => rung(100_000, [3_000, 9_000], MOST, true, true), // 8
         }
     }
 }
@@ -573,10 +576,10 @@ mod tests {
     #[test]
     fn sampling_never_picks_an_unvisited_move_and_follows_the_visits() {
         let searched = visits(&[(10, 0), (20, 1), (30, 9)]);
+        let fair = Choice::Sample { tau: 1.0 };
         let mut picks = [0u32; 81];
         for seed in 0..10_000 {
-            // Level 3 samples at τ 1.
-            let cell = choose(level(3), &searched, seed).unwrap();
+            let cell = fair.pick(&searched, seed).unwrap();
             picks[usize::from(cell.index())] += 1;
         }
         assert_eq!(picks[10], 0);

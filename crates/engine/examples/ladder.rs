@@ -15,8 +15,13 @@
 //! A pair plays in batches, the higher Level taking X in even games and O in odd ones, a draw
 //! scoring half. After each batch the score's 95% Wilson interval decides: wholly inside 65–75%
 //! is in band, wholly below too close, wholly above too far apart, and otherwise another batch,
-//! up to `--max` games. `--write` records the Preset's results, and the ladder they were played
-//! on, in `crates/engine/LADDER.md`; it refuses `--set`, since the file must match the code.
+//! up to `--max` games. A pair still undecided there is named by where its score sits ("in band,
+//! unsettled"). Checking after every batch makes the 95% approximate.
+//!
+//! `--set` tries another rung, a τ, a budget or most visited, without changing the code.
+//! `--write` records the Preset's results, and the ladder they were played on, in
+//! `crates/engine/LADDER.md`; it refuses `--set` and anything but the default `--pairs`, `--max`
+//! and `--batch`, so the file matches the code and the command it names.
 
 use std::fs;
 use std::sync::Mutex;
@@ -144,6 +149,19 @@ impl Tally {
         (centre - half, centre + half)
     }
 
+    /// Where the score itself sits, for a pair whose interval still crosses a band edge at the
+    /// limit.
+    fn leaning(&self) -> &'static str {
+        let score = self.score();
+        if score < BAND.0 {
+            "too close, unsettled"
+        } else if score > BAND.1 {
+            "too far apart, unsettled"
+        } else {
+            "in band, unsettled"
+        }
+    }
+
     fn verdict(&self) -> Option<&'static str> {
         let (low, high) = self.interval();
         if low >= BAND.0 && high <= BAND.1 {
@@ -229,6 +247,10 @@ fn options() -> Options {
     assert!(
         !options.write || options.pairs == (Level::MIN, Level::MAX),
         "--write records every pair, so it plays Levels 1-8"
+    );
+    assert!(
+        !options.write || (options.max, options.batch) == (400, 50),
+        "--write records the command it was played by, so it keeps --max 400 and --batch 50"
     );
     options
 }
@@ -359,7 +381,7 @@ fn main() {
         let start = Instant::now();
         let tally = pair(&options, higher, lower);
         let (low, high) = tally.interval();
-        let verdict = tally.verdict().unwrap_or("unclear at the limit");
+        let verdict = tally.verdict().unwrap_or_else(|| tally.leaning());
         let plies = tally.plies as f64 / f64::from(tally.games());
         let row = format!(
             "| {upper} over {} | {} | {} | {} | {} | {} | {}–{} | {verdict} | {plies:.0} |\n",

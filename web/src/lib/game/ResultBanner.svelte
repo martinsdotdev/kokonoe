@@ -5,7 +5,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import type { Player } from '#lib/engine.js';
-	import ExportButtons from './ExportButtons.svelte';
 	import type { GameFile } from './gamefile.js';
 	import { replayQuery } from './launch.js';
 
@@ -72,6 +71,9 @@
 		</div>
 	{/if}
 	{#if exported}
-		<ExportButtons file={exported} />
+		<!-- Loaded once a game ends, so the game screen doesn't load it to start. -->
+		{#await import('./ExportButtons.svelte') then { default: ExportButtons }}
+			<ExportButtons file={exported} />
+		{/await}
 	{/if}
 </section>

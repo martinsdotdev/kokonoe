@@ -1,10 +1,10 @@
 /**
  * Game files (spec §4.3 and §4.4): the `.utt` text, PGN-style tags and then the moves in
- * Notation, and the Record as JSON. Both are written and read here without the engine; the
- * engine checks what's read when it opens it (`openFile` in record.ts).
+ * Notation, and the Record as JSON, written here without the engine. `fileimport.ts` reads them
+ * back, apart, so the game screen loads no reader.
  */
 import type { Cell, Player, Record as GameRecord, Ruleset } from '#lib/engine.js';
-import { notation, parseNotation } from './notation.js';
+import { notation } from './notation.js';
 import { winner, type End } from './result.js';
 import { rulesetCode } from './rules.js';
 import { presetByCode } from './shelf.js';
@@ -23,16 +23,6 @@ export interface GameFile {
 	/** How it ended, or null while it goes on. */
 	end: End | null;
 }
-
-/** The day `time` falls on here, as a file dates a game: `2026-10-28`. */
-export const dayOf = (time: number): string => {
-	const date = new Date(time);
-	const two = (n: number) => String(n).padStart(2, '0');
-	return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
-};
-
-/** A file Kokonoe can't read, with what's wrong in words for the player. */
-export class FileProblem extends Error {}
 
 /** The tags of a `.utt` file, in the order it writes them. */
 export const TAGS = [
@@ -130,110 +120,4 @@ export const fileName = (game: GameFile, extension: 'utt' | 'json'): string => {
 		.replace(/[^\p{L}\p{N}]+/gu, '-')
 		.replace(/^-|-$/g, '');
 	return `${['kokonoe', game.date, slug || 'game'].filter(Boolean).join('-')}.${extension}`;
-};
-
-/** What a file says, before the engine opens it. */
-export interface ParsedFile {
-	record: GameRecord;
-	/** The variant's name as the file gives it, if it does. */
-	name: string | null;
-	/** Every tag a `.utt` file has; none for JSON. */
-	tags: Map<string, string>;
-	/** The plies the file writes as dealt, to check against the Seed's deal. */
-	dealt: Cell[];
-}
-
-const RECORD_KEYS = ['rules_version', 'ruleset', 'name', 'seed', 'moves'];
-
-const parseJson = (text: string): ParsedFile => {
-	let data: unknown;
-	try {
-		data = JSON.parse(text);
-	} catch {
-		throw new FileProblem('This file isn’t valid JSON.');
-	}
-	if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-		throw new FileProblem('This file holds no Record.');
-	}
-	const fields = data as { [key: string]: unknown };
-	const unknown = Object.keys(fields).find((key) => !RECORD_KEYS.includes(key));
-	if (unknown !== undefined) throw new FileProblem(`It has a field no Record has: “${unknown}”.`);
-	const missing = RECORD_KEYS.find((key) => key !== 'name' && !(key in fields));
-	if (missing !== undefined) throw new FileProblem(`Its Record has no “${missing}”.`);
-	const { rules_version, ruleset, name, seed, moves } = fields;
-	if (name !== undefined && typeof name !== 'string') {
-		throw new FileProblem('Its variant name isn’t text.');
-	}
-	// The engine checks every field's shape when it opens the Record.
-	const record = { rules_version, ruleset, seed, moves } as GameRecord;
-	return { record, name: name ?? null, tags: new Map(), dealt: [] };
-};
-
-/** A tag line, `[Name "value"]`, its value's quotes and backslashes escaped. */
-const TAG = /^\[(\w+)\s+"((?:[^"\\]|\\.)*)"\]$/;
-
-const RESULTS: readonly string[] = ['1-0', '0-1', '1/2-1/2', '*'];
-
-const parseUtt = (text: string, rulesetOf: (code: string) => Ruleset): ParsedFile => {
-	const lines = text.split(/\r?\n/).map((line) => line.trim());
-	const tags = new Map<string, string>();
-	let line = 0;
-	for (; line < lines.length; line++) {
-		if (lines[line] === '') continue;
-		const tag = TAG.exec(lines[line]);
-		if (!tag) break;
-		if (!tags.has(tag[1])) tags.set(tag[1], tag[2].replace(/\\(.)/g, '$1'));
-	}
-	const required = (name: string) => {
-		const value = tags.get(name);
-		if (value === undefined) throw new FileProblem(`This file names no ${name}.`);
-		return value;
-	};
-	const code = required('Ruleset');
-	let ruleset: Ruleset;
-	try {
-		ruleset = rulesetOf(code);
-	} catch (error) {
-		throw new FileProblem(
-			`Its Ruleset “${code}” isn’t one Kokonoe knows: ${(error as Error).message}.`
-		);
-	}
-	const seed = required('Seed');
-	const version = required('RulesVersion');
-	if (!/^\d+$/.test(version)) {
-		throw new FileProblem(`Its RulesVersion “${version}” isn’t a number.`);
-	}
-
-	const dealt: Cell[] = [];
-	const moves: Cell[] = [];
-	for (const token of lines.slice(line).join(' ').split(/\s+/)) {
-		// A move number says nothing the order doesn't. It stands alone, since `4.1` is a move.
-		if (token === '' || /^\d+\.$/.test(token) || RESULTS.includes(token)) continue;
-		const inner = /^\((.*)\)$/.exec(token)?.[1];
-		const cell = parseNotation(inner ?? token, ruleset.depth);
-		if (cell === null) throw new FileProblem(`“${token}” isn’t a move in Notation.`);
-		if (inner === undefined) {
-			moves.push(cell);
-		} else if (moves.length) {
-			throw new FileProblem(`The dealt move “${token}” comes after a move a player made.`);
-		} else {
-			dealt.push(cell);
-		}
-	}
-	const record = { rules_version: Number(version), ruleset, seed, moves };
-	return { record, name: tags.get('Variant') ?? null, tags, dealt };
-};
-
-/**
- * What a `.utt` or JSON file says, told apart by its first character: JSON opens with `{`.
- * `rulesetOf` reads a Ruleset code: the engine's `parseRulesetCode`. Throws a FileProblem.
- */
-export const parseFile = (text: string, rulesetOf: (code: string) => Ruleset): ParsedFile =>
-	text.trimStart().startsWith('{') ? parseJson(text) : parseUtt(text, rulesetOf);
-
-/** The name a file's game goes by: a Preset's own, else the file's, else "Custom variant". */
-export const variantName = (parsed: ParsedFile): string => {
-	const preset = presetByCode(rulesetCode(parsed.record.ruleset));
-	const name = parsed.name?.trim();
-	return preset?.name ?? (name && !name.includes('\n') ? name.slice(0, 40) : 'Custom variant');
 };

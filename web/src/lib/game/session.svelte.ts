@@ -9,7 +9,8 @@ import {
 } from '#lib/engine.js';
 import { WorkerComputer, type Computer } from './computer.js';
 import type { Level, Opponent } from './launch.js';
-import { dayOf, type GameFile } from './gamefile.js';
+import type { GameFile } from './gamefile.js';
+import { dayOf } from './listing.js';
 import {
 	dealtMoves,
 	playedCount,

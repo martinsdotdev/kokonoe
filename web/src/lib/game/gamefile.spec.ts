@@ -1,19 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { Ruleset } from '#lib/engine.js';
 import { DEALT, LINE_OF_MIDDLE_BOARDS, TOP_ROW, cells } from './games.fixtures.js';
+import { FileProblem, parseFile, variantName } from './fileimport.js';
 import {
-	FileProblem,
 	TAGS,
-	dayOf,
 	fileName,
-	parseFile,
 	result,
 	termination,
-	variantName,
 	writeJson,
 	writeUtt,
 	type GameFile
 } from './gamefile.js';
+import { dayOf } from './listing.js';
 import { SHELF } from './shelf.js';
 
 const STANDARD = SHELF[0].ruleset;

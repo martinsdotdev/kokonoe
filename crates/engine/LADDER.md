@@ -10,18 +10,28 @@ Each of the computer's 8 Levels should beat the one below it 65–75% of the tim
 
 | Level | Iterations | Choice | Tactics | Workers |
 | --: | --: | :-- | :-- | :-- |
-| 1 | 30 | τ 2.0 | no | 1 |
-| 2 | 100 | τ 2.0 | no | 1 |
-| 3 | 300 | τ 1.0 | yes | 1 |
-| 4 | 1,000 | τ 1.0 | yes | 1 |
-| 5 | 3,000 | τ 0.5 | yes | up to 4 |
-| 6 | 10,000 | τ 0.5 | yes | up to 4 |
+| 1 | 30 | most visited | no | 1 |
+| 2 | 100 | τ 0.15 | no | 1 |
+| 3 | 300 | τ 0.25 | yes | 1 |
+| 4 | 1,000 | τ 0.25 | yes | 1 |
+| 5 | 3,000 | τ 0.1 | yes | up to 4 |
+| 6 | 10,000 | τ 0.1 | yes | up to 4 |
 | 7 | 30,000 | most visited | yes | up to 4 |
 | 8 | 100,000 | most visited | yes | up to 4 |
 
 ## Standard
 
-Not played yet.
+Played by `cargo run --release --example ladder -- --preset std --pairs 1-8 --write`.
+
+| Pair | Games | Won | Drawn | Lost | Score | 95% interval | Verdict | Plies a game |
+| :-- | --: | --: | --: | --: | --: | :-- | :-- | --: |
+| 2 over 1 | 400 | 264 | 45 | 91 | 71.6% | 67.0%–75.8% | unclear at the limit | 52 |
+| 3 over 2 | 400 | 249 | 79 | 72 | 72.1% | 67.5%–76.3% | unclear at the limit | 52 |
+| 4 over 3 | 400 | 253 | 94 | 53 | 75.0% | 70.5%–79.0% | unclear at the limit | 53 |
+| 5 over 4 | 400 | 245 | 95 | 60 | 73.1% | 68.6%–77.2% | unclear at the limit | 51 |
+| 6 over 5 | 400 | 244 | 94 | 62 | 72.8% | 68.2%–76.9% | unclear at the limit | 50 |
+| 7 over 6 | 400 | 253 | 85 | 62 | 73.9% | 69.4%–77.9% | unclear at the limit | 49 |
+| 8 over 7 | 400 | 225 | 104 | 71 | 69.2% | 64.6%–73.6% | unclear at the limit | 49 |
 
 ## Deep
 

@@ -1,12 +1,13 @@
 //! The computer opponent (spec §6): its ladder, games at every Level finishing, the time cap,
-//! and, from Level 3, never missing an immediate win or handing the opponent one.
+//! the root-parallel split from Level 5, and, from Level 3, never missing an immediate win or
+//! handing the opponent one.
 
 mod common;
 mod model;
 
 use kokonoe_engine::{
-    Cell, Choice, Depth, Game, Level, ParseError, Player, Preset, Ruleset, Seed, State, Status,
-    think,
+    Cell, Choice, Depth, Game, Level, ParseError, Player, Preset, Ruleset, Searched, Seed, State,
+    Status, search, shares, think,
 };
 
 use common::{Xorshift, advance, cells, game};
@@ -118,6 +119,8 @@ fn the_ladder_is_spec_section_6() {
                 level.cap_ms(Depth::Three),
                 level.choice(),
                 level.tactics(),
+                // On an eight-core device.
+                level.workers(8),
             )
         })
         .collect();
@@ -125,14 +128,14 @@ fn the_ladder_is_spec_section_6() {
     assert_eq!(
         ladder,
         [
-            (30, 1_000, 3_000, sample(2.0), false),
-            (100, 1_000, 3_000, sample(2.0), false),
-            (300, 1_000, 3_000, sample(1.0), true),
-            (1_000, 1_000, 3_000, sample(1.0), true),
-            (3_000, 2_000, 6_000, sample(0.5), true),
-            (10_000, 2_000, 6_000, sample(0.5), true),
-            (30_000, 3_000, 9_000, Choice::MostVisited, true),
-            (100_000, 3_000, 9_000, Choice::MostVisited, true),
+            (30, 1_000, 3_000, sample(2.0), false, 1),
+            (100, 1_000, 3_000, sample(2.0), false, 1),
+            (300, 1_000, 3_000, sample(1.0), true, 1),
+            (1_000, 1_000, 3_000, sample(1.0), true, 1),
+            (3_000, 2_000, 6_000, sample(0.5), true, 4),
+            (10_000, 2_000, 6_000, sample(0.5), true, 4),
+            (30_000, 3_000, 9_000, Choice::MostVisited, true, 4),
+            (100_000, 3_000, 9_000, Choice::MostVisited, true, 4),
         ]
     );
     assert_eq!(Level::try_from(0), Err(ParseError::Level(0)));
@@ -178,6 +181,86 @@ fn the_time_cap_stops_the_search() {
     // A millisecond per read: the 3,000th reaches Level 8's 3 s cap at depth 2, long before
     // its 100,000 iterations would take 6,250 reads.
     assert_eq!(reads, 3_000);
+}
+
+#[test]
+fn from_level_five_the_budget_splits_into_even_shares_that_sum_to_it() {
+    for n in Level::MIN..=Level::MAX {
+        let level = level(n);
+        for cores in 0..=64 {
+            let shares = shares(level, cores);
+            let workers = if n < 5 {
+                1
+            } else {
+                cores.saturating_sub(1).clamp(1, 4)
+            };
+            assert_eq!(shares.len(), workers as usize, "Level {n}, {cores} cores");
+            assert_eq!(shares.iter().sum::<u32>(), level.iterations());
+            let (most, least) = (shares.iter().max(), shares.iter().min());
+            assert!(most.unwrap() - least.unwrap() <= 1, "{shares:?}");
+        }
+    }
+}
+
+/// The visits one search found, summed.
+fn visited(searched: Option<Searched>) -> u32 {
+    match searched {
+        Some(Searched::Visits(visits)) => visits.iter().map(|&(_, n)| n).sum(),
+        other => panic!("a search, not {other:?}"),
+    }
+}
+
+#[test]
+fn one_to_four_workers_search_the_same_total() {
+    let level = level(5);
+    for preset in [Preset::Standard, Preset::Deep] {
+        let game = Game::new(preset.ruleset(), Seed(0));
+        // Two to five cores give one to four Workers.
+        for cores in 2..=5 {
+            let total: u32 = shares(level, cores)
+                .into_iter()
+                .zip(0..)
+                .map(|(share, seed)| visited(search(game.state(), level, share, seed, frozen)))
+                .sum();
+            assert_eq!(total, level.iterations(), "{preset:?}, {cores} cores");
+        }
+    }
+}
+
+#[test]
+fn a_search_lists_every_root_move_in_cell_order() {
+    let game = Game::new(Preset::Standard.ruleset(), Seed(0));
+    let Some(Searched::Visits(visits)) = search(game.state(), level(1), 30, 0, frozen) else {
+        panic!("a search");
+    };
+    let listed: Vec<Cell> = visits.iter().map(|&(cell, _)| cell).collect();
+    assert_eq!(listed, legal(game.state()), "all 81, unvisited ones too");
+    assert_eq!(visits.iter().map(|&(_, n)| n).sum::<u32>(), 30);
+}
+
+#[test]
+fn a_search_that_has_one_move_to_play_says_so_at_once() {
+    // O's 8·3 Sends X to Board 3, where 3·9 wins it and the top row.
+    let game = game(
+        Preset::Standard.ruleset(),
+        &format!("{ONE_FROM_THE_TOP_ROW} 72"),
+    );
+    let mut reads = 0;
+    let searched = search(game.state(), level(8), 25_000, 0, || {
+        reads += 1;
+        0
+    });
+    assert_eq!(searched, Some(Searched::Forced(cells("28")[0])));
+    assert_eq!(reads, 0, "no search ran");
+    let over = game_over();
+    assert_eq!(search(over.state(), level(8), 25_000, 0, frozen), None);
+}
+
+fn game_over() -> Game {
+    game(
+        Preset::Standard.ruleset(),
+        "03 30 04 40 05 51 13 31 14 41 15 52 26 62 27 72 28",
+    )
 }
 
 /// X has won Boards 1 and 2 and holds 3·7 and 3·8, and O is Sent to Board 8.

@@ -4,6 +4,10 @@
 //!
 //! A [`Level`] is an iteration budget with a time cap. The engine has no clock, so [`think`] takes
 //! one: `Date.now` in the browser's Worker, `Instant` natively, a fake in tests.
+//!
+//! [`think`] is the whole move in one call. The browser splits it root-parallel from Level 5:
+//! each Worker [`search`]es one of the Level's [`shares`] from the same root, and the page passes
+//! every Worker's root visits to [`choose`], which sums them and picks once.
 
 use alloc::vec::Vec;
 use core::cmp::Reverse;
@@ -34,7 +38,12 @@ struct Rung {
     caps_ms: [u32; 2],
     choice: Choice,
     tactics: bool,
+    /// Whether its iterations split across Workers.
+    parallel: bool,
 }
+
+/// The most Workers a search splits across (spec §6).
+const MOST_WORKERS: u32 = 4;
 
 impl Level {
     pub const MIN: u8 = 1;
@@ -69,28 +78,51 @@ impl Level {
         self.rung().tactics
     }
 
+    /// How many Workers share its search on a device with `cores` logical cores: one below Level
+    /// 5, else min(4, cores − 1), and never none.
+    pub const fn workers(self, cores: u32) -> u32 {
+        if !self.rung().parallel {
+            return 1;
+        }
+        let spare = cores.saturating_sub(1);
+        if spare < 1 {
+            1
+        } else if spare > MOST_WORKERS {
+            MOST_WORKERS
+        } else {
+            spare
+        }
+    }
+
     /// Spec §6's table, the one place the self-play calibration tunes.
     const fn rung(self) -> Rung {
-        const fn rung(iterations: u32, caps_ms: [u32; 2], choice: Choice, tactics: bool) -> Rung {
+        const fn rung(
+            iterations: u32,
+            caps_ms: [u32; 2],
+            choice: Choice,
+            tactics: bool,
+            parallel: bool,
+        ) -> Rung {
             Rung {
                 iterations,
                 caps_ms,
                 choice,
                 tactics,
+                parallel,
             }
         }
         const LOOSE: Choice = Choice::Sample { tau: 2.0 };
         const FAIR: Choice = Choice::Sample { tau: 1.0 };
         const TIGHT: Choice = Choice::Sample { tau: 0.5 };
         match self.0 {
-            1 => rung(30, [1_000, 3_000], LOOSE, false),
-            2 => rung(100, [1_000, 3_000], LOOSE, false),
-            3 => rung(300, [1_000, 3_000], FAIR, true),
-            4 => rung(1_000, [1_000, 3_000], FAIR, true),
-            5 => rung(3_000, [2_000, 6_000], TIGHT, true),
-            6 => rung(10_000, [2_000, 6_000], TIGHT, true),
-            7 => rung(30_000, [3_000, 9_000], Choice::MostVisited, true),
-            _ => rung(100_000, [3_000, 9_000], Choice::MostVisited, true), // 8
+            1 => rung(30, [1_000, 3_000], LOOSE, false, false),
+            2 => rung(100, [1_000, 3_000], LOOSE, false, false),
+            3 => rung(300, [1_000, 3_000], FAIR, true, false),
+            4 => rung(1_000, [1_000, 3_000], FAIR, true, false),
+            5 => rung(3_000, [2_000, 6_000], TIGHT, true, true),
+            6 => rung(10_000, [2_000, 6_000], TIGHT, true, true),
+            7 => rung(30_000, [3_000, 9_000], Choice::MostVisited, true, true),
+            _ => rung(100_000, [3_000, 9_000], Choice::MostVisited, true, true), // 8
         }
     }
 }
@@ -119,7 +151,8 @@ const CLOCK_EVERY: u32 = 16;
 /// UCB1's exploration constant.
 const EXPLORATION: f32 = core::f32::consts::SQRT_2;
 
-/// The computer's move in `state` at `level`, or `None` when the game is over.
+/// The computer's move in `state` at `level`, or `None` when the game is over: the whole
+/// [`search`] in one call, then [`choose`].
 ///
 /// `seed` drives the search's generator, so a position, a Level and a seed give one move while
 /// the clock doesn't bind. `elapsed_ms` reads the milliseconds since the search began. It is read
@@ -128,32 +161,120 @@ pub fn think(
     state: &State,
     level: Level,
     seed: u64,
-    mut elapsed_ms: impl FnMut() -> u32,
+    elapsed_ms: impl FnMut() -> u32,
 ) -> Option<Cell> {
+    match search(state, level, level.iterations(), seed, elapsed_ms)? {
+        Searched::Forced(cell) => Some(cell),
+        // Its own seed, so the pick doesn't follow the search's last draws.
+        Searched::Visits(visits) => choose(level, &visits, Rng(seed).next()),
+    }
+}
+
+/// What one search from a root found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Searched {
+    /// The tactics leave one move to play: an immediate win, or the only move that doesn't hand
+    /// the opponent the game. Every search from the root finds the same one.
+    Forced(Cell),
+    /// The visits of every root move the search could play, in ascending Cell index, unvisited
+    /// ones included.
+    Visits(Vec<(Cell, u32)>),
+}
+
+/// Searches `iterations` from `state` at `level`: the Level's whole budget, or one Worker's share
+/// of it. It stops early at the Level's cap, which `elapsed_ms` reads every 16 iterations from
+/// whenever the caller started the clock. `None` when the game is over.
+pub fn search(
+    state: &State,
+    level: Level,
+    iterations: u32,
+    seed: u64,
+    mut elapsed_ms: impl FnMut() -> u32,
+) -> Option<Searched> {
     let Status::ToMove { player, moves, .. } = state.status() else {
         return None;
     };
     let moves = if level.tactics() {
         if let Some(win) = winning_move(state) {
-            return Some(win);
+            return Some(Searched::Forced(win));
         }
         safe_moves(state, moves)
     } else {
         moves
     };
     if moves.len() == 1 {
-        return Some(moves.nth(0));
+        return Some(Searched::Forced(moves.nth(0)));
     }
     let mut rng = Rng(seed);
-    let mut tree = Tree::new(*state, player, moves, level.iterations());
+    let mut tree = Tree::new(*state, player, moves, iterations);
     let cap = level.cap_ms(state.ruleset().depth);
-    for i in 0..level.iterations() {
+    for i in 0..iterations {
         if i.is_multiple_of(CLOCK_EVERY) && elapsed_ms() >= cap {
             break;
         }
         tree.iterate(&mut rng);
     }
-    Some(tree.choose(level.choice(), &mut rng))
+    Some(Searched::Visits(tree.visits()))
+}
+
+/// The iterations each Worker searches at `level` on a device with `cores` logical cores: as many
+/// shares as [`Level::workers`], as even as can be, summing to the Level's budget.
+pub fn shares(level: Level, cores: u32) -> Vec<u32> {
+    let workers = level.workers(cores);
+    let total = level.iterations();
+    let base = total.checked_div(workers).unwrap_or(total);
+    let left = total.checked_rem(workers).unwrap_or(0);
+    (0..workers)
+        .map(|i| base.saturating_add(u32::from(i < left)))
+        .collect()
+}
+
+/// The move `level` plays from the visits its searches found, every search's listed together in
+/// any order: summed by Cell, then the most visited, or sampled in proportion to visits^(1/τ).
+/// With no visits at all, a move picked uniformly. `None` only when no move is listed.
+pub fn choose(level: Level, visits: &[(Cell, u32)], seed: u64) -> Option<Cell> {
+    let visits = merge(visits);
+    let mut rng = Rng(seed);
+    if visits.iter().all(|&(_, n)| n == 0) {
+        return visits.get(rng.below(visits.len())).map(|&(cell, _)| cell);
+    }
+    match level.choice() {
+        Choice::MostVisited => visits
+            .iter()
+            .max_by_key(|&&(cell, n)| (n, Reverse(cell.index())))
+            .map(|&(cell, _)| cell),
+        Choice::Sample { tau } => {
+            let weight = |n: u32| libm::powf(n as f32, 1.0 / tau);
+            let total: f32 = visits.iter().map(|&(_, n)| weight(n)).sum();
+            let mut left = rng.unit() * total;
+            let mut last = None;
+            for &(cell, n) in visits.iter().filter(|&&(_, n)| n > 0) {
+                left -= weight(n);
+                last = Some(cell);
+                if left < 0.0 {
+                    break;
+                }
+            }
+            last // the last visited move when rounding leaves a little over
+        }
+    }
+}
+
+/// Visits summed by Cell, in ascending Cell index, so the pick doesn't depend on how many
+/// searches there were or the order they came back in.
+fn merge(visits: &[(Cell, u32)]) -> Vec<(Cell, u32)> {
+    let mut merged: Vec<(Cell, u32)> = Vec::new();
+    for &(cell, n) in visits {
+        match merged.binary_search_by_key(&cell.index(), |&(cell, _)| cell.index()) {
+            Ok(at) => {
+                if let Some(entry) = merged.get_mut(at) {
+                    entry.1 = entry.1.saturating_add(n);
+                }
+            }
+            Err(at) => merged.insert(at, (cell, n)),
+        }
+    }
+    merged
 }
 
 /// A move that wins the game at once for the side to move.
@@ -341,30 +462,16 @@ impl Tree {
         best.0
     }
 
-    /// The move to play, from the root's visit counts.
-    fn choose(&self, choice: Choice, rng: &mut Rng) -> Cell {
-        let picked = match choice {
-            Choice::MostVisited => self
-                .children(0)
-                .max_by_key(|(_, child)| (child.visits, Reverse(child.cell.index())))
-                .map(|(_, child)| child.cell),
-            Choice::Sample { tau } => {
-                let weight = |child: &Node| libm::powf(child.visits as f32, 1.0 / tau);
-                let total: f32 = self.children(0).map(|(_, child)| weight(child)).sum();
-                let mut left = rng.unit() * total;
-                let mut last = None;
-                for (_, child) in self.children(0) {
-                    left -= weight(child);
-                    last = Some(child.cell);
-                    if left < 0.0 {
-                        break;
-                    }
-                }
-                last // the last child when rounding leaves a little over
+    /// The visits of every root move, in ascending Cell index, unvisited ones included.
+    fn visits(&self) -> Vec<(Cell, u32)> {
+        let mut visits: Vec<(Cell, u32)> = self.moves.iter().map(|cell| (cell, 0)).collect();
+        for (_, child) in self.children(0) {
+            let found = visits.binary_search_by_key(&child.cell.index(), |&(cell, _)| cell.index());
+            if let Some(entry) = found.ok().and_then(|at| visits.get_mut(at)) {
+                entry.1 = child.visits;
             }
-        };
-        // No child when the clock ran out before the first iteration.
-        picked.unwrap_or_else(|| self.moves.nth(rng.below(self.moves.len())))
+        }
+        visits
     }
 }
 
@@ -416,18 +523,22 @@ mod tests {
     use crate::play::{Game, Seed};
     use crate::ruleset::Preset;
 
-    fn tree(visits: &[(u16, u32)]) -> Tree {
+    /// One search's visits, from `(the root move's position among the legal moves, visits)`.
+    fn visits(listed: &[(u16, u32)]) -> Vec<(Cell, u32)> {
         let game = Game::new(Preset::Standard.ruleset(), Seed(0));
-        let state = *game.state();
-        let Status::ToMove { moves, .. } = state.status() else {
+        let Status::ToMove { moves, .. } = game.state().status() else {
             unreachable!()
         };
-        let mut tree = Tree::new(state, Player::X, moves, 0);
-        for &(index, visits) in visits {
-            let child = tree.add(0, moves.nth(usize::from(index)));
-            tree.nodes[child as usize].visits = visits;
-        }
-        tree
+        let mut visits: Vec<_> = listed
+            .iter()
+            .map(|&(index, n)| (moves.nth(usize::from(index)), n))
+            .collect();
+        visits.sort_by_key(|&(cell, _)| cell.index());
+        visits
+    }
+
+    fn level(n: u8) -> Level {
+        Level::try_from(n).unwrap()
     }
 
     #[test]
@@ -444,18 +555,19 @@ mod tests {
 
     #[test]
     fn most_visited_takes_the_most_visits_and_the_lowest_cell_on_a_tie() {
-        let mut rng = Rng(1);
-        let tree = tree(&[(5, 3), (9, 7), (2, 7), (40, 1)]);
-        assert_eq!(tree.choose(Choice::MostVisited, &mut rng).index(), 2);
+        let searched = visits(&[(5, 3), (9, 7), (2, 7), (40, 1)]);
+        // Level 7 plays the most visited.
+        assert_eq!(choose(level(7), &searched, 1).unwrap().index(), 2);
     }
 
     #[test]
     fn sampling_never_picks_an_unvisited_move_and_follows_the_visits() {
-        let mut rng = Rng(2);
-        let tree = tree(&[(10, 0), (20, 1), (30, 9)]);
+        let searched = visits(&[(10, 0), (20, 1), (30, 9)]);
         let mut picks = [0u32; 81];
-        for _ in 0..10_000 {
-            picks[usize::from(tree.choose(Choice::Sample { tau: 1.0 }, &mut rng).index())] += 1;
+        for seed in 0..10_000 {
+            // Level 3 samples at τ 1.
+            let cell = choose(level(3), &searched, seed).unwrap();
+            picks[usize::from(cell.index())] += 1;
         }
         assert_eq!(picks[10], 0);
         // Visits 1 and 9 at τ 1 give 10% and 90%.
@@ -464,10 +576,25 @@ mod tests {
     }
 
     #[test]
-    fn with_nothing_searched_it_still_picks_a_root_move() {
-        let mut rng = Rng(3);
-        let tree = tree(&[]);
-        let cell = tree.choose(Choice::MostVisited, &mut rng);
-        assert!(tree.moves.contains(cell));
+    fn with_nothing_searched_it_still_picks_a_listed_move() {
+        let searched = visits(&[(3, 0), (60, 0)]);
+        let cell = choose(level(8), &searched, 3).unwrap();
+        assert!(searched.iter().any(|&(listed, _)| listed == cell));
+        assert_eq!(choose(level(8), &[], 3), None);
+    }
+
+    #[test]
+    fn searches_sum_by_cell_whatever_their_number_or_order() {
+        let one = visits(&[(1, 4), (7, 2)]);
+        let other = visits(&[(7, 5), (1, 1), (9, 0)]);
+        let merged = merge(&[one.clone(), other.clone()].concat());
+        assert_eq!(merge(&[other, one].concat()), merged);
+        let counts: Vec<u32> = merged.iter().map(|&(_, n)| n).collect();
+        assert_eq!(counts, [5, 7, 0]);
+        assert!(
+            merged
+                .windows(2)
+                .all(|pair| pair[0].0.index() < pair[1].0.index())
+        );
     }
 }

@@ -2,21 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 import { DEALT, LINE_OF_MIDDLE_BOARDS, notation, parse } from '../lib/game/games.fixtures.js';
 import { dayOf } from '../lib/game/listing.js';
-import { stepThrough } from './steps.js';
-
-/** Deals every new game from `seed`, by answering the eight bytes `newSeed` asks for. */
-const dealFrom = (page: Page, seed: string) =>
-	page.addInitScript((hex) => {
-		const random = crypto.getRandomValues.bind(crypto);
-		crypto.getRandomValues = ((array: Uint8Array<ArrayBuffer>) => {
-			if (array.length !== 8) return random(array);
-			array.set(hex.match(/../g)!.map((byte) => Number.parseInt(byte, 16)));
-			return array;
-		}) as typeof crypto.getRandomValues;
-	}, seed);
+import { caption, dealFrom, stepThrough } from './steps.js';
 
 const [x] = parse(DEALT.opening);
-const caption = (page: Page) => page.locator('[data-caption]');
 
 /** The `.utt` tags the finished `DEALT` game must open with, pinned in order and spelling. */
 const TAGS = [
@@ -140,7 +128,19 @@ test.describe('a finished Deep game with a Random opening, as a file', () => {
 		const broken = utt.replace('2. 3·9·1', '2. 1·1·1');
 		await page.getByLabel('Paste a .utt or JSON game').fill(broken);
 		await page.getByRole('button', { name: 'Open the replay' }).click();
+		const box = page.getByLabel('Paste a .utt or JSON game');
 		await expect(page.locator('[data-problem]')).toHaveText('Move 3, X 1·1·1, isn’t legal.');
 		await expect(page).toHaveURL(/\/import$/);
+		await expect(box).toBeFocused();
+		await expect(box).toHaveAttribute('aria-invalid', 'true');
+		await expect(box).toHaveAccessibleDescription('Move 3, X 1·1·1, isn’t legal.');
+
+		// The same file chosen twice, as after fixing it, is read both times.
+		const file = { name: 'game.utt', mimeType: 'text/plain', buffer: Buffer.from(broken) };
+		const input = page.locator('input[type="file"]');
+		await input.setInputFiles(file);
+		await expect(input).toHaveValue('');
+		await input.setInputFiles({ ...file, buffer: Buffer.from(utt) });
+		await expect(page).toHaveURL(/\/replay$/);
 	});
 });

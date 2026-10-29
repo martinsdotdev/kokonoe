@@ -13,8 +13,8 @@
 	import { gameQuery, playQuery, readLaunch } from '#lib/game/launch.js';
 	import { rulesetCode, type Variant } from '#lib/game/rules.js';
 	import PageProblem from '#lib/game/PageProblem.svelte';
-	import { ENGINE, explain, failed, loadSaved, Problem } from '#lib/game/problem.js';
-	import { UnplayableGame } from '#lib/game/record.js';
+	import { ENGINE, explain, failed, Problem } from '#lib/game/problem.js';
+	import { loadSaved, UnplayableGame } from '#lib/game/record.js';
 	import { OfflineGame } from '#lib/game/session.svelte.js';
 	import { presetByCode } from '#lib/game/shelf.js';
 

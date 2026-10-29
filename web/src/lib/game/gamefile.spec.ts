@@ -1,17 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Ruleset } from '#lib/engine.js';
 import { DEALT, LINE_OF_MIDDLE_BOARDS, TOP_ROW, cells } from './games.fixtures.js';
-import { FileProblem, parseFile, variantName } from './fileimport.js';
-import {
-	TAGS,
-	fileName,
-	result,
-	termination,
-	writeJson,
-	writeUtt,
-	type GameFile
-} from './gamefile.js';
+import { FileProblem, parseFile, variantName } from './fileparse.js';
+import { fileName, termination, writeJson, writeUtt, type GameFile } from './gamefile.js';
 import { dayOf } from './listing.js';
+import { result } from './result.js';
 import { SHELF } from './shelf.js';
 
 const STANDARD = SHELF[0].ruleset;
@@ -91,11 +84,6 @@ describe('the .utt text', () => {
 		`);
 		const moves = text.split('\n\n')[1].trimEnd().split('\n');
 		expect(moves.every((line) => line.length <= 80)).toBe(true);
-	});
-
-	it('writes every tag the spec names, once', () => {
-		const names = [...writeUtt(topRow).matchAll(/^\[(\w+) /gm)].map((tag) => tag[1]);
-		expect(names).toEqual([...TAGS]);
 	});
 
 	it('escapes quotes and backslashes in a name, and reads them back', () => {

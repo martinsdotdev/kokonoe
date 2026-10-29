@@ -13,9 +13,9 @@ import type { GameFile } from './gamefile.js';
 import { dayOf } from './listing.js';
 import {
 	dealtMoves,
+	gameFile,
 	playedCount,
 	playedMove,
-	seatLabel,
 	seats,
 	type Move,
 	type Seat
@@ -157,14 +157,14 @@ export class OfflineGame {
 
 	/** The game as a file holds it, to export. */
 	get file(): GameFile {
-		return {
+		return gameFile({
 			record: this.#game.record(),
 			variant: this.variant.name,
-			seats: { X: seatLabel(this.seats.X), O: seatLabel(this.seats.O) },
+			seats: this.seats,
 			date: dayOf(this.#started ?? Date.now()),
 			opening: this.#game.opening(),
 			end: this.end
-		};
+		});
 	}
 
 	get end(): End | null {

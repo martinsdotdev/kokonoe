@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Game, loadEngine, parseRulesetCode, presets, type Ruleset } from '#lib/engine.js';
 import { DEALT, LINE_OF_MIDDLE_BOARDS, TOP_ROW, cells } from './games.fixtures.js';
-import { FileProblem, openFile, parseFile, variantName } from './fileimport.js';
+import { openFile } from './fileimport.js';
+import { FileProblem, parseFile, variantName } from './fileparse.js';
 import { writeJson, writeUtt, type GameFile } from './gamefile.js';
 import { rulesetCode } from './rules.js';
 import { presetByCode } from './shelf.js';

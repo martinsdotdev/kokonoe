@@ -1,8 +1,9 @@
 /**
- * The move list and the player bars, as the game screen and the Replay viewer show them. Plain
- * data read from board views, with no engine in it.
+ * The move list and the player bars, as the game screen and the Replay viewer show them, and the
+ * seats a game file names. Plain data read from board views, with no engine in it.
  */
 import type { Cell, Player } from '#lib/engine.js';
+import type { GameFile } from './gamefile.js';
 import type { Opponent } from './launch.js';
 import { boardLabel, notation } from './notation.js';
 import { at, lineage, localOf, type BoardView } from './view.js';
@@ -68,8 +69,13 @@ export interface Seat {
 }
 
 /** A seat in one line, as a game file names it: "Player 1", "Computer, Level 3". */
-export const seatLabel = (seat: Seat): string =>
+const seatLabel = (seat: Seat): string =>
 	seat.detail ? `${seat.name}, ${seat.detail}` : seat.name;
+
+/** A game as a file holds it, each seat named in one line. */
+export const gameFile = (
+	game: Omit<GameFile, 'seats'> & { seats: Record<Player, Seat> }
+): GameFile => ({ ...game, seats: { X: seatLabel(game.seats.X), O: seatLabel(game.seats.O) } });
 
 export const seats = (opponent: Opponent): Record<Player, Seat> => {
 	if (opponent.kind === 'hotseat') {

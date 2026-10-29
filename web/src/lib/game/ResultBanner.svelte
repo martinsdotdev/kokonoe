@@ -17,10 +17,10 @@
 		/** Starts a new game; without it the banner has no button. */
 		onrestart?: () => void;
 		/** The game as a file, to export. */
-		exported?: GameFile;
+		file?: GameFile;
 	}
 
-	let { headline, detail, winner, game, onrestart, exported }: Props = $props();
+	let { headline, detail, winner, game, onrestart, file }: Props = $props();
 
 	const ink = $derived(
 		winner === 'X' ? 'var(--x)' : winner === 'O' ? 'var(--o-text)' : 'var(--foreground)'
@@ -70,10 +70,12 @@
 			{/if}
 		</div>
 	{/if}
-	{#if exported}
+	{#if file}
 		<!-- Loaded once a game ends, so the game screen doesn't load it to start. -->
 		{#await import('./ExportButtons.svelte') then { default: ExportButtons }}
-			<ExportButtons file={exported} />
+			<ExportButtons {file} />
+		{:catch}
+			<p class="m-0 text-sm text-muted-foreground">Export couldn’t load.</p>
 		{/await}
 	{/if}
 </section>

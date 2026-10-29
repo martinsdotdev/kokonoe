@@ -11,8 +11,8 @@
 	import { loadEngine } from '#lib/engine.js';
 	import { replayQuery } from '#lib/game/launch.js';
 	import PageProblem from '#lib/game/PageProblem.svelte';
-	import { ENGINE, explain, failed, loadSaved, Problem } from '#lib/game/problem.js';
-	import { UnplayableGame } from '#lib/game/record.js';
+	import { ENGINE, explain, failed, Problem } from '#lib/game/problem.js';
+	import { loadSaved, UnplayableGame } from '#lib/game/record.js';
 	import { fromSaved, Replay, type ReplaySource } from '#lib/game/replay.svelte.js';
 	import ReplayScreen from '#lib/game/ReplayScreen.svelte';
 
@@ -21,7 +21,10 @@
 	/** The page was left, perhaps before the game loaded. */
 	let left = false;
 
-	const id = page.url.searchParams.get('game');
+	// The address itself, not `page.url`: a shallow step leaves `page.url` behind, and Back
+	// remounts the page from it, without the ply.
+	const params = new URLSearchParams(location.search);
+	const id = params.get('game');
 
 	/** The game the address or the history state names. */
 	const source = async (): Promise<ReplaySource> => {
@@ -37,7 +40,7 @@
 		if (left) return null;
 		try {
 			const opened = Replay.open(game);
-			opened.go(Number.parseInt(page.url.searchParams.get('ply') ?? '0', 10) || 0);
+			opened.go(Number.parseInt(params.get('ply') ?? '0', 10) || 0);
 			return opened;
 		} catch (error) {
 			if (error instanceof UnplayableGame) {

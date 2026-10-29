@@ -4,61 +4,79 @@
 	saved: the viewer's history state carries it.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import Brand from '#lib/components/Brand.svelte';
 	import { loadEngine, parseRulesetCode } from '#lib/engine.js';
-	import { FileProblem, openFile, parseFile, variantName } from '#lib/game/fileimport.js';
-	import { ENGINE } from '#lib/game/problem.js';
-	import { fromFile } from '#lib/game/replay.svelte.js';
+	import { openFile } from '#lib/game/fileimport.js';
+	import { FileProblem, fromFile, parseFile, variantName } from '#lib/game/fileparse.js';
+	import { ENGINE, explain, failed } from '#lib/game/problem.js';
 
 	/** No game file comes near this: a long Deep game is a few kilobytes. */
-	const LARGEST = 1_000_000;
+	const MAX_BYTES = 1_000_000;
 
 	let text = $state('');
 	let problem: string | null = $state(null);
-	/** A file is being dragged over the drop zone. */
+	/** A file is being dragged over the form. */
 	let over = $state(false);
+	let box: HTMLTextAreaElement;
 
 	// Load the engine while the player finds the file.
 	const engine = loadEngine();
 
-	const open = async () => {
+	/** Says what went wrong, and puts the player back in the box to fix it. */
+	const refuse = async (error: unknown) => {
+		// Cleared first, so the same words twice are still announced twice.
 		problem = null;
+		await tick();
+		problem = explain(error, 'The file couldn’t be imported.');
+		box.focus();
+	};
+
+	const open = async () => {
 		try {
-			await engine;
-		} catch (error) {
-			console.error(ENGINE, error);
-			problem = ENGINE;
-			return;
-		}
-		try {
+			await engine.catch(failed(ENGINE));
 			const parsed = parseFile(text, parseRulesetCode);
 			const { resigned } = openFile(parsed);
 			const imported = fromFile(parsed, variantName(parsed), resigned);
 			await goto(resolve('/replay'), { state: { imported }, persistState: true });
 		} catch (error) {
-			if (error instanceof FileProblem) {
-				problem = error.message;
-				return;
-			}
-			console.error('The file couldn’t be imported.', error);
-			problem = 'Something went wrong. Reload the page to try again.';
+			await refuse(error);
 		}
 	};
 
 	/** Reads a dropped or chosen file into the box, then opens it. */
 	const read = async (file: File | undefined) => {
 		if (!file) return;
-		if (file.size > LARGEST) {
-			problem = 'That file is too large to be a game.';
+		try {
+			if (file.size > MAX_BYTES) throw new FileProblem('That file is too large to be a game.');
+			text = await file.text().catch(() => {
+				throw new FileProblem('That file couldn’t be read.');
+			});
+		} catch (error) {
+			await refuse(error);
 			return;
 		}
-		text = await file.text();
 		await open();
 	};
 
+	/** Files dragged in are the form's; text dragged in is the box's own business. */
+	const carriesFiles = (event: DragEvent) => event.dataTransfer?.types.includes('Files') ?? false;
+
+	const ondragover = (event: DragEvent) => {
+		if (!carriesFiles(event)) return;
+		event.preventDefault();
+		over = true;
+	};
+
+	const ondragleave = (event: DragEvent & { currentTarget: HTMLElement }) => {
+		// Crossing into the box or a button inside the form isn't leaving it.
+		if (!event.currentTarget.contains(event.relatedTarget as Node | null)) over = false;
+	};
+
 	const ondrop = (event: DragEvent) => {
+		if (!carriesFiles(event)) return;
 		event.preventDefault();
 		over = false;
 		read(event.dataTransfer?.files[0]);
@@ -95,11 +113,8 @@
 		<form
 			class="flex flex-col gap-4 rounded-[10px] border-[1.5px] border-foreground bg-card p-6"
 			class:over
-			ondragover={(event) => {
-				event.preventDefault();
-				over = true;
-			}}
-			ondragleave={() => (over = false)}
+			{ondragover}
+			{ondragleave}
 			{ondrop}
 			onsubmit={(event) => {
 				event.preventDefault();
@@ -110,12 +125,15 @@
 			<label class="font-semibold" for="game">Paste a .utt or JSON game</label>
 			<textarea
 				id="game"
+				bind:this={box}
 				bind:value={text}
 				rows="10"
 				spellcheck="false"
+				aria-invalid={problem ? 'true' : undefined}
+				aria-describedby={problem ? 'game-problem' : undefined}
 				class="min-h-40 rounded-md border-[1.5px] border-foreground bg-background p-3 font-mono text-sm"
 			></textarea>
-			<p class="m-0 text-sm text-muted-foreground">or drop a file here, or</p>
+			<p class="m-0 text-sm text-muted-foreground">You can also drop a file on this box.</p>
 			<div class="flex flex-wrap items-center gap-3">
 				<label class="{button} bg-card focus-within:outline-3 focus-within:outline-ring">
 					Choose a file
@@ -123,14 +141,25 @@
 						type="file"
 						accept=".utt,.json,text/plain,application/json"
 						class="sr-only"
-						onchange={(event) => read(event.currentTarget.files?.[0])}
+						onchange={(event) => {
+							const input = event.currentTarget;
+							const file = input.files?.[0];
+							// Cleared, so choosing the same file again, once fixed, reads it again.
+							input.value = '';
+							read(file);
+						}}
 					/>
 				</label>
 				<button type="submit" class="{button} bg-primary text-primary-foreground">
 					Open the replay
 				</button>
 			</div>
-			<p class="m-0 font-medium text-[var(--o-text)]" aria-live="polite" data-problem>
+			<p
+				id="game-problem"
+				class="m-0 font-medium text-[var(--o-text)]"
+				aria-live="polite"
+				data-problem
+			>
 				{problem ?? ''}
 			</p>
 		</form>

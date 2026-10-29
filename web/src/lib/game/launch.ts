@@ -10,10 +10,11 @@ export const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 export type Level = (typeof LEVELS)[number];
 
 /**
- * Level 3 rather than the design's 5: quick, and light on a phone, which Level 5's Workers aren't.
- * Calibration (KOK-43) shows how strong each Level is, and the default can follow it.
+ * Level 2 rather than the design's 5: quick, and light on a phone, which Level 5's Workers aren't.
+ * Calibration (KOK-43) made each Level a step stronger than the one below, and Level 2 plays about
+ * as well as Level 3 did before it.
  */
-export const DEFAULT_LEVEL: Level = 3;
+export const DEFAULT_LEVEL: Level = 2;
 
 export type Opponent = { kind: 'hotseat' } | { kind: 'computer'; level: Level; seat: Player };
 

@@ -13,10 +13,10 @@ describe("a game's URL", () => {
 		});
 	});
 
-	it('names the computer with a Level and a seat, Level 3 and X by default', () => {
+	it('names the computer with a Level and a seat, Level 2 and X by default', () => {
 		expect(read('vs=computer')).toEqual({
 			code: 'std',
-			opponent: { kind: 'computer', level: 3, seat: 'X' }
+			opponent: { kind: 'computer', level: 2, seat: 'X' }
 		});
 		expect(read('rules=cont&vs=computer&level=8&seat=O')).toEqual({
 			code: 'cont',

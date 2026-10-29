@@ -183,6 +183,56 @@ fn the_time_cap_stops_the_search() {
     assert_eq!(reads, 3_000);
 }
 
+/// The ladder as `LADDER.md` records it: each row's Level, iterations, choice and tactics.
+fn recorded_ladder() -> Vec<(u8, u32, Choice, bool)> {
+    let file = include_str!("../LADDER.md");
+    let table = file
+        .split("## The ladder")
+        .nth(1)
+        .and_then(|rest| {
+            rest.split(
+                "
+## ",
+            )
+            .next()
+        })
+        .expect("LADDER.md has the ladder");
+    table
+        .lines()
+        .map(|line| line.split('|').map(str::trim).collect::<Vec<_>>())
+        // The rows that start with a Level, past the header and its rule.
+        .filter(|cells| cells.get(1).is_some_and(|cell| cell.parse::<u8>().is_ok()))
+        .map(|cells| {
+            let choice = match cells[3].strip_prefix("τ ") {
+                Some(tau) => Choice::Sample {
+                    tau: tau.parse().unwrap(),
+                },
+                None => {
+                    assert_eq!(cells[3], "most visited");
+                    Choice::MostVisited
+                }
+            };
+            (
+                cells[1].parse().unwrap(),
+                cells[2].replace(',', "").parse().unwrap(),
+                choice,
+                cells[4] == "yes",
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_calibrated_ladder_is_the_one_in_code() {
+    let code: Vec<_> = (Level::MIN..=Level::MAX)
+        .map(|n| {
+            let level = level(n);
+            (n, level.iterations(), level.choice(), level.tactics())
+        })
+        .collect();
+    assert_eq!(recorded_ladder(), code, "LADDER.md and Level disagree");
+}
+
 #[test]
 fn from_level_five_the_budget_splits_into_even_shares_that_sum_to_it() {
     for n in Level::MIN..=Level::MAX {

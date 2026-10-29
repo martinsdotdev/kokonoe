@@ -29,7 +29,7 @@ describe('the computer in its Workers', () => {
 		const patient = new WorkerComputer({ now: later });
 		try {
 			expect(legal).toContain(await patient.think(record, 3, asking()));
-			expect(patient.searched).toBe(300);
+			expect(patient.iterations).toBe(300);
 		} finally {
 			patient.dispose();
 		}
@@ -41,7 +41,7 @@ describe('the computer in its Workers', () => {
 			try {
 				const cell = await split.think(record, 5, asking());
 				expect(legal).toContain(cell);
-				expect(split.searched, `${workers} Workers`).toBe(3_000);
+				expect(split.iterations, `${workers} Workers`).toBe(3_000);
 			} finally {
 				split.dispose();
 			}
@@ -59,7 +59,7 @@ describe('the computer in its Workers', () => {
 			await hurried.think(opening, 8, asking());
 			const took = performance.now() - start;
 			expect(took, 'the cap, plus starting four Workers and choosing').toBeLessThan(300 + 1_500);
-			expect(hurried.searched).toBeLessThan(100_000);
+			expect(hurried.iterations).toBeLessThan(100_000);
 		} finally {
 			hurried.dispose();
 		}
@@ -71,7 +71,7 @@ describe('the computer in its Workers', () => {
 		const split = new WorkerComputer({ workers: 4 });
 		try {
 			expect(await split.think(almost, 8, asking())).toBe(cells('28')[0]);
-			expect(split.searched).toBe(0);
+			expect(split.iterations).toBe(0);
 		} finally {
 			split.dispose();
 		}

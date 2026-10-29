@@ -153,11 +153,11 @@ pub struct ReplayError {
     pub error: IllegalMove,
 }
 
-/// One root move's visits from a search.
+/// One root move's visits from a search: how many of its iterations went through `cell`.
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Visit {
     pub cell: Cell,
-    pub visits: u32,
+    pub count: u32,
 }
 
 /// What one search from a root found: a move the tactics force, or the visits of every root move

@@ -80,17 +80,11 @@ impl Level {
 
     /// How many Workers share its search on a device with `cores` logical cores: one below Level
     /// 5, else min(4, cores − 1), and never none.
-    pub const fn workers(self, cores: u32) -> u32 {
-        if !self.rung().parallel {
-            return 1;
-        }
-        let spare = cores.saturating_sub(1);
-        if spare < 1 {
-            1
-        } else if spare > MOST_WORKERS {
-            MOST_WORKERS
+    pub fn workers(self, cores: u32) -> u32 {
+        if self.rung().parallel {
+            cores.saturating_sub(1).clamp(1, MOST_WORKERS)
         } else {
-            spare
+            1
         }
     }
 
@@ -156,7 +150,7 @@ const EXPLORATION: f32 = core::f32::consts::SQRT_2;
 ///
 /// `seed` drives the search's generator, so a position, a Level and a seed give one move while
 /// the clock doesn't bind. `elapsed_ms` reads the milliseconds since the search began. It is read
-/// every 16 iterations, and the search stops at the Level's cap with what it has.
+/// every `CLOCK_EVERY` iterations, and the search stops at the Level's cap with what it has.
 pub fn think(
     state: &State,
     level: Level,
@@ -182,8 +176,8 @@ pub enum Searched {
 }
 
 /// Searches `iterations` from `state` at `level`: the Level's whole budget, or one Worker's share
-/// of it. It stops early at the Level's cap, which `elapsed_ms` reads every 16 iterations from
-/// whenever the caller started the clock. `None` when the game is over.
+/// of it. It stops early at the Level's cap, which `elapsed_ms` reads every `CLOCK_EVERY`
+/// iterations, from whenever the caller started the clock. `None` when the game is over.
 pub fn search(
     state: &State,
     level: Level,
@@ -263,6 +257,7 @@ pub fn choose(level: Level, visits: &[(Cell, u32)], seed: u64) -> Option<Cell> {
 /// Visits summed by Cell, in ascending Cell index, so the pick doesn't depend on how many
 /// searches there were or the order they came back in.
 fn merge(visits: &[(Cell, u32)]) -> Vec<(Cell, u32)> {
+    // Kept in order as it goes, not sorted after: a sort would cost the WASM module 2.5 KB.
     let mut merged: Vec<(Cell, u32)> = Vec::new();
     for &(cell, n) in visits {
         match merged.binary_search_by_key(&cell.index(), |&(cell, _)| cell.index()) {

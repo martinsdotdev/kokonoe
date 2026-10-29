@@ -224,7 +224,7 @@ impl ToJs for ReplayError {
 
 impl ToJs for Visit {
     fn to_js(&self) -> JsValue {
-        object([("cell", self.cell.to_js()), ("visits", self.visits.into())])
+        object([("cell", self.cell.to_js()), ("count", self.count.into())])
     }
 }
 
@@ -431,14 +431,14 @@ pub fn parse_record(value: &JsValue) -> Result<Record, Malformed> {
 /// The root visits of every Worker's search together, as `Visit[]`: at most 4 searches of at
 /// most 729 moves each.
 pub fn parse_visits(value: &JsValue) -> Result<Vec<Visit>, Malformed> {
-    const EXPECTED: &str = "the visits are an array of { cell, visits }";
+    const EXPECTED: &str = "the visits are an array of { cell, count }";
     elements(value, 4 * 729, EXPECTED)?
         .iter()
         .map(|visit| {
-            let [cell, visits] = fields(visit, ["cell", "visits"], EXPECTED)?;
+            let [cell, count] = fields(visit, ["cell", "count"], EXPECTED)?;
             Ok(Visit {
                 cell: parse_cell(&cell)?,
-                visits: whole(&visits).ok_or(Malformed::Shape(EXPECTED))?,
+                count: whole(&count).ok_or(Malformed::Shape(EXPECTED))?,
             })
         })
         .collect()

@@ -108,34 +108,32 @@ fn avoids(state: &State, losing: &[Cell]) {
     }
 }
 
+/// Spec §6's caps and Workers. The rest of each rung, which self-play tunes, is held to
+/// `LADDER.md` by `the_calibrated_ladder_is_the_one_in_code`.
 #[test]
-fn the_ladder_is_spec_section_6() {
+fn the_caps_and_workers_are_spec_section_6() {
     let ladder: Vec<_> = (Level::MIN..=Level::MAX)
         .map(|n| {
             let level = level(n);
             (
-                level.iterations(),
                 level.cap_ms(Depth::Two),
                 level.cap_ms(Depth::Three),
-                level.choice(),
-                level.tactics(),
                 // On an eight-core device.
                 level.workers(8),
             )
         })
         .collect();
-    let sample = |tau| Choice::Sample { tau };
     assert_eq!(
         ladder,
         [
-            (30, 1_000, 3_000, Choice::MostVisited, false, 1),
-            (100, 1_000, 3_000, sample(0.15), false, 1),
-            (300, 1_000, 3_000, sample(0.25), true, 1),
-            (1_000, 1_000, 3_000, sample(0.25), true, 1),
-            (3_000, 2_000, 6_000, sample(0.1), true, 4),
-            (10_000, 2_000, 6_000, sample(0.1), true, 4),
-            (30_000, 3_000, 9_000, Choice::MostVisited, true, 4),
-            (100_000, 3_000, 9_000, Choice::MostVisited, true, 4),
+            (1_000, 3_000, 1),
+            (1_000, 3_000, 1),
+            (1_000, 3_000, 1),
+            (1_000, 3_000, 1),
+            (2_000, 6_000, 4),
+            (2_000, 6_000, 4),
+            (3_000, 9_000, 4),
+            (3_000, 9_000, 4),
         ]
     );
     assert_eq!(Level::try_from(0), Err(ParseError::Level(0)));
@@ -189,13 +187,7 @@ fn recorded_ladder() -> Vec<(u8, u32, Choice, bool)> {
     let table = file
         .split("## The ladder")
         .nth(1)
-        .and_then(|rest| {
-            rest.split(
-                "
-## ",
-            )
-            .next()
-        })
+        .and_then(|rest| rest.split("\n## ").next())
         .expect("LADDER.md has the ladder");
     table
         .lines()
@@ -203,18 +195,22 @@ fn recorded_ladder() -> Vec<(u8, u32, Choice, bool)> {
         // The rows that start with a Level, past the header and its rule.
         .filter(|cells| cells.get(1).is_some_and(|cell| cell.parse::<u8>().is_ok()))
         .map(|cells| {
+            let row = cells.join(" | ");
             let choice = match cells[3].strip_prefix("τ ") {
                 Some(tau) => Choice::Sample {
-                    tau: tau.parse().unwrap(),
+                    tau: tau.parse().unwrap_or_else(|_| panic!("a τ in {row}")),
                 },
                 None => {
-                    assert_eq!(cells[3], "most visited");
+                    assert_eq!(cells[3], "most visited", "a choice in {row}");
                     Choice::MostVisited
                 }
             };
             (
                 cells[1].parse().unwrap(),
-                cells[2].replace(',', "").parse().unwrap(),
+                cells[2]
+                    .replace(',', "")
+                    .parse()
+                    .unwrap_or_else(|_| panic!("iterations in {row}")),
                 choice,
                 cells[4] == "yes",
             )

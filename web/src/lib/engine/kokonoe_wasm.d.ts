@@ -40,6 +40,14 @@ export interface Record {
 export type Ply = number;
 
 /**
+ * One root move's visits from a search.
+ */
+export interface Visit {
+    cell: Cell;
+    visits: number;
+}
+
+/**
  * The constraint the last move places on the side to move. Under `Free`, the Sent target can
  * take no move, so the player may play anywhere legal inside `within`.
  */
@@ -77,6 +85,12 @@ export interface Ruleset {
  * refused, as an illegal move or a ply out of order.
  */
 export type PlayResult = { Now: Status } | "Already" | { Illegal: IllegalMove } | { OutOfOrder: { want: Ply; got: Ply } };
+
+/**
+ * What one search from a root found: a move the tactics force, or the visits of every root move
+ * it could play, in ascending Cell index.
+ */
+export type Searched = { Forced: Cell } | { Visits: Visit[] };
 
 /**
  * `FirstTo` holds N, 1 to 9.
@@ -175,6 +189,12 @@ export class State {
 }
 
 /**
+ * The move `level` plays from its Workers' visits, all of them together, in a game of `depth`:
+ * summed by Cell, then the most visited or one sampled, from `seed`.
+ */
+export function choose(level: number, depth: 2 | 3, visits: Visit[], seed: Seed): Cell;
+
+/**
  * A Cell in Notation: `5·5` at depth 2, `5·1·8` at depth 3.
  */
 export function notation(cell: Cell, depth: 2 | 3): string;
@@ -196,12 +216,20 @@ export function presets(): Preset[];
 export function rulesetCode(ruleset: Ruleset): string;
 
 /**
- * The computer's move in the game `record` leads to, at `level` 1 to 8, searched from `seed`
- * (spec §6). For the AI Worker: one call per move, so the search never crosses into JavaScript
- * except to read `Date.now` against the Level's time cap. A Level out of range, a Record the
- * rules reject and a finished game all throw, since the game screen never asks for them.
+ * One Worker's search for the computer's move in the game `record` leads to, at `level` 1 to 8
+ * (spec §6): `iterations` of them, its share of the Level's budget, from `seed`. The page asked
+ * at `asked`, its `Date.now()`, and the Level's time cap counts from then, so every Worker stops
+ * by the same moment. A Level out of range, a Record the rules reject and a finished game all
+ * throw, since the game screen never asks for them.
  */
-export function think(record: Record, level: number, seed: Seed): Cell;
+export function search(record: Record, level: number, iterations: number, seed: Seed, asked: number): Searched;
+
+/**
+ * The iterations each Worker searches at `level` on a device with `cores` logical cores (spec
+ * §6): one share below Level 5, else one each for min(4, cores − 1) Workers, summing to the
+ * Level's budget.
+ */
+export function shares(level: number, cores: number): Uint32Array;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -209,6 +237,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_game_free: (a: number, b: number) => void;
     readonly __wbg_state_free: (a: number, b: number) => void;
+    readonly choose: (a: number, b: number, c: any, d: any) => [number, number, number];
     readonly game_boardStatus: (a: number, b: any) => [number, number, number];
     readonly game_mark: (a: number, b: any) => [number, number, number];
     readonly game_moves: (a: number) => [number, number];
@@ -227,13 +256,14 @@ export interface InitOutput {
     readonly parseRulesetCode: (a: number, b: number) => [number, number, number];
     readonly presets: () => [number, number];
     readonly rulesetCode: (a: any) => [number, number, number, number];
+    readonly search: (a: any, b: number, c: number, d: any, e: number) => [number, number, number];
+    readonly shares: (a: number, b: number) => [number, number, number, number];
     readonly state_boardStatus: (a: number, b: any) => [number, number, number];
     readonly state_mark: (a: number, b: any) => [number, number, number];
     readonly state_ply: (a: number) => any;
     readonly state_ruleset: (a: number) => any;
     readonly state_status: (a: number) => any;
     readonly state_wonCount: (a: number, b: any) => [number, number, number];
-    readonly think: (a: any, b: number, c: any) => [number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

@@ -15,7 +15,8 @@ use wasm_bindgen::prelude::*;
 use crate::convert::Malformed;
 use crate::types::{
     Board, BoardStatus, Cell, Continuation, DrawnOwner, Fallback, IllegalMove, Objective, Opening,
-    Outcome, PlayResult, Player, Ply, Preset, Record, ReplayError, Ruleset, Seed, Sent, Status,
+    Outcome, PlayResult, Player, Ply, Preset, Record, ReplayError, Ruleset, Searched, Seed, Sent,
+    Status, Visit,
 };
 
 #[wasm_bindgen]
@@ -221,6 +222,21 @@ impl ToJs for ReplayError {
     }
 }
 
+impl ToJs for Visit {
+    fn to_js(&self) -> JsValue {
+        object([("cell", self.cell.to_js()), ("visits", self.visits.into())])
+    }
+}
+
+impl ToJs for Searched {
+    fn to_js(&self) -> JsValue {
+        match self {
+            Searched::Forced(cell) => tagged("Forced", cell.to_js()),
+            Searched::Visits(visits) => tagged("Visits", array(visits.iter().map(ToJs::to_js))),
+        }
+    }
+}
+
 impl ToJs for Preset {
     fn to_js(&self) -> JsValue {
         object([
@@ -410,4 +426,20 @@ pub fn parse_record(value: &JsValue) -> Result<Record, Malformed> {
         seed: parse_seed(&seed)?,
         moves: moves.iter().map(parse_cell).collect::<Result<_, _>>()?,
     })
+}
+
+/// The root visits of every Worker's search together, as `Visit[]`: at most 4 searches of at
+/// most 729 moves each.
+pub fn parse_visits(value: &JsValue) -> Result<Vec<Visit>, Malformed> {
+    const EXPECTED: &str = "the visits are an array of { cell, visits }";
+    elements(value, 4 * 729, EXPECTED)?
+        .iter()
+        .map(|visit| {
+            let [cell, visits] = fields(visit, ["cell", "visits"], EXPECTED)?;
+            Ok(Visit {
+                cell: parse_cell(&cell)?,
+                visits: whole(&visits).ok_or(Malformed::Shape(EXPECTED))?,
+            })
+        })
+        .collect()
 }

@@ -247,6 +247,23 @@ export class State {
 if (Symbol.dispose) State.prototype[Symbol.dispose] = State.prototype.free;
 
 /**
+ * The move `level` plays from its Workers' visits, all of them together, in a game of `depth`:
+ * summed by Cell, then the most visited or one sampled, from `seed`.
+ * @param {number} level
+ * @param {2 | 3} depth
+ * @param {Visit[]} visits
+ * @param {Seed} seed
+ * @returns {Cell}
+ */
+export function choose(level, depth, visits, seed) {
+    const ret = wasm.choose(level, depth, visits, seed);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * A Cell in Notation: `5·5` at depth 2, `5·1·8` at depth 3.
  * @param {Cell} cell
  * @param {2 | 3} depth
@@ -323,21 +340,42 @@ export function rulesetCode(ruleset) {
 }
 
 /**
- * The computer's move in the game `record` leads to, at `level` 1 to 8, searched from `seed`
- * (spec §6). For the AI Worker: one call per move, so the search never crosses into JavaScript
- * except to read `Date.now` against the Level's time cap. A Level out of range, a Record the
- * rules reject and a finished game all throw, since the game screen never asks for them.
+ * One Worker's search for the computer's move in the game `record` leads to, at `level` 1 to 8
+ * (spec §6): `iterations` of them, its share of the Level's budget, from `seed`. The page asked
+ * at `asked`, its `Date.now()`, and the Level's time cap counts from then, so every Worker stops
+ * by the same moment. A Level out of range, a Record the rules reject and a finished game all
+ * throw, since the game screen never asks for them.
  * @param {Record} record
  * @param {number} level
+ * @param {number} iterations
  * @param {Seed} seed
- * @returns {Cell}
+ * @param {number} asked
+ * @returns {Searched}
  */
-export function think(record, level, seed) {
-    const ret = wasm.think(record, level, seed);
+export function search(record, level, iterations, seed, asked) {
+    const ret = wasm.search(record, level, iterations, seed, asked);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * The iterations each Worker searches at `level` on a device with `cores` logical cores (spec
+ * §6): one share below Level 5, else one each for min(4, cores − 1) Workers, summing to the
+ * Level's budget.
+ * @param {number} level
+ * @param {number} cores
+ * @returns {Uint32Array}
+ */
+export function shares(level, cores) {
+    const ret = wasm.shares(level, cores);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
 }
 function __wbg_get_imports() {
     const import0 = {
@@ -466,6 +504,11 @@ function getArrayJsValueFromWasm0(ptr, len) {
     return result;
 }
 
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
 let cachedDataViewMemory0 = null;
 function getDataViewMemory0() {
     if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
@@ -476,6 +519,14 @@ function getDataViewMemory0() {
 
 function getStringFromWasm0(ptr, len) {
     return decodeText(ptr >>> 0, len);
+}
+
+let cachedUint32ArrayMemory0 = null;
+function getUint32ArrayMemory0() {
+    if (cachedUint32ArrayMemory0 === null || cachedUint32ArrayMemory0.byteLength === 0) {
+        cachedUint32ArrayMemory0 = new Uint32Array(wasm.memory.buffer);
+    }
+    return cachedUint32ArrayMemory0;
 }
 
 let cachedUint8ArrayMemory0 = null;
@@ -577,6 +628,7 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
     cachedDataViewMemory0 = null;
+    cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;

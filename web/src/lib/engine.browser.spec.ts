@@ -4,7 +4,9 @@ import {
 	loadEngine,
 	newSeed,
 	presets,
-	think,
+	choose,
+	search,
+	shares,
 	type Cell,
 	type Continuation,
 	type DrawnOwner,
@@ -13,7 +15,9 @@ import {
 	type Opening,
 	type PlayResult,
 	type Player,
-	type Ruleset
+	type Ruleset,
+	type Searched,
+	type Visit
 } from './engine.js';
 
 /** Cells written as their digits, as in the engine's tests: `"42"` is Space 4, then Space 2. */
@@ -295,28 +299,70 @@ describe('values crossing the boundary', () => {
 });
 
 describe('the computer', () => {
-	it('answers with a legal move, the same one for the same seed', () => {
+	/** The Visits of a search, or a failure naming what it found instead. */
+	const visits = (searched: Searched): Visit[] => {
+		if (!('Visits' in searched)) throw new Error(`a search, not ${JSON.stringify(searched)}`);
+		return searched.Visits;
+	};
+
+	it('searches a share of a Level, listing every root move’s visits in Cell order', () => {
 		const game = standard('42 24');
 		const status = game.status();
 		const moves = 'ToMove' in status ? status.ToMove.moves : [];
-		for (const level of range(8).map((i) => i + 1)) {
-			const move = think(game.record(), level, SEED);
-			expect(moves).toContain(move);
-			expect(think(game.record(), level, SEED)).toBe(move);
+		const found = visits(search(game.record(), 5, 750, SEED, Date.now()));
+		expect(found.map((visit) => visit.cell)).toEqual(moves);
+		expect(found.reduce((total, visit) => total + visit.visits, 0)).toBe(750);
+		expect(search(game.record(), 5, 750, SEED, Date.now())).toEqual({ Visits: found });
+	});
+
+	it('splits Levels 5 to 8 across the Workers a device has, the shares summing to the budget', () => {
+		expect([...shares(4, 8)]).toEqual([1_000]);
+		expect([...shares(5, 8)]).toEqual([750, 750, 750, 750]);
+		expect([...shares(8, 4)]).toEqual([33_334, 33_333, 33_333]);
+		expect([...shares(8, 1)]).toEqual([100_000]);
+	});
+
+	it('chooses from every search’s visits together, summed, the same move for the same seed', () => {
+		const game = standard('42 24');
+		const searches = [0, 1, 2, 3].map((i) =>
+			visits(search(game.record(), 7, 300, `000000000000000${i}`, Date.now()))
+		);
+		const move = choose(7, 2, searches.flat(), SEED);
+		expect(choose(7, 2, [...searches].reverse().flat(), SEED), 'in any order').toBe(move);
+		const summed = new Map<number, number>();
+		for (const { cell, visits } of searches.flat()) {
+			summed.set(cell, (summed.get(cell) ?? 0) + visits);
 		}
+		expect(summed.get(move)).toBe(Math.max(...summed.values()));
 	});
 
-	it('takes an immediate win from Level 3', () => {
+	it('names an immediate win at once from Level 3', () => {
 		const game = standard(TOP_ROW.split(' ').slice(0, -1).join(' '));
-		expect(think(game.record(), 3, SEED)).toBe(cell('28'));
+		expect(search(game.record(), 3, 300, SEED, Date.now())).toEqual({ Forced: cell('28') });
 	});
 
-	it('throws on a Level out of range or a finished game', () => {
+	it('stops at the cap counted from when the page asked', () => {
+		const game = standard('42 24');
+		// Asked 2 s ago: Level 5's cap at depth 2 has passed before the search begins.
+		const late = visits(search(game.record(), 5, 3_000, SEED, Date.now() - 2_000));
+		expect(late.every((visit) => visit.visits === 0)).toBe(true);
+		expect(late.map((visit) => visit.cell)).toContain(choose(5, 2, late, SEED));
+	});
+
+	it('throws on a Level out of range, a finished game, or searches of the wrong shape', () => {
 		const record = standard('42').record();
-		expect(() => think(record, 0, SEED)).toThrow(/Level 0 is outside 1 to 8/);
-		expect(() => think(record, 9, SEED)).toThrow(/Level 9 is outside 1 to 8/);
-		expect(() => think(standard(TOP_ROW).record(), 3, SEED)).toThrow(/the game is over/);
-		expect(() => think({ ...record, moves: [0, 0] }, 3, SEED)).toThrow(/move 1 is illegal/);
+		expect(() => search(record, 0, 30, SEED, Date.now())).toThrow(/Level 0 is outside 1 to 8/);
+		expect(() => shares(9, 4)).toThrow(/Level 9 is outside 1 to 8/);
+		expect(() => search(standard(TOP_ROW).record(), 3, 300, SEED, Date.now())).toThrow(
+			/the game is over/
+		);
+		expect(() => search({ ...record, moves: [0, 0] }, 3, 300, SEED, Date.now())).toThrow(
+			/move 1 is illegal/
+		);
+		expect(() => choose(5, 2, [{ cell: 81, visits: 1 }], SEED)).toThrow(/Cell/);
+		const bad = [{ cell: 4, visits: -1 }] as unknown as Visit[];
+		expect(() => choose(5, 2, bad, SEED)).toThrow(/an array of \{ cell, visits \}/);
+		expect(() => choose(5, 2, [], SEED)).toThrow(/no search listed a move/);
 	});
 });
 

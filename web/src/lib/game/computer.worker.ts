@@ -12,7 +12,7 @@ export interface Ask {
 	iterations: number;
 	seed: Seed;
 	/** When the page asked, its `Date.now()`: the Level's time cap counts from then. */
-	asked: number;
+	startedAt: number;
 	/** The page's compiled engine, so the Worker neither downloads nor compiles its own. */
 	engine: WebAssembly.Module;
 }
@@ -20,11 +20,11 @@ export interface Ask {
 export type Answer = { id: number } & ({ searched: Searched } | { error: string });
 
 self.addEventListener('message', async (event: MessageEvent<Ask>) => {
-	const { id, record, level, iterations, seed, asked, engine } = event.data;
+	const { id, record, level, iterations, seed, startedAt, engine } = event.data;
 	let answer: Answer;
 	try {
 		await loadEngine(engine);
-		answer = { id, searched: search(record, level, iterations, seed, asked) };
+		answer = { id, searched: search(record, level, iterations, seed, startedAt) };
 	} catch (error) {
 		answer = { id, error: String(error) };
 	}

@@ -4,9 +4,9 @@
 //! memory. The computer's move is [`search`]ed in each Worker over its [`shares`] of the Level's
 //! budget, and the page [`choose`]s from their visits. The values they take and return are plain
 //! JavaScript values: [`types`] declares them for the `.d.ts` as Rust mirrors, [`convert`] maps
-//! the mirrors to and from the engine, and [`js`] builds and parses them. They cross as `Ts<T>`, a JS handle carrying its declared type,
-//! and are parsed inside each method, so a value of the wrong shape is an ordinary error rather
-//! than a throw from the ABI boundary.
+//! the mirrors to and from the engine, and [`js`] builds and parses them. They cross as `Ts<T>`,
+//! a JS handle carrying its declared type, and are parsed inside each method, so a value of the
+//! wrong shape is an ordinary error rather than a throw from the ABI boundary.
 //!
 //! Errors keep the engine's two layers. A move the rules refuse comes back as a value
 //! (`PlayResult`, `ReplayError`), so the UI can name the Board it flashes. Data with the wrong
@@ -216,7 +216,7 @@ fn cells(cells: &[engine::Cell]) -> Vec<Ts<Cell>> {
 
 /// One Worker's search for the computer's move in the game `record` leads to, at `level` 1 to 8
 /// (spec §6): `iterations` of them, its share of the Level's budget, from `seed`. The page asked
-/// at `asked`, its `Date.now()`, and the Level's time cap counts from then, so every Worker stops
+/// at `started_at`, its `Date.now()`, and the Level's time cap counts from then, so every Worker stops
 /// by the same moment. A Level out of range, a Record the rules reject and a finished game all
 /// throw, since the game screen never asks for them.
 #[wasm_bindgen]
@@ -225,22 +225,21 @@ pub fn search(
     level: u8,
     iterations: u32,
     seed: Ts<Seed>,
-    asked: f64,
+    #[wasm_bindgen(js_name = startedAt)] started_at: f64,
 ) -> Result<Ts<Searched>, JsError> {
     let record = engine::Record::try_from(js::parse_record(&record.js_value())?)?;
     let level = engine::Level::try_from(level)?;
     let seed = engine::Seed::try_from(&js::parse_seed(&seed.js_value())?)?;
     let game = engine::Game::open(&record)?;
-    // Saturating: a clock read before `asked` is no time at all.
-    let elapsed_ms = || (js_sys::Date::now() - asked) as u32;
+    // Saturating: a clock read before `started_at` is no time at all.
+    let elapsed_ms = || (js_sys::Date::now() - started_at) as u32;
     let searched = engine::search(game.state(), level, iterations, seed.0, elapsed_ms)
         .ok_or_else(|| JsError::new("the game is over"))?;
     Ok(typed(Searched::from(searched).to_js()))
 }
 
-/// The iterations each Worker searches at `level` on a device with `cores` logical cores (spec
-/// §6): one share below Level 5, else one each for min(4, cores − 1) Workers, summing to the
-/// Level's budget.
+/// The iterations each Worker searches at `level` on a device with `cores` logical cores, one
+/// share for each of the engine's `Level::workers`, summing to the Level's budget.
 #[wasm_bindgen]
 pub fn shares(level: u8, cores: u32) -> Result<Vec<u32>, JsError> {
     Ok(engine::shares(engine::Level::try_from(level)?, cores))

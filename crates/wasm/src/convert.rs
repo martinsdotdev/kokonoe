@@ -237,9 +237,9 @@ impl From<engine::Searched> for Searched {
             engine::Searched::Visits(visits) => Searched::Visits(
                 visits
                     .into_iter()
-                    .map(|(cell, visits)| Visit {
+                    .map(|(cell, count)| Visit {
                         cell: cell.into(),
-                        visits,
+                        count,
                     })
                     .collect(),
             ),
@@ -250,7 +250,7 @@ impl From<engine::Searched> for Searched {
 impl Visit {
     /// This visit as one of a game of `depth`'s root moves.
     pub fn at_depth(self, depth: engine::Depth) -> Result<(engine::Cell, u32), Malformed> {
-        Ok((self.cell.at_depth(depth)?, self.visits))
+        Ok((self.cell.at_depth(depth)?, self.count))
     }
 }
 

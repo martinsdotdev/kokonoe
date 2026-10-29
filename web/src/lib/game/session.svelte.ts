@@ -234,6 +234,7 @@ export class OfflineGame {
 		this.#cancel();
 		this.resigned = player;
 		this.#save();
+		this.#ask();
 	}
 
 	/** A fresh game of the same variant and opponent, with a new Seed and a new id. */
@@ -317,10 +318,13 @@ export class OfflineGame {
 		);
 	}
 
-	/** Asks the computer for its move when it's to move, and plays the answer. */
+	/** Asks the computer for its move when it's to move, and plays the answer; once the game is over, frees it. */
 	async #ask() {
 		const against = this.#against;
-		if (!against || this.end || !this.computerToMove) return;
+		if (!against) return;
+		// A finished game needs the computer no more, so its Workers and their memory go.
+		if (this.end) return against.computer.dispose();
+		if (!this.computerToMove) return;
 		const asking = new AbortController();
 		this.#asking = asking;
 		this.#phase = 'thinking';

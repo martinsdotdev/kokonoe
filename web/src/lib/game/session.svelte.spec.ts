@@ -323,6 +323,25 @@ describe('a game against the computer', () => {
 		expect(computer.asks[0].signal.aborted).toBe(true);
 		expect(computer.disposed).toBe(true);
 	});
+
+	it('frees the computer once the player resigns, and once the game is won', async () => {
+		const resigning = against('X');
+		resigning.session.play(C42);
+		expect(resigning.computer.disposed).toBe(false);
+		resigning.session.resign();
+		expect(resigning.computer.disposed).toBe(true);
+
+		// X completes the top row with 3·9 against O, the computer, which answers the rest.
+		const { computer, session } = against('X');
+		const moves = cells(TOP_ROW);
+		for (const [i, cell] of moves.entries()) {
+			if (i % 2 === 0) session.play(cell);
+			else computer.asks.at(-1)!.answer(cell);
+			await settle();
+		}
+		expect(session.end).not.toBeNull();
+		expect(computer.disposed).toBe(true);
+	});
 });
 
 describe('saving and resuming', () => {

@@ -40,11 +40,11 @@ export interface Record {
 export type Ply = number;
 
 /**
- * One root move's visits from a search.
+ * One root move's visits from a search: how many of its iterations went through `cell`.
  */
 export interface Visit {
     cell: Cell;
-    visits: number;
+    count: number;
 }
 
 /**
@@ -218,16 +218,15 @@ export function rulesetCode(ruleset: Ruleset): string;
 /**
  * One Worker's search for the computer's move in the game `record` leads to, at `level` 1 to 8
  * (spec §6): `iterations` of them, its share of the Level's budget, from `seed`. The page asked
- * at `asked`, its `Date.now()`, and the Level's time cap counts from then, so every Worker stops
+ * at `started_at`, its `Date.now()`, and the Level's time cap counts from then, so every Worker stops
  * by the same moment. A Level out of range, a Record the rules reject and a finished game all
  * throw, since the game screen never asks for them.
  */
-export function search(record: Record, level: number, iterations: number, seed: Seed, asked: number): Searched;
+export function search(record: Record, level: number, iterations: number, seed: Seed, startedAt: number): Searched;
 
 /**
- * The iterations each Worker searches at `level` on a device with `cores` logical cores (spec
- * §6): one share below Level 5, else one each for min(4, cores − 1) Workers, summing to the
- * Level's budget.
+ * The iterations each Worker searches at `level` on a device with `cores` logical cores, one
+ * share for each of the engine's `Level::workers`, summing to the Level's budget.
  */
 export function shares(level: number, cores: number): Uint32Array;
 

@@ -342,18 +342,18 @@ export function rulesetCode(ruleset) {
 /**
  * One Worker's search for the computer's move in the game `record` leads to, at `level` 1 to 8
  * (spec §6): `iterations` of them, its share of the Level's budget, from `seed`. The page asked
- * at `asked`, its `Date.now()`, and the Level's time cap counts from then, so every Worker stops
+ * at `started_at`, its `Date.now()`, and the Level's time cap counts from then, so every Worker stops
  * by the same moment. A Level out of range, a Record the rules reject and a finished game all
  * throw, since the game screen never asks for them.
  * @param {Record} record
  * @param {number} level
  * @param {number} iterations
  * @param {Seed} seed
- * @param {number} asked
+ * @param {number} startedAt
  * @returns {Searched}
  */
-export function search(record, level, iterations, seed, asked) {
-    const ret = wasm.search(record, level, iterations, seed, asked);
+export function search(record, level, iterations, seed, startedAt) {
+    const ret = wasm.search(record, level, iterations, seed, startedAt);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -361,9 +361,8 @@ export function search(record, level, iterations, seed, asked) {
 }
 
 /**
- * The iterations each Worker searches at `level` on a device with `cores` logical cores (spec
- * §6): one share below Level 5, else one each for min(4, cores − 1) Workers, summing to the
- * Level's budget.
+ * The iterations each Worker searches at `level` on a device with `cores` logical cores, one
+ * share for each of the engine's `Level::workers`, summing to the Level's budget.
  * @param {number} level
  * @param {number} cores
  * @returns {Uint32Array}

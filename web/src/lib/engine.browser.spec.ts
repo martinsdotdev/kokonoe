@@ -311,7 +311,7 @@ describe('the computer', () => {
 		const moves = 'ToMove' in status ? status.ToMove.moves : [];
 		const found = visits(search(game.record(), 5, 750, SEED, Date.now()));
 		expect(found.map((visit) => visit.cell)).toEqual(moves);
-		expect(found.reduce((total, visit) => total + visit.visits, 0)).toBe(750);
+		expect(found.reduce((total, visit) => total + visit.count, 0)).toBe(750);
 		expect(search(game.record(), 5, 750, SEED, Date.now())).toEqual({ Visits: found });
 	});
 
@@ -330,8 +330,8 @@ describe('the computer', () => {
 		const move = choose(7, 2, searches.flat(), SEED);
 		expect(choose(7, 2, [...searches].reverse().flat(), SEED), 'in any order').toBe(move);
 		const summed = new Map<number, number>();
-		for (const { cell, visits } of searches.flat()) {
-			summed.set(cell, (summed.get(cell) ?? 0) + visits);
+		for (const { cell, count } of searches.flat()) {
+			summed.set(cell, (summed.get(cell) ?? 0) + count);
 		}
 		expect(summed.get(move)).toBe(Math.max(...summed.values()));
 	});
@@ -345,7 +345,7 @@ describe('the computer', () => {
 		const game = standard('42 24');
 		// Asked 2 s ago: Level 5's cap at depth 2 has passed before the search begins.
 		const late = visits(search(game.record(), 5, 3_000, SEED, Date.now() - 2_000));
-		expect(late.every((visit) => visit.visits === 0)).toBe(true);
+		expect(late.every((visit) => visit.count === 0)).toBe(true);
 		expect(late.map((visit) => visit.cell)).toContain(choose(5, 2, late, SEED));
 	});
 
@@ -359,9 +359,9 @@ describe('the computer', () => {
 		expect(() => search({ ...record, moves: [0, 0] }, 3, 300, SEED, Date.now())).toThrow(
 			/move 1 is illegal/
 		);
-		expect(() => choose(5, 2, [{ cell: 81, visits: 1 }], SEED)).toThrow(/Cell/);
-		const bad = [{ cell: 4, visits: -1 }] as unknown as Visit[];
-		expect(() => choose(5, 2, bad, SEED)).toThrow(/an array of \{ cell, visits \}/);
+		expect(() => choose(5, 2, [{ cell: 81, count: 1 }], SEED)).toThrow(/Cell/);
+		const bad = [{ cell: 4, count: -1 }] as unknown as Visit[];
+		expect(() => choose(5, 2, bad, SEED)).toThrow(/an array of \{ cell, count \}/);
 		expect(() => choose(5, 2, [], SEED)).toThrow(/no search listed a move/);
 	});
 });

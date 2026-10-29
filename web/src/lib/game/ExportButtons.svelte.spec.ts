@@ -57,5 +57,7 @@ it('says when the copy fails', async () => {
 	vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'));
 	const screen = await render(ExportButtons, { file });
 	await screen.getByRole('button', { name: 'Copy .utt' }).click();
-	await expect.element(screen.getByRole('status')).toHaveTextContent('Couldn’t copy');
+	await expect
+		.element(screen.getByRole('status'))
+		.toHaveTextContent('Couldn’t copy. Export as .utt instead.');
 });

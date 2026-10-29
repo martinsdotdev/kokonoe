@@ -10,16 +10,22 @@
 
 	let { file }: { file: GameFile } = $props();
 
-	/** How long "Copied" stays. */
+	/** How long "Copied" stays. A failed copy says so until the next press. */
 	const SAID_MS = 2000;
 
-	/** What the last copy did, said until `SAID_MS` passes. */
+	/** What the last copy did. */
 	let said: string | null = $state(null);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	$effect(() => () => clearTimeout(timer));
 
+	const quiet = () => {
+		clearTimeout(timer);
+		said = null;
+	};
+
 	const download = (text: string, extension: 'utt' | 'json', type: string) => {
+		quiet();
 		const url = URL.createObjectURL(new Blob([text], { type }));
 		const link = document.createElement('a');
 		link.href = url;
@@ -30,13 +36,14 @@
 	};
 
 	const copy = async () => {
-		clearTimeout(timer);
+		quiet();
 		try {
 			await navigator.clipboard.writeText(writeUtt(file));
-			said = 'Copied';
 		} catch {
-			said = 'Couldn’t copy';
+			said = 'Couldn’t copy. Export as .utt instead.';
+			return;
 		}
+		said = 'Copied';
 		timer = setTimeout(() => (said = null), SAID_MS);
 	};
 

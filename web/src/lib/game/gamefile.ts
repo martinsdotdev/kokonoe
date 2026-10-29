@@ -1,11 +1,11 @@
 /**
  * Game files (spec §4.3 and §4.4): the `.utt` text, PGN-style tags and then the moves in
- * Notation, and the Record as JSON, written here without the engine. `fileimport.ts` reads them
- * back, apart, so the game screen loads no reader.
+ * Notation, and the Record as JSON, written here without the engine. `fileparse.ts` reads them
+ * back, in a module of its own, so the game screen doesn't load the reader.
  */
 import type { Cell, Player, Record as GameRecord, Ruleset } from '#lib/engine.js';
 import { notation } from './notation.js';
-import { winner, type End } from './result.js';
+import { result, type End } from './result.js';
 import { rulesetCode } from './rules.js';
 import { presetByCode } from './shelf.js';
 
@@ -25,7 +25,7 @@ export interface GameFile {
 }
 
 /** The tags of a `.utt` file, in the order it writes them. */
-export const TAGS = [
+const TAGS = [
 	'Variant',
 	'Ruleset',
 	'Seed',
@@ -37,15 +37,6 @@ export const TAGS = [
 	'Result',
 	'Termination'
 ] as const;
-
-export type Result = '1-0' | '0-1' | '1/2-1/2' | '*';
-
-/** The Result tag: who won, a draw, or `*` while the game goes on. */
-export const result = (end: End | null): Result => {
-	if (end === null) return '*';
-	const player = winner(end);
-	return player === null ? '1/2-1/2' : player === 'X' ? '1-0' : '0-1';
-};
 
 /** The Termination tag (spec §4.4): how the game ended, or `-` while it goes on. */
 export const termination = (end: End | null, rules: Ruleset): string => {

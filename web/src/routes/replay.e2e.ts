@@ -1,22 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 import { DEALT, LINE_OF_MIDDLE_BOARDS, notation, parse } from '../lib/game/games.fixtures.js';
-import { stepped, stepThrough } from './steps.js';
-
-/** Deals every new game from `seed`, by answering the eight bytes `newSeed` asks for. */
-const dealFrom = (page: Page, seed: string) =>
-	page.addInitScript((hex) => {
-		const random = crypto.getRandomValues.bind(crypto);
-		crypto.getRandomValues = ((array: Uint8Array<ArrayBuffer>) => {
-			if (array.length !== 8) return random(array);
-			array.set(hex.match(/../g)!.map((byte) => Number.parseInt(byte, 16)));
-			return array;
-		}) as typeof crypto.getRandomValues;
-	}, seed);
+import { caption, dealFrom, stepped, stepThrough } from './steps.js';
 
 const [x, o] = parse(DEALT.opening);
 const played = parse(LINE_OF_MIDDLE_BOARDS);
-
-const caption = (page: Page) => page.locator('[data-caption]');
 
 /** The move-list row for ply `n`. */
 const row = (page: Page, n: number) =>
@@ -129,6 +116,17 @@ test.describe('the Replay of a finished Deep game with a Random opening', () => 
 		await atPly(0);
 		await expect(previous).toHaveAttribute('aria-disabled', 'true');
 		await expect(previous).toBeFocused();
+	});
+
+	test('comes Back to the ply it showed', async () => {
+		await open();
+		await row(page, 12).click();
+		await atPly(12);
+		await page.getByRole('link', { name: 'Home', exact: true }).click();
+		await expect(page).toHaveTitle('Kokonoe');
+		await page.goBack();
+		await expect(caption(page)).toHaveText(/^Move 12 of 55 · /);
+		await atPly(12);
 	});
 
 	test('plays a ply at a time, until paused', async () => {

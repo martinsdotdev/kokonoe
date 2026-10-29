@@ -5,19 +5,10 @@
  * comes from this device's saved games or from an imported file.
  */
 import type { Cell, Game, Player, Record as GameRecord, Status } from '#lib/engine.js';
-import type { ParsedFile } from './fileimport.js';
 import type { GameFile } from './gamefile.js';
 import { againstLabel } from './launch.js';
 import { dayOf } from './listing.js';
-import {
-	dealtMoves,
-	playedMove,
-	seatLabel,
-	seats,
-	written,
-	type Move,
-	type Seat
-} from './moves.js';
+import { dealtMoves, gameFile, playedMove, seats, written, type Move, type Seat } from './moves.js';
 import { openRecord } from './record.js';
 import type { End } from './result.js';
 import type { Variant } from './rules.js';
@@ -55,27 +46,6 @@ export const fromSaved = (saved: SavedGame): ReplaySource => ({
 	resigned: saved.resigned,
 	date: dayOf(saved.started)
 });
-
-/** An imported file, to replay, once `openFile` has checked it and found who resigned. */
-export const fromFile = (
-	parsed: ParsedFile,
-	variant: string,
-	resigned: Player | null
-): ReplaySource => {
-	const seat = (player: Player, otherwise: string): Seat => ({
-		name: parsed.tags.get(player)?.trim() || otherwise,
-		detail: null
-	});
-	const date = parsed.tags.get('Date') ?? '';
-	return {
-		record: parsed.record,
-		variant,
-		seats: { X: seat('X', 'Player 1'), O: seat('O', 'Player 2') },
-		against: 'Imported',
-		resigned,
-		date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ''
-	};
-};
 
 export class Replay {
 	readonly source: ReplaySource;
@@ -150,14 +120,14 @@ export class Replay {
 
 	/** The game as a file holds it, to export. */
 	get file(): GameFile {
-		return {
+		return gameFile({
 			record: this.source.record,
 			variant: this.variant.name,
-			seats: { X: seatLabel(this.seats.X), O: seatLabel(this.seats.O) },
+			seats: this.seats,
 			date: this.source.date,
 			opening: this.opening,
 			end: this.end
-		};
+		});
 	}
 
 	/** The last ply. */

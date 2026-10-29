@@ -23,7 +23,7 @@ it('offers nothing in the Replay viewer, only the result', async () => {
 });
 
 it('offers the game as a file when given one', async () => {
-	const exported = {
+	const file = {
 		record: { rules_version: 1, ruleset: SHELF[0].ruleset, seed: '00000000005eed00', moves: [] },
 		variant: 'Standard',
 		seats: { X: 'Player 1', O: 'Player 2' },
@@ -31,7 +31,7 @@ it('offers the game as a file when given one', async () => {
 		opening: [],
 		end: null
 	};
-	const screen = await render(ResultBanner, { ...result, exported });
+	const screen = await render(ResultBanner, { ...result, file });
 	await expect.element(screen.getByRole('group', { name: 'Export' })).toBeVisible();
 	await expect.element(screen.getByRole('button', { name: 'Export as JSON' })).toBeVisible();
 });

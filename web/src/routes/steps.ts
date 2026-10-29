@@ -1,4 +1,7 @@
-/** Playing on the board that steps into one Board at a time: on a phone, and for Deep. */
+/**
+ * Playing on the board that steps into one Board at a time, on a phone and for Deep, and dealing
+ * a Random opening from a known Seed.
+ */
 import { expect, type Locator, type Page } from '@playwright/test';
 import { notation, parse } from '../lib/game/games.fixtures.js';
 import { boardName } from '../lib/game/notation.js';
@@ -59,3 +62,17 @@ export const tally = (presses: number[]) => {
 	for (const n of presses) counts[n] = (counts[n] ?? 0) + 1;
 	return counts;
 };
+
+/** Deals every new game from `seed`, by answering the eight bytes `newSeed` asks for. */
+export const dealFrom = (page: Page, seed: string) =>
+	page.addInitScript((hex) => {
+		const random = crypto.getRandomValues.bind(crypto);
+		crypto.getRandomValues = ((array: Uint8Array<ArrayBuffer>) => {
+			if (array.length !== 8) return random(array);
+			array.set(hex.match(/../g)!.map((byte) => Number.parseInt(byte, 16)));
+			return array;
+		}) as typeof crypto.getRandomValues;
+	}, seed);
+
+/** The Replay viewer's caption, saying what the ply shown did. */
+export const caption = (page: Page) => page.locator('[data-caption]');

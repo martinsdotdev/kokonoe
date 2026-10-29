@@ -10,7 +10,8 @@ use kokonoe_engine as engine;
 
 use crate::types::{
     Board, BoardStatus, Cell, Continuation, DrawnOwner, Fallback, IllegalMove, Objective, Opening,
-    Outcome, PlayResult, Player, Ply, Preset, Record, ReplayError, Ruleset, Seed, Sent, Status,
+    Outcome, PlayResult, Player, Ply, Preset, Record, ReplayError, Ruleset, Searched, Seed, Sent,
+    Status, Visit,
 };
 
 /// Data the engine can't even consider: wrong in shape, before any rule is consulted.
@@ -226,6 +227,30 @@ impl From<engine::Sent> for Sent {
                 within: within.into(),
             },
         }
+    }
+}
+
+impl From<engine::Searched> for Searched {
+    fn from(searched: engine::Searched) -> Searched {
+        match searched {
+            engine::Searched::Forced(cell) => Searched::Forced(cell.into()),
+            engine::Searched::Visits(visits) => Searched::Visits(
+                visits
+                    .into_iter()
+                    .map(|(cell, visits)| Visit {
+                        cell: cell.into(),
+                        visits,
+                    })
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl Visit {
+    /// This visit as one of a game of `depth`'s root moves.
+    pub fn at_depth(self, depth: engine::Depth) -> Result<(engine::Cell, u32), Malformed> {
+        Ok((self.cell.at_depth(depth)?, self.visits))
     }
 }
 

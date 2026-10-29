@@ -153,6 +153,21 @@ pub struct ReplayError {
     pub error: IllegalMove,
 }
 
+/// One root move's visits from a search.
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Visit {
+    pub cell: Cell,
+    pub visits: u32,
+}
+
+/// What one search from a root found: a move the tactics force, or the visits of every root move
+/// it could play, in ascending Cell index.
+#[derive(Tsify, Clone, Debug, PartialEq, Eq)]
+pub enum Searched {
+    Forced(Cell),
+    Visits(Vec<Visit>),
+}
+
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
 pub struct Preset {
     pub name: String,

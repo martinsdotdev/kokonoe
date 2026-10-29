@@ -1,7 +1,8 @@
 //! The engine's JavaScript bindings, the only crate that knows about the browser.
 //!
-//! One module serves the page and the AI Worker alike. [`Game`] wraps the engine's Game in WASM
-//! memory, and [`think`] is the computer's search. The values they take and return are plain
+//! One module serves the page and the AI Workers alike. [`Game`] wraps the engine's Game in WASM
+//! memory. The computer's move is [`search`]ed in each Worker over its [`shares`] of the Level's
+//! budget, and the page [`choose`]s from their visits. The values they take and return are plain
 //! JavaScript values: [`types`] declares them for the `.d.ts` as Rust mirrors, [`convert`] maps
 //! the mirrors to and from the engine, and [`js`] builds and parses them. They cross as `Ts<T>`, a JS handle carrying its declared type,
 //! and are parsed inside each method, so a value of the wrong shape is an ordinary error rather
@@ -30,8 +31,8 @@ use wasm_bindgen::prelude::*;
 
 use js::ToJs;
 use types::{
-    Board, BoardStatus, Cell, PlayResult, Player, Ply, Preset, Record, ReplayError, Ruleset, Seed,
-    Status,
+    Board, BoardStatus, Cell, PlayResult, Player, Ply, Preset, Record, ReplayError, Ruleset,
+    Searched, Seed, Status,
 };
 
 /// A live game: its Record, the State it leads to, and the history between them.
@@ -213,20 +214,56 @@ fn cells(cells: &[engine::Cell]) -> Vec<Ts<Cell>> {
         .collect()
 }
 
-/// The computer's move in the game `record` leads to, at `level` 1 to 8, searched from `seed`
-/// (spec §6). For the AI Worker: one call per move, so the search never crosses into JavaScript
-/// except to read `Date.now` against the Level's time cap. A Level out of range, a Record the
-/// rules reject and a finished game all throw, since the game screen never asks for them.
+/// One Worker's search for the computer's move in the game `record` leads to, at `level` 1 to 8
+/// (spec §6): `iterations` of them, its share of the Level's budget, from `seed`. The page asked
+/// at `asked`, its `Date.now()`, and the Level's time cap counts from then, so every Worker stops
+/// by the same moment. A Level out of range, a Record the rules reject and a finished game all
+/// throw, since the game screen never asks for them.
 #[wasm_bindgen]
-pub fn think(record: Ts<Record>, level: u8, seed: Ts<Seed>) -> Result<Ts<Cell>, JsError> {
+pub fn search(
+    record: Ts<Record>,
+    level: u8,
+    iterations: u32,
+    seed: Ts<Seed>,
+    asked: f64,
+) -> Result<Ts<Searched>, JsError> {
     let record = engine::Record::try_from(js::parse_record(&record.js_value())?)?;
     let level = engine::Level::try_from(level)?;
     let seed = engine::Seed::try_from(&js::parse_seed(&seed.js_value())?)?;
     let game = engine::Game::open(&record)?;
-    let start = js_sys::Date::now();
-    let elapsed_ms = || (js_sys::Date::now() - start) as u32;
-    let cell = engine::think(game.state(), level, seed.0, elapsed_ms)
+    // Saturating: a clock read before `asked` is no time at all.
+    let elapsed_ms = || (js_sys::Date::now() - asked) as u32;
+    let searched = engine::search(game.state(), level, iterations, seed.0, elapsed_ms)
         .ok_or_else(|| JsError::new("the game is over"))?;
+    Ok(typed(Searched::from(searched).to_js()))
+}
+
+/// The iterations each Worker searches at `level` on a device with `cores` logical cores (spec
+/// §6): one share below Level 5, else one each for min(4, cores − 1) Workers, summing to the
+/// Level's budget.
+#[wasm_bindgen]
+pub fn shares(level: u8, cores: u32) -> Result<Vec<u32>, JsError> {
+    Ok(engine::shares(engine::Level::try_from(level)?, cores))
+}
+
+/// The move `level` plays from its Workers' visits, all of them together, in a game of `depth`:
+/// summed by Cell, then the most visited or one sampled, from `seed`.
+#[wasm_bindgen]
+pub fn choose(
+    level: u8,
+    #[wasm_bindgen(unchecked_param_type = "2 | 3")] depth: u8,
+    #[wasm_bindgen(unchecked_param_type = "Visit[]")] visits: JsValue,
+    seed: Ts<Seed>,
+) -> Result<Ts<Cell>, JsError> {
+    let level = engine::Level::try_from(level)?;
+    let depth = engine::Depth::try_from(depth)?;
+    let seed = engine::Seed::try_from(&js::parse_seed(&seed.js_value())?)?;
+    let visits = js::parse_visits(&visits)?
+        .into_iter()
+        .map(|visit| visit.at_depth(depth))
+        .collect::<Result<Vec<_>, _>>()?;
+    let cell = engine::choose(level, &visits, seed.0)
+        .ok_or_else(|| JsError::new("no search listed a move"))?;
     Ok(typed(Cell::from(cell).to_js()))
 }
 

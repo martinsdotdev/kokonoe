@@ -57,3 +57,17 @@ test('leaving before the engine loads starts no computer', async ({ page }) => {
 	await page.waitForTimeout(500);
 	expect(page.workers()).toHaveLength(0);
 });
+
+test('from Level 5 the computer searches across Workers, with no cross-origin isolation', async ({
+	page
+}) => {
+	const response = await page.goto('/play?vs=computer&level=8&seat=O');
+	const headers = response!.headers();
+	expect(headers['cross-origin-opener-policy']).toBeUndefined();
+	expect(headers['cross-origin-embedder-policy']).toBeUndefined();
+	expect(await page.evaluate(() => crossOriginIsolated)).toBe(false);
+	// Level 8 opens as X across min(4, cores − 1) Workers, at least one.
+	await expect(page.getByRole('button', { name: /^Cell \S+, X$/ })).toHaveCount(1);
+	const cores = await page.evaluate(() => navigator.hardwareConcurrency || 1);
+	expect(page.workers()).toHaveLength(Math.min(4, Math.max(1, cores - 1)));
+});

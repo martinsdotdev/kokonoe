@@ -31,6 +31,42 @@ pub enum Choice {
     MostVisited,
 }
 
+impl Choice {
+    /// The move this choice picks from the visits its searches found, every search's listed
+    /// together in any order: summed by Cell, then the most visited, or sampled in proportion to
+    /// visits^(1/τ). With no visits at all, a move picked uniformly. `None` only when no move is
+    /// listed.
+    pub fn pick(self, visits: &[(Cell, u32)], seed: u64) -> Option<Cell> {
+        let visits = merge(visits);
+        let mut rng = Rng(seed);
+        let most = visits.iter().map(|&(_, n)| n).max().unwrap_or(0);
+        if most == 0 {
+            return visits.get(rng.below(visits.len())).map(|&(cell, _)| cell);
+        }
+        match self {
+            Choice::MostVisited => visits
+                .iter()
+                .max_by_key(|&&(cell, n)| (n, Reverse(cell.index())))
+                .map(|&(cell, _)| cell),
+            Choice::Sample { tau } => {
+                // Scaled by the most visits first, so no weight exceeds 1 however small τ is.
+                let weight = |n: u32| libm::powf(n as f32 / most as f32, 1.0 / tau);
+                let total: f32 = visits.iter().map(|&(_, n)| weight(n)).sum();
+                let mut left = rng.unit() * total;
+                let mut last = None;
+                for &(cell, n) in visits.iter().filter(|&&(_, n)| n > 0) {
+                    left -= weight(n);
+                    last = Some(cell);
+                    if left < 0.0 {
+                        break;
+                    }
+                }
+                last // the last visited move when rounding leaves a little over
+            }
+        }
+    }
+}
+
 /// One row of the ladder.
 struct Rung {
     iterations: u32,
@@ -212,10 +248,15 @@ pub fn search(
 }
 
 /// The iterations each Worker searches at `level` on a device with `cores` logical cores: as many
-/// shares as [`Level::workers`], as even as can be, summing to the Level's budget.
+/// shares as [`Level::workers`], summing to the Level's budget.
 pub fn shares(level: Level, cores: u32) -> Vec<u32> {
-    let workers = level.workers(cores);
-    let total = level.iterations();
+    split(level.iterations(), level.workers(cores))
+}
+
+/// `total` iterations split across `workers` searches as evenly as can be, the first ones taking
+/// any remainder. One share of all of them when `workers` is 0.
+pub fn split(total: u32, workers: u32) -> Vec<u32> {
+    let workers = workers.max(1);
     let base = total.checked_div(workers).unwrap_or(total);
     let left = total.checked_rem(workers).unwrap_or(0);
     (0..workers)
@@ -223,35 +264,9 @@ pub fn shares(level: Level, cores: u32) -> Vec<u32> {
         .collect()
 }
 
-/// The move `level` plays from the visits its searches found, every search's listed together in
-/// any order: summed by Cell, then the most visited, or sampled in proportion to visits^(1/τ).
-/// With no visits at all, a move picked uniformly. `None` only when no move is listed.
+/// The move `level` plays from the visits its searches found: [`Choice::pick`] with its choice.
 pub fn choose(level: Level, visits: &[(Cell, u32)], seed: u64) -> Option<Cell> {
-    let visits = merge(visits);
-    let mut rng = Rng(seed);
-    if visits.iter().all(|&(_, n)| n == 0) {
-        return visits.get(rng.below(visits.len())).map(|&(cell, _)| cell);
-    }
-    match level.choice() {
-        Choice::MostVisited => visits
-            .iter()
-            .max_by_key(|&&(cell, n)| (n, Reverse(cell.index())))
-            .map(|&(cell, _)| cell),
-        Choice::Sample { tau } => {
-            let weight = |n: u32| libm::powf(n as f32, 1.0 / tau);
-            let total: f32 = visits.iter().map(|&(_, n)| weight(n)).sum();
-            let mut left = rng.unit() * total;
-            let mut last = None;
-            for &(cell, n) in visits.iter().filter(|&&(_, n)| n > 0) {
-                left -= weight(n);
-                last = Some(cell);
-                if left < 0.0 {
-                    break;
-                }
-            }
-            last // the last visited move when rounding leaves a little over
-        }
-    }
+    level.choice().pick(visits, seed)
 }
 
 /// Visits summed by Cell, in ascending Cell index, so the pick doesn't depend on how many
@@ -576,6 +591,32 @@ mod tests {
         let cell = choose(level(8), &searched, 3).unwrap();
         assert!(searched.iter().any(|&(listed, _)| listed == cell));
         assert_eq!(choose(level(8), &[], 3), None);
+    }
+
+    #[test]
+    fn a_small_tau_on_many_visits_still_samples() {
+        // 100,000^(1/0.05) overflows an f32; scaled by the most visits, the weights don't.
+        let searched = visits(&[(4, 100_000), (8, 90_000)]);
+        let tight = Choice::Sample { tau: 0.05 };
+        let heavier = searched.iter().max_by_key(|&&(_, n)| n).unwrap().0;
+        let picks: Vec<Cell> = (0..1_000)
+            .map(|seed| tight.pick(&searched, seed).unwrap())
+            .collect();
+        assert!(
+            picks
+                .iter()
+                .all(|cell| searched.iter().any(|&(listed, _)| listed == *cell))
+        );
+        // 0.9^20 ≈ 0.12 against 1: the heavier move about 89% of the time.
+        let heavy = picks.iter().filter(|&&cell| cell == heavier).count();
+        assert!((850..930).contains(&heavy), "{heavy}");
+    }
+
+    #[test]
+    fn a_budget_splits_evenly_the_first_shares_taking_the_rest() {
+        assert_eq!(split(10, 3), [4, 3, 3]);
+        assert_eq!(split(100_000, 4), [25_000; 4]);
+        assert_eq!(split(7, 0), [7], "no Workers is one share");
     }
 
     #[test]

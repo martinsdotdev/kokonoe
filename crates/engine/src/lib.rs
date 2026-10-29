@@ -39,7 +39,7 @@ pub use ruleset::{
     Continuation, Depth, DrawnOwner, Fallback, Goal, Objective, Opening, Preset, RandomPlies,
     Ruleset,
 };
-pub use search::{Choice, Level, Searched, choose, search, shares, think};
+pub use search::{Choice, Level, Searched, choose, search, shares, split, think};
 
 /// Bumped whenever the same Record could replay to a different [`State`]: a rules fix, a new
 /// opening generator, or a new legal-move order (`tests/openings.rs` pins both). It is stored

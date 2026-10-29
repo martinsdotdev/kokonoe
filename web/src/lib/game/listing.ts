@@ -1,4 +1,7 @@
-/** How Home words a saved game: when it was played, whose move it is, and what it is. */
+/**
+ * How Home words a saved game: when it was played, whose move it is, and what it is. Also the day
+ * a game file dates it by.
+ */
 import type { SavedGame } from './saved.js';
 
 const time = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -20,6 +23,13 @@ export const playedWhen = (updated: number, now = Date.now()): string => {
 	if (sameDay(then, today)) return `Today, ${time.format(then)}`;
 	if (sameDay(then, yesterday)) return `Yesterday, ${time.format(then)}`;
 	return (then.getFullYear() === today.getFullYear() ? day : dayOfYear).format(then);
+};
+
+/** The day `time` falls on here, as a file dates a game: `2026-10-28`. */
+export const dayOf = (time: number): string => {
+	const date = new Date(time);
+	const two = (n: number) => String(n).padStart(2, '0');
+	return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
 };
 
 /** "1 move" or "12 moves": the moves players made, as the result banner counts them. */

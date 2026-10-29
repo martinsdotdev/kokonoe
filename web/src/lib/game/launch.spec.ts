@@ -46,5 +46,7 @@ describe("a replay's URL", () => {
 		expect(replayQuery('a1')).toBe('?game=a1');
 		expect(replayQuery('a1', 0)).toBe('?game=a1');
 		expect(replayQuery('a1', 14)).toBe('?game=a1&ply=14');
+		expect(replayQuery(null), 'an imported game, at its start').toBe('');
+		expect(replayQuery(null, 3)).toBe('?ply=3');
 	});
 });

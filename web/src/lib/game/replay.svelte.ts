@@ -5,8 +5,10 @@
  * comes from this device's saved games or from an imported file.
  */
 import type { Cell, Game, Player, Record as GameRecord, Status } from '#lib/engine.js';
-import { dayOf, type GameFile, type ParsedFile } from './gamefile.js';
+import type { ParsedFile } from './fileimport.js';
+import type { GameFile } from './gamefile.js';
 import { againstLabel } from './launch.js';
+import { dayOf } from './listing.js';
 import {
 	dealtMoves,
 	playedMove,

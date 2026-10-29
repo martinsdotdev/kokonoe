@@ -1,18 +1,20 @@
 <!--
-	The Replay viewer for a game saved on this device: `?game=<id>`, with `&ply=N` for the ply
-	shown, which the address keeps as it changes, so a reload stays put.
+	The Replay viewer: a game saved on this device, `?game=<id>`, or one `/import` opened, which the
+	page's history state carries so a reload in the tab keeps it. `&ply=N` is the ply shown, which
+	the address keeps as it changes, so a reload stays put.
 -->
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import { loadEngine } from '#lib/engine.js';
 	import { replayQuery } from '#lib/game/launch.js';
-	import { UnplayableGame } from '#lib/game/record.js';
-	import { fromSaved, Replay } from '#lib/game/replay.svelte.js';
-	import ReplayScreen from '#lib/game/ReplayScreen.svelte';
 	import PageProblem from '#lib/game/PageProblem.svelte';
-	import { explain, loadSaved, Problem } from '#lib/game/problem.js';
+	import { ENGINE, explain, failed, loadSaved, Problem } from '#lib/game/problem.js';
+	import { UnplayableGame } from '#lib/game/record.js';
+	import { fromSaved, Replay, type ReplaySource } from '#lib/game/replay.svelte.js';
+	import ReplayScreen from '#lib/game/ReplayScreen.svelte';
 
 	let replay: Replay | null = $state(null);
 	let problem: string | null = $state(null);
@@ -21,12 +23,20 @@
 
 	const id = page.url.searchParams.get('game');
 
+	/** The game the address or the history state names. */
+	const source = async (): Promise<ReplaySource> => {
+		if (id !== null) return fromSaved(await loadSaved(id));
+		const imported = page.state.imported;
+		if (!imported) throw new Problem('This link names no game to replay.');
+		await loadEngine().catch(failed(ENGINE));
+		return imported;
+	};
+
 	const open = async (): Promise<Replay | null> => {
-		if (id === null) throw new Problem('This link names no game to replay.');
-		const saved = await loadSaved(id);
+		const game = await source();
 		if (left) return null;
 		try {
-			const opened = Replay.open(fromSaved(saved));
+			const opened = Replay.open(game);
 			opened.go(Number.parseInt(page.url.searchParams.get('ply') ?? '0', 10) || 0);
 			return opened;
 		} catch (error) {
@@ -42,11 +52,13 @@
 		(error: unknown) => (problem = explain(error, 'The replay couldn’t open.'))
 	);
 
-	// The address keeps the ply shown.
+	// The address keeps the ply shown, and the history state the imported game.
 	$effect(() => {
-		if (!replay || id === null) return;
+		if (!replay) return;
 		const query = replayQuery(id, replay.ply);
-		if (location.search !== query) replaceState(resolve(`/replay${query}`), {});
+		if (location.search === query) return;
+		const state = page.state;
+		goto(resolve(`/replay${query}`), { shallow: true, replace: true, state, persistState: true });
 	});
 
 	onDestroy(() => {

@@ -40,7 +40,15 @@
 	{#if moves.length === 0}
 		<p class="m-0 px-4 py-3 text-sm text-muted-foreground">No moves yet.</p>
 	{:else}
-		<ol bind:this={list} class="relative m-0 max-h-[360px] list-none overflow-y-auto py-1.5">
+		<!-- In a game its rows aren't buttons, so the list itself takes focus: a region that
+		     scrolls must be reachable by keyboard (WCAG 2.1.1), which Svelte's rule doesn't know. -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+		<ol
+			bind:this={list}
+			class="relative m-0 max-h-[360px] list-none overflow-y-auto py-1.5"
+			aria-label="Moves"
+			tabindex={onjump ? undefined : 0}
+		>
 			{#each moves as move (move.n)}
 				<li style:background={move.n === shown ? 'var(--highlighter)' : undefined}>
 					{#if onjump}
@@ -48,10 +56,10 @@
 							type="button"
 							class="row"
 							aria-current={move.n === shown ? 'step' : undefined}
-							onclick={() => onjump(move.n)}>{@render row(move)}</button
+							onclick={() => onjump(move.n)}>{@render row(move, move.n === shown)}</button
 						>
 					{:else}
-						<div class="row">{@render row(move)}</div>
+						<div class="row">{@render row(move, move.n === shown)}</div>
 					{/if}
 				</li>
 			{/each}
@@ -59,13 +67,15 @@
 	{/if}
 </section>
 
-{#snippet row(move: Move)}
-	<span class="w-7 font-mono text-[13px] text-muted-foreground">{move.n}</span>
+<!-- On the highlighter, grey text loses its contrast, so the row shown is all in ink. -->
+{#snippet row(move: Move, highlighted: boolean)}
+	{@const quiet = highlighted ? 'text-foreground' : 'text-muted-foreground'}
+	<span class="w-7 font-mono text-[13px] {quiet}">{move.n}</span>
 	<span class="w-4 font-semibold" style:color={move.player === 'X' ? 'var(--x)' : 'var(--o-text)'}
 		>{move.player}</span
 	>
 	<span class="font-mono text-[15px]">{written(move)}</span>
-	<span class="ml-auto text-[13px] text-muted-foreground">{move.note}</span>
+	<span class="ml-auto text-[13px] {quiet}">{move.note}</span>
 {/snippet}
 
 <style>

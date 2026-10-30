@@ -44,5 +44,6 @@ pub use search::{Choice, Level, Searched, choose, search, shares, split, think};
 /// Bumped whenever the same Record could replay to a different [`State`]: a rules fix, a new
 /// opening generator, or a new legal-move order (`tests/openings.rs` pins both). It is stored
 /// beside every serialized Record, so a client and a server on different releases detect the
-/// skew instead of silently disagreeing about a game.
+/// skew instead of silently disagreeing about a game. The golden corpus in `tests/corpus/`
+/// fails any change that replays a Record differently; `RULES_VERSION.md` is how to bump it.
 pub const RULES_VERSION: u32 = 1;

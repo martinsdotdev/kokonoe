@@ -5,6 +5,7 @@
 		"types": ["$app/types", "node"]
 	},
 	"include": ["src", "vite.config.ts", "playwright.config.ts"],
-	// The generated glue for the WASM engine: imports of it read its .d.ts instead.
-	"exclude": ["src/lib/engine/*.js"]
+	// The generated glue for the WASM engine: imports of it read its .d.ts instead. The service
+	// worker has its own tsconfig, for the worker's globals.
+	"exclude": ["src/lib/engine/*.js", "src/service-worker"]
 }

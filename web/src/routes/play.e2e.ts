@@ -1,15 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { DRAWN, LINE_OF_MIDDLE_BOARDS, TOP_ROW, notation } from '../lib/game/games.fixtures.js';
-import { stepThrough, stepped, tally } from './steps.js';
-
-const cell = (page: Page, digits: string) =>
-	page.getByRole('button', { name: `Cell ${notation(digits)}`, exact: true });
-
-const play = async (page: Page, moves: string) => {
-	for (const digits of moves.split(/\s+/).filter(Boolean)) await cell(page, digits).click();
-};
-
-const marked = (page: Page) => page.getByRole('button', { name: /^Cell \S+, [XO]$/ });
+import { DRAWN, LINE_OF_MIDDLE_BOARDS, TOP_ROW } from '../lib/game/games.fixtures.js';
+import { cell, marked, play, stepThrough, stepped, tally } from './steps.js';
 
 const open = async (page: Page) => {
 	await page.goto('/play');

@@ -29,7 +29,9 @@ const report = (files: Map<string, number>, total: number) => {
 	else console.log(table);
 };
 
-test('the game screen loads at most 100 kB brotli of JS and WASM', async ({ page }) => {
+test('the game screen loads at most 100 kB brotli of JS and WASM, the service worker’s included', async ({
+	page
+}) => {
 	const loads = new Map<string, Promise<number>>();
 	const failed: string[] = [];
 	page.on('response', (response) => {
@@ -44,6 +46,11 @@ test('the game screen loads at most 100 kB brotli of JS and WASM', async ({ page
 
 	const files = new Map<string, number>();
 	for (const [path, size] of loads) files.set(path, await size);
+	// The tests keep the service worker off, so it's fetched here. What it keeps for offline
+	// loads after the page, in the worker, and isn't the screen's.
+	const worker = await page.request.get('/service-worker.js');
+	expect(worker.ok(), 'the service worker is built').toBe(true);
+	files.set('/service-worker.js', brotli(await worker.body()));
 	const total = [...files.values()].reduce((sum, size) => sum + size, 0);
 	report(files, total);
 	expect(failed, 'every JS and WASM file loaded').toEqual([]);

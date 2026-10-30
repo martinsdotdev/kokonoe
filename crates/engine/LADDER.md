@@ -35,4 +35,16 @@ Played by `cargo run --release --example ladder -- --preset std --pairs 1-8 --wr
 
 ## Deep
 
-Not played yet.
+Played on the ladder above by `cargo run --release --example ladder -- --preset d3 --pairs 1-8 --write`, which stopped during 8 over 7 when the machine ran short of memory; the six pairs it finished are copied from its output.
+
+| Pair | Games | Won | Drawn | Lost | Score | 95% interval | Verdict | Plies a game |
+| :-- | --: | --: | --: | --: | --: | :-- | :-- | --: |
+| 2 over 1 | 50 | 18 | 10 | 22 | 46.0% | 33.0%–59.6% | too close | 449 |
+| 3 over 2 | 50 | 39 | 11 | 0 | 89.0% | 77.4%–95.0% | too far apart | 469 |
+| 4 over 3 | 400 | 285 | 63 | 52 | 79.1% | 74.9%–82.8% | too far apart, unsettled | 453 |
+| 5 over 4 | 50 | 43 | 6 | 1 | 92.0% | 81.2%–96.8% | too far apart | 438 |
+| 6 over 5 | 50 | 48 | 2 | 0 | 98.0% | 89.5%–99.6% | too far apart | 399 |
+| 7 over 6 | 50 | 50 | 0 | 0 | 100.0% | 92.9%–100.0% | too far apart | 246 |
+| 8 over 7 | | | | | | | not played | |
+
+The ladder tuned on Standard doesn't fit Deep. A Deep game runs 250–470 plies against Standard's 50, so a small edge in each move compounds, and a free move has up to 81 Cells, so 30 and 100 iterations both play close to random. Levels 3 to 7 each crush the one below, and Level 2 doesn't beat Level 1. Fitting Deep needs its own iterations and τ for each Level, as its caps already differ; KOK-43 stays open for that.

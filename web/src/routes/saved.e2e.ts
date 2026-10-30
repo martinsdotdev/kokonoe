@@ -1,15 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { TOP_ROW, notation } from '../lib/game/games.fixtures.js';
-import { stepThrough, stepped } from './steps.js';
-
-const cell = (page: Page, name: string) =>
-	page.getByRole('button', { name: `Cell ${name}`, exact: true });
-
-const play = async (page: Page, moves: string) => {
-	for (const digits of moves.split(/\s+/)) await cell(page, notation(digits)).click();
-};
-
-const marked = (page: Page) => page.getByRole('button', { name: /^Cell \S+, [XO]$/ });
+import { TOP_ROW } from '../lib/game/games.fixtures.js';
+import { cell, marked, play, stepThrough, stepped } from './steps.js';
 
 /**
  * Waits until IndexedDB holds `moves` moves of the game in the address. A save is still in
@@ -34,7 +25,7 @@ const waitForSaved = (page: Page, moves: number) =>
 test('a reload resumes a game against the computer where it stood', async ({ page }) => {
 	await page.goto('/play?vs=computer&level=1&seat=X');
 	await expect(page).toHaveURL(/\/play\?rules=std&vs=computer&level=1&seat=X$/);
-	await cell(page, '5·5').click();
+	await cell(page, '44').click();
 	await expect(page).toHaveURL(/\/play\?game=[\w-]+$/);
 	await expect(marked(page)).toHaveCount(2);
 	await waitForSaved(page, 2);
@@ -86,7 +77,7 @@ test('an id this device doesn’t know says so', async ({ page }) => {
 
 test('Home continues the latest unfinished game', async ({ page }) => {
 	await page.goto('/play?vs=computer&level=1&seat=X');
-	await cell(page, '5·5').click();
+	await cell(page, '44').click();
 	await expect(marked(page)).toHaveCount(2);
 	await page.getByRole('link', { name: 'Leave game' }).click();
 

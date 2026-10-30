@@ -1,10 +1,22 @@
 /**
- * Playing on the board that steps into one Board at a time, on a phone and for Deep, and dealing
- * a Random opening from a known Seed.
+ * Playing by click on a board that shows every Cell, on the board that steps into one Board at a
+ * time, on a phone and for Deep, and dealing a Random opening from a known Seed.
  */
 import { expect, type Locator, type Page } from '@playwright/test';
 import { notation, parse } from '../lib/game/games.fixtures.js';
 import { boardName } from '../lib/game/notation.js';
+
+/** A Cell's button, by its digits: `"44"` is `5·5`. */
+export const cell = (page: Page, digits: string) =>
+	page.getByRole('button', { name: `Cell ${notation(digits)}`, exact: true });
+
+/** Plays `moves`, written as digits, by click. */
+export const play = async (page: Page, moves: string) => {
+	for (const digits of moves.split(/\s+/).filter(Boolean)) await cell(page, digits).click();
+};
+
+/** The buttons of every marked Cell. */
+export const marked = (page: Page) => page.getByRole('button', { name: /^Cell \S+, [XO]$/ });
 
 export const stepped = (page: Page) => page.locator('[data-focus]');
 

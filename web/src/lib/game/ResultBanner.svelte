@@ -40,10 +40,9 @@
 			aria-hidden="true">{winner ?? '='}</span
 		>
 		<div class="min-w-0">
-			<h2
-				class="m-0 font-display text-[40px] leading-[1.05] font-semibold tracking-[-0.015em]"
-				aria-live="polite"
-			>
+			<!-- Not a live region: one that appears already filled may go unread. The game screen's
+			     live line says the result. -->
+			<h2 class="m-0 font-display text-[40px] leading-[1.05] font-semibold tracking-[-0.015em]">
 				{headline}
 			</h2>
 			<p class="mt-1 mb-0 text-muted-foreground">{detail}</p>

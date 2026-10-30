@@ -6,7 +6,8 @@
 	another tile. It renders its part of a BoardView and reports clicks.
 
 	It draws its Board one of four ways:
-	- to play on: a group of Cell buttons, or when `large` and given `onstep`, of Local board buttons;
+	- to play on: a group of Cell buttons, or when `large` and given `onstep`, of Local board buttons,
+	  where a `large` one, drawn alone, takes the arrow keys;
 	- to read: `disabled` with no `onplay`, as in a replay, its Cells images named as the buttons are;
 	- to step into: with `onstep`, one button, where what's inside is a picture;
 	- as that picture: `still`, which a tile sets on the tiles inside it, with nothing to press.
@@ -14,8 +15,9 @@
 <script lang="ts">
 	import type { Board, Cell, Player } from '#lib/engine.js';
 	import BoardTile from './BoardTile.svelte';
+	import { arrows } from './keys.js';
 	import Mark from './Mark.svelte';
-	import { boardLabel, boardName, notation } from './notation.js';
+	import { boardName, notation } from './notation.js';
 	import { at, cellsOf, children, key, ownerOf, same, type BoardView } from './view.js';
 
 	interface Props {
@@ -61,6 +63,13 @@
 		return won ? `${name}, won by ${won}` : state.status === 'Drawn' ? `${name}, drawn` : name;
 	});
 
+	/** Its name with where play goes: `Board 6, Sent here, play here`. */
+	const named = $derived(
+		[name, same(view.sent, board) && 'Sent here', state.active && !disabled && 'play here']
+			.filter(Boolean)
+			.join(', ')
+	);
+
 	const legal = (cell: Cell) => !disabled && state.active && view.cells[cell] === null;
 	const dealt = (cell: Cell) => view.dealt.includes(cell);
 	/** A Cell as assistive technology names it: `Cell 5·5`, `Cell 5·5, X`, `Cell 5·5, X, dealt`. */
@@ -78,8 +87,9 @@
 	class:still
 	class:middle={!local}
 	role={inert ? undefined : 'group'}
-	aria-label={still ? undefined : button && state.active && !disabled ? `${name}, play here` : name}
+	aria-label={still ? undefined : named}
 	onclick={button ? () => onstep?.(board) : undefined}
+	{@attach large && arrows}
 	data-board={key(board)}
 	data-status={won ? `won-${won.toLowerCase()}` : state.status === 'Drawn' ? 'drawn' : 'open'}
 	data-active={state.active || undefined}
@@ -144,7 +154,8 @@
 	{/if}
 	{#if same(view.sent, board)}
 		<span class="sent" aria-hidden="true"></span>
-		{#if !still}<span class="sent-label">Sent → {boardLabel(board)}</span>{/if}
+		<!-- Its words are in the tile's name, as a button's visible text must be. -->
+		{#if !still}<span class="sent-label" aria-hidden="true">Sent here</span>{/if}
 	{/if}
 	{#if flash && same(flash.board, board)}
 		{#key flash.tick}<span class="flash" aria-hidden="true"></span>{/key}

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { DRAWN, LINE_OF_MIDDLE_BOARDS, TOP_ROW } from '../lib/game/games.fixtures.js';
-import { cell, marked, play, stepThrough, stepped, tally } from './steps.js';
+import { cell, marked, play, stepThrough, stepped, tally, turnLine } from './steps.js';
 
 const open = async (page: Page) => {
 	await page.goto('/play');
@@ -10,7 +10,7 @@ const open = async (page: Page) => {
 test('the game screen loads the engine in the built app', async ({ page }) => {
 	const wasm = page.waitForResponse((response) => response.url().endsWith('.wasm'));
 	await open(page);
-	await expect(page.getByText('X: play anywhere.')).toBeVisible();
+	await expect(turnLine(page, 'X: play anywhere.')).toBeVisible();
 	// Anything else makes the browser compile from a buffered copy, with a console warning.
 	expect((await wasm).headers()['content-type']).toBe('application/wasm');
 });
@@ -21,7 +21,7 @@ test('the engine still loads from a host that sends the wrong type', async ({ pa
 		await route.fulfill({ response, contentType: 'application/octet-stream' });
 	});
 	await open(page);
-	await expect(page.getByText('X: play anywhere.')).toBeVisible();
+	await expect(turnLine(page, 'X: play anywhere.')).toBeVisible();
 });
 
 test('a Standard game plays to a line win, and then stays finished', async ({ page }) => {
@@ -34,7 +34,7 @@ test('a Standard game plays to a line win, and then stays finished', async ({ pa
 
 	await page.getByRole('button', { name: 'New game' }).click();
 	await expect(marked(page)).toHaveCount(0);
-	await expect(page.getByText('X: play anywhere.')).toBeVisible();
+	await expect(turnLine(page, 'X: play anywhere.')).toBeVisible();
 });
 
 test('a Standard game plays to a draw', async ({ page }) => {
@@ -52,7 +52,7 @@ test('undo walks back to the first move', async ({ page }) => {
 	for (let i = 0; i < 5; i++) await undo.click();
 	await expect(marked(page)).toHaveCount(0);
 	await expect(undo).toBeDisabled();
-	await expect(page.getByText('X: play anywhere.')).toBeVisible();
+	await expect(turnLine(page, 'X: play anywhere.')).toBeVisible();
 });
 
 test('an illegal tap flashes the Board it names and plays nothing', async ({ page }) => {
@@ -60,9 +60,9 @@ test('an illegal tap flashes the Board it names and plays nothing', async ({ pag
 	await play(page, '42');
 	// aria-disabled Cells still take clicks in a browser; Playwright needs telling.
 	await cell(page, '00').click({ force: true });
-	await expect(page.getByRole('group', { name: 'Board 3', exact: true })).toHaveAttribute(
-		'data-flash'
-	);
+	await expect(
+		page.getByRole('group', { name: 'Board 3, Sent here, play here', exact: true })
+	).toHaveAttribute('data-flash');
 	await expect(marked(page)).toHaveCount(1);
 });
 

@@ -17,7 +17,7 @@ const group = (screen: Awaited<ReturnType<typeof render>>, label: string) =>
 describe('the board grammar', () => {
 	it('washes the Active boards', async () => {
 		const screen = await render(Board, { view: position((v) => (at(v, [5]).active = true)) });
-		await expect.element(group(screen, 'Board 6')).toHaveAttribute('data-active');
+		await expect.element(group(screen, 'Board 6, play here')).toHaveAttribute('data-active');
 		await expect.element(group(screen, 'Board 5')).not.toHaveAttribute('data-active');
 	});
 
@@ -28,8 +28,10 @@ describe('the board grammar', () => {
 				at(v, [5]).active = true;
 			})
 		});
-		await expect.element(group(screen, 'Board 6')).toHaveAttribute('data-sent');
-		await expect.element(screen.getByText('Sent → 6')).toBeVisible();
+		await expect
+			.element(group(screen, 'Board 6, Sent here, play here'))
+			.toHaveAttribute('data-sent');
+		await expect.element(screen.getByText('Sent here')).toBeVisible();
 	});
 
 	it('rings the last move', async () => {
@@ -83,7 +85,7 @@ describe('the board grammar', () => {
 				at(v, [2]).active = true;
 			})
 		});
-		const board = group(screen, 'Board 3, won by O');
+		const board = group(screen, 'Board 3, won by O, play here');
 		await expect.element(board).toHaveAttribute('data-active');
 		expect(board.element().querySelector('[data-owner="O"]')?.classList).toContain('watermark');
 		expect(board.element().querySelector('.cells')?.classList).not.toContain('faded');
@@ -101,10 +103,11 @@ describe('the board grammar', () => {
 				for (const space of [0, 1, 3, 4, 5, 6, 7, 8]) at(v, [space]).active = true;
 			})
 		});
-		await expect.element(group(screen, 'Board 3, won by X')).toHaveAttribute('data-sent');
-		await expect.element(group(screen, 'Board 3, won by X')).not.toHaveAttribute('data-active');
+		const target = group(screen, 'Board 3, won by X, Sent here');
+		await expect.element(target).toHaveAttribute('data-sent');
+		await expect.element(target).not.toHaveAttribute('data-active');
 		for (const label of ['Board 1', 'Board 5', 'Board 9']) {
-			await expect.element(group(screen, label)).toHaveAttribute('data-active');
+			await expect.element(group(screen, `${label}, play here`)).toHaveAttribute('data-active');
 		}
 	});
 });
@@ -177,7 +180,7 @@ describe('a Deep board that steps', () => {
 		expect(tile(screen, '47').dataset.active).toBe('true');
 		expect(tile(screen, '47').dataset.sent).toBe('true');
 		expect(tile(screen, '3').dataset.active).toBeUndefined();
-		expect(screen.container.textContent, 'no room for the label').not.toContain('Sent →');
+		expect(screen.container.textContent, 'no room for the label').not.toContain('Sent here');
 		expect(tile(screen, '43').querySelector('[data-last]')).not.toBeNull();
 		expect(tile(screen, '2').dataset.flash).toBe('true');
 	});

@@ -5,7 +5,7 @@ import {
 	LINE_OF_MIDDLE_BOARDS,
 	TOP_ROW
 } from '../lib/game/games.fixtures.js';
-import { settledFocus, stepInto, stepThrough, stepped, tally } from './steps.js';
+import { settledFocus, stepInto, stepped, stepThrough, tally, turnLine } from './steps.js';
 
 // A phone, set by hand: Playwright's iPhone descriptors bring WebKit and a shorter viewport.
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
@@ -35,7 +35,7 @@ test('the board and the turn come first, above the fold', async ({ page }) => {
 		await expect(page.getByRole('group', { name: 'The Global board' })).toBeInViewport({
 			ratio: 1
 		});
-		await expect(page.getByText('X: play anywhere.')).toBeInViewport({ ratio: 1 });
+		await expect(turnLine(page, 'X: play anywhere.')).toBeInViewport({ ratio: 1 });
 	}
 	const board = await page.getByRole('region', { name: 'Board' }).boundingBox();
 	const players = await page.getByRole('complementary', { name: 'Players' }).boundingBox();
@@ -71,7 +71,7 @@ test('a refused tap steps to where to play, and says so until the next move', as
 	// aria-disabled Cells still take taps in a browser; Playwright needs telling.
 	await page.getByRole('button', { name: 'Cell 1·1', exact: true }).tap({ force: true });
 	await expect(stepped(page)).toHaveAttribute('data-focus', '4');
-	const line = page.getByText('Not playable. O: play in board 5.');
+	const line = turnLine(page, '1·1 isn’t playable. O: play in board 5.');
 	await expect(line).toBeVisible();
 	await settledFocus(page);
 	await page.getByRole('button', { name: 'Global', exact: true }).tap();
@@ -79,10 +79,10 @@ test('a refused tap steps to where to play, and says so until the next move', as
 	await page.waitForTimeout(1000);
 	await expect(stepped(page)).toHaveAttribute('data-focus', 'global');
 	await expect(line).toBeVisible();
-	await page.getByRole('button', { name: 'Board 5, play here' }).tap();
+	await page.getByRole('button', { name: 'Board 5, Sent here, play here' }).tap();
 	await settledFocus(page);
 	await page.getByRole('button', { name: 'Cell 5·1', exact: true }).tap();
-	await expect(page.getByText('X: play in board 1.')).toBeVisible();
+	await expect(turnLine(page, 'X: play in board 1.')).toBeVisible();
 });
 
 test('the computer’s move lands in view before the view follows', async ({ page }) => {
@@ -131,7 +131,7 @@ test.describe('Deep', () => {
 		await stepThrough(page, INTO_A_WON_BOARD, tap);
 		// O Sent X into Local board 8·7, which X has won: X may play anywhere in Board 8.
 		expect(await settledFocus(page)).toEqual([7]);
-		await expect(page.getByText('X: play anywhere in board 8.')).toBeVisible();
+		await expect(turnLine(page, 'X: free move, play anywhere in board 8.')).toBeVisible();
 		const won = page.locator('[data-board="76"]');
 		await expect(won).toHaveAttribute('data-status', 'won-x');
 		await expect(won).toHaveAttribute('data-sent');

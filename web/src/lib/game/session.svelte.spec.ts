@@ -79,9 +79,13 @@ describe('a hot-seat game', () => {
 	it('keeps a refusal until the next move', () => {
 		const session = after('42');
 		session.play(0);
-		expect(session.refusal).toEqual({ board: [2], tick: 1 });
+		expect(session.refusal).toEqual({ cell: 0, board: [2], tick: 1 });
 		session.play(cells('42')[0]);
-		expect(session.refusal, 'Occupied names no Board').toEqual({ board: null, tick: 2 });
+		expect(session.refusal, 'Occupied names no Board').toEqual({
+			cell: cells('42')[0],
+			board: null,
+			tick: 2
+		});
 		session.play(cells('24')[0]);
 		expect(session.refusal).toBeNull();
 	});
@@ -119,7 +123,7 @@ describe('a Deep game', () => {
 		});
 		session.play(cells('760')[0]);
 		expect(session.flash, 'beneath the won Local board').toEqual({ board: [7, 6], tick: 2 });
-		expect(session.refusal).toEqual({ board: [7, 6], tick: 2 });
+		expect(session.refusal).toEqual({ cell: cells('760')[0], board: [7, 6], tick: 2 });
 	});
 
 	it('notes each middle Board its line wins', () => {

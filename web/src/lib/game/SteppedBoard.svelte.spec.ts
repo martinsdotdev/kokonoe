@@ -195,7 +195,7 @@ describe('Deep', () => {
 		await settled(screen);
 		await screen.getByRole('button', { name: 'Board 5', exact: true }).click();
 		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', '4');
-		expect(document.activeElement?.getAttribute('aria-label')).toBe('Local board 5·8');
+		expect(document.activeElement?.getAttribute('aria-label')).toBe('Local board 5·8, Sent here');
 		await settled(screen);
 		await screen.getByRole('button', { name: 'Global', exact: true }).click();
 		await expect.element(focusOf(screen)).toHaveAttribute('data-focus', 'global');

@@ -1,6 +1,7 @@
 /**
- * Playing by click on a board that shows every Cell, on the board that steps into one Board at a
- * time, on a phone and for Deep, and dealing a Random opening from a known Seed.
+ * Playing the game screen in the e2e tests: by click on a board that shows every Cell, by typing
+ * Notation, on the board that steps into one Board at a time, on a phone and for Deep, and dealing
+ * a Random opening from a known Seed.
  */
 import { expect, type Locator, type Page } from '@playwright/test';
 import { notation, parse } from '../lib/game/games.fixtures.js';
@@ -14,6 +15,21 @@ export const cell = (page: Page, digits: string) =>
 export const play = async (page: Page, moves: string) => {
 	for (const digits of moves.split(/\s+/).filter(Boolean)) await cell(page, digits).click();
 };
+
+/** Focuses the board, where typed digits play: its first button. */
+export const focusBoard = (page: Page) =>
+	page.getByRole('region', { name: 'Board' }).getByRole('button').first().focus();
+
+/** Plays `moves`, written as digits, by typing each one's Notation digits on the focused board. */
+export const typeMoves = async (page: Page, moves: string) => {
+	for (const digits of moves.split(/\s+/).filter(Boolean)) {
+		for (const digit of notation(digits).split('·')) await page.keyboard.press(digit);
+	}
+};
+
+/** The turn card's line, as people see it: the live line can hold the same words. */
+export const turnLine = (page: Page, text: string) =>
+	page.getByRole('region', { name: 'Turn' }).getByText(text, { exact: true });
 
 /** The buttons of every marked Cell. */
 export const marked = (page: Page) => page.getByRole('button', { name: /^Cell \S+, [XO]$/ });

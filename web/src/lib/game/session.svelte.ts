@@ -103,10 +103,11 @@ export class OfflineGame {
 	/** The Board to flash, with a tick so the same board can flash twice running. */
 	flash: { board: Board; tick: number } | null = $state.raw(null);
 	/**
-	 * The last tap was refused, until the next change: the Board the refusal named, if any, and a
-	 * tick for each refusal. Unlike `flash`, it lasts, so the turn line says it once.
+	 * The last Cell tapped or typed was refused, until the next change: the Cell, the Board the
+	 * refusal named, if any, and a tick for each refusal. Unlike `flash`, it lasts, so the turn
+	 * line says it once.
 	 */
-	refusal: { board: Board | null; tick: number } | null = $state.raw(null);
+	refusal: { cell: Cell; board: Board | null; tick: number } | null = $state.raw(null);
 	/** The last change was the computer's move, which the phone board shows landing. */
 	replied = $state.raw(false);
 	/** The game's id in the store, and its address once `stored`. A restart gives a new one. */
@@ -281,7 +282,7 @@ export class OfflineGame {
 		if ('Illegal' in result) {
 			const board = named(result.Illegal);
 			this.#flash(board);
-			this.refusal = { board, tick: (this.refusal?.tick ?? 0) + 1 };
+			this.refusal = { cell, board, tick: (this.refusal?.tick ?? 0) + 1 };
 		}
 		if (!('Now' in result)) return false;
 		this.#refresh();

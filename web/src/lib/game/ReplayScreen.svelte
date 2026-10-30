@@ -16,6 +16,7 @@
 	import SkipForward from '@lucide/svelte/icons/skip-forward';
 	import Board from './Board.svelte';
 	import ExportButtons from './ExportButtons.svelte';
+	import { shortcut } from './keys.js';
 	import { moves } from './listing.js';
 	import { playedCount } from './moves.js';
 	import MoveList from './MoveList.svelte';
@@ -50,14 +51,9 @@
 		End: () => replay.last
 	};
 
-	/** Where the keys mean something else: typing, or a control of its own. */
-	const typing = 'input, textarea, select, [contenteditable], [role="slider"]';
-
 	const onkeydown = (event: KeyboardEvent) => {
 		const to = keys[event.key];
-		if (!to || event.defaultPrevented) return;
-		if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-		if (event.target instanceof Element && event.target.closest(typing)) return;
+		if (!to || !shortcut(event) || event.shiftKey) return;
 		event.preventDefault();
 		replay.go(to());
 	};

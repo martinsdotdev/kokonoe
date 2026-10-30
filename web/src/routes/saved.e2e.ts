@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { TOP_ROW } from '../lib/game/games.fixtures.js';
-import { cell, marked, play, stepThrough, stepped } from './steps.js';
+import { cell, marked, play, stepped, stepThrough, turnLine } from './steps.js';
 
 /**
  * Waits until IndexedDB holds `moves` moves of the game in the address. A save is still in
@@ -60,7 +60,7 @@ test('a Deep game resumes in the Board it stood in, and Home draws it', async ({
 	await expect(page).toHaveURL(/\/play\?game=[\w-]+$/);
 	await waitForSaved(page, 2);
 	await page.reload();
-	await expect(page.getByText('X: play in board 5·1.')).toBeVisible();
+	await expect(turnLine(page, 'X: play in board 5·1.')).toBeVisible();
 	await expect(stepped(page)).toHaveAttribute('data-focus', '40');
 
 	await page.getByRole('link', { name: 'Leave game' }).click();

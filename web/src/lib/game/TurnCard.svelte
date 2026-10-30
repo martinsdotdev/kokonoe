@@ -1,62 +1,21 @@
 <!--
 	Where the player to move may play, and why: anywhere on the first move, the Sent target, or,
-	under the FREE MOVE stamp, anywhere open in the Board above a decided target, which at depth 2
-	is the Global board. Its first line is the game's one live announcement, so it names the
-	player, and says when a tap wasn't playable.
+	under the FREE MOVE stamp, anywhere open in the Board above a decided target. It also shows a
+	Cell being typed. The game screen's live line, not this card, says it to a screen reader.
 -->
 <script lang="ts">
-	import type { Board, Player, Sent } from '#lib/engine.js';
-	import { boardLabel } from './notation.js';
-	import { opponent } from './result.js';
+	import type { Player } from '#lib/engine.js';
+	import type { Turn } from './announce.js';
 
 	interface Props {
 		player: Player;
-		sent: Sent;
-		/** The last move in Notation, which did the sending. */
-		last: string | null;
-		/** A tap was refused, and nothing has been played since. */
-		refused?: boolean;
-		/** At depth 3, a decided middle Board above the Sent target, which turned the move away. */
-		decidedAbove?: Board | null;
+		/** Where to play and why, from `turn`. */
+		turn: Turn;
+		/** A Cell being typed, with a gap for each digit to come: `5·_`. */
+		typed?: string | null;
 	}
 
-	let { player, sent, last, refused = false, decidedAbove = null }: Props = $props();
-
-	const turn = $derived.by(() => {
-		const by = `${opponent(player)}’s move ${last ?? ''}`.trim();
-		if (sent === 'FirstMove') {
-			return {
-				free: false,
-				line: `${player}: play anywhere.`,
-				why: 'The first move may go in any Cell.'
-			};
-		}
-		if ('To' in sent) {
-			const board = boardLabel(sent.To);
-			return {
-				free: false,
-				line: `${player}: play in board ${board}.`,
-				why: `${by} Sent ${player} there.`
-			};
-		}
-		const { target, within } = sent.Free;
-		const to = `${by} Sent ${player} to board ${boardLabel(target)}`;
-		if (within.length) {
-			const board = boardLabel(within);
-			return {
-				free: true,
-				line: `${player}: play anywhere in board ${board}.`,
-				why: `${to}, which is decided, so every open board in board ${board} is ${player}’s.`
-			};
-		}
-		const inside = decidedAbove ? `, inside board ${boardLabel(decidedAbove)},` : ',';
-		return {
-			free: true,
-			line: `${player}: play in any open board.`,
-			why: `${to}${inside} which is decided, so every open board is ${player}’s.`
-		};
-	});
-	const line = $derived(refused ? `Not playable. ${turn.line}` : turn.line);
+	let { player, turn, typed = null }: Props = $props();
 </script>
 
 <section
@@ -75,6 +34,9 @@
 			FREE MOVE
 		</span>
 	{/if}
-	<p class="m-0 font-semibold" aria-live="polite">{line}</p>
+	<p class="m-0 font-semibold">{turn.line}</p>
 	<p class="m-0 text-sm text-muted-foreground">{turn.why}</p>
+	{#if typed}
+		<p class="m-0 font-mono text-sm" data-typed>Typing {typed}</p>
+	{/if}
 </section>

@@ -331,6 +331,7 @@ impl From<protocol::CloseCode> for crate::CloseCode {
         match close {
             protocol::CloseCode::Restarting => crate::CloseCode::Restarting,
             protocol::CloseCode::UpdateRequired => crate::CloseCode::UpdateRequired,
+            protocol::CloseCode::Forbidden => crate::CloseCode::Forbidden,
         }
     }
 }

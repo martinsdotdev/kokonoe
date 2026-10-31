@@ -129,6 +129,7 @@ export type Player = "X" | "O";
 export enum CloseCode {
     Restarting = 1012,
     UpdateRequired = 4001,
+    Forbidden = 4003,
 }
 
 /**

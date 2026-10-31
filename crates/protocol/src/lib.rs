@@ -13,11 +13,17 @@ pub enum CloseCode {
     /// The client's build is older than the server will play with: activate the newer build at
     /// once and reload, which `updateNow` in `web/src/lib/update.ts` does (spec §5.1).
     UpdateRequired = 4001,
+    /// The socket has no session, or asked for something it isn't allowed to do.
+    Forbidden = 4003,
 }
 
 impl CloseCode {
     /// Every code, for the mirrors that must name each one.
-    pub const ALL: [CloseCode; 2] = [CloseCode::Restarting, CloseCode::UpdateRequired];
+    pub const ALL: [CloseCode; 3] = [
+        CloseCode::Restarting,
+        CloseCode::UpdateRequired,
+        CloseCode::Forbidden,
+    ];
 
     /// The number sent in the WebSocket's close frame.
     pub const fn code(self) -> u16 {
@@ -48,6 +54,7 @@ mod tests {
         }
         assert_eq!(CloseCode::UpdateRequired.code(), 4001);
         assert_eq!(CloseCode::Restarting.code(), 1012);
+        assert_eq!(CloseCode::Forbidden.code(), 4003);
         assert_eq!(CloseCode::try_from(1000), Err(1000));
     }
 }

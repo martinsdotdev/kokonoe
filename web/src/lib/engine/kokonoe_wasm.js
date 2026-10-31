@@ -5,11 +5,12 @@
  * `CloseEvent`'s `code` with these. 4001 asks for the newer build, which `updateNow` activates.
  * Unlike the tsify types, it's a runtime enum, so the page names a code and its number stays in
  * Rust.
- * @enum {1012 | 4001}
+ * @enum {1012 | 4001 | 4003}
  */
 export const CloseCode = Object.freeze({
     Restarting: 1012, "1012": "Restarting",
     UpdateRequired: 4001, "4001": "UpdateRequired",
+    Forbidden: 4003, "4003": "Forbidden",
 });
 
 /**

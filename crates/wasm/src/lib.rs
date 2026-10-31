@@ -315,4 +315,5 @@ fn typed<T: tsify::Tsify>(value: JsValue) -> Ts<T> {
 pub enum CloseCode {
     Restarting = 1012,
     UpdateRequired = 4001,
+    Forbidden = 4003,
 }

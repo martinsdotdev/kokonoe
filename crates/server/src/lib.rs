@@ -13,7 +13,7 @@ use axum::extract::{Request, State};
 use axum::handler::HandlerWithoutStateExt;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{AppendHeaders, Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use kokonoe_protocol::CloseCode;
@@ -120,17 +120,11 @@ async fn health(State(state): State<AppState>) -> (StatusCode, &'static str) {
         Ok(Ok(_)) => (StatusCode::OK, "ok"),
         Ok(Err(error)) => {
             tracing::warn!(%error, "the database didn't answer the health check");
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "the database is unreachable",
-            )
+            UNREACHABLE
         }
         Err(_) => {
             tracing::warn!("the database took too long to answer the health check");
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "the database is unreachable",
-            )
+            UNREACHABLE
         }
     }
 }
@@ -142,8 +136,8 @@ async fn room(State(state): State<AppState>) -> Html<Bytes> {
 
 /// What the SPA learns about whoever's playing.
 #[derive(Serialize)]
-struct Me<'a> {
-    handle: &'a str,
+struct Me {
+    handle: String,
 }
 
 /// Starts a session, or resumes the one the cookie names. Without a live one, a new Guest
@@ -152,43 +146,38 @@ struct Me<'a> {
 async fn session(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Response, Unavailable> {
-    if let Some(token) = session::token(&headers)
-        && let Some(found) = session::find(&state.pool, &token).await?
-    {
-        let me = Json(Me {
-            handle: &found.account.handle,
-        });
-        if !found.due {
-            return Ok(me.into_response());
+) -> Result<impl IntoResponse, Unavailable> {
+    let (current, send) = match session::find(&state.pool, &headers).await? {
+        Some(found) if found.due => {
+            session::roll(&state.pool, &found).await?;
+            (found, true)
         }
-        session::roll(&state.pool, &token).await?;
-        return Ok(([(header::SET_COOKIE, token.cookie())], me).into_response());
-    }
-    let (token, account) = session::start(&state.pool).await?;
-    let me = Json(Me {
-        handle: &account.handle,
-    });
-    Ok(([(header::SET_COOKIE, token.cookie())], me).into_response())
+        Some(found) => (found, false),
+        None => (session::start(&state.pool).await?, true),
+    };
+    let cookie = send.then(|| (header::SET_COOKIE, current.cookie()));
+    Ok((
+        AppendHeaders(cookie),
+        Json(Me {
+            handle: current.handle,
+        }),
+    ))
 }
 
-/// The game socket. One opened from another site is refused outright. One without a session is
-/// accepted and then closed with 4003, since a page can't read why a refused upgrade failed but
-/// can read a close code. One with a session stays open, answering pings, until Rooms give it
-/// something to say (KOK-56). It doesn't move the session's expiry: a socket has no cookie to
-/// send back.
+/// The game socket. One opened from another site, or without saying where it's from, is refused
+/// outright. One without a session is accepted and then closed with 4003, since a page can't read
+/// why a refused upgrade failed but can read a close code. One with a session stays open,
+/// answering pings, until Rooms give it something to say (KOK-56). It doesn't move the session's
+/// expiry: a socket has no cookie to send back.
 async fn socket(
     State(state): State<AppState>,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Result<Response, Unavailable> {
     if !from_here(&headers, &state.origin) {
-        return Ok((StatusCode::FORBIDDEN, "not from this site").into_response());
+        return Ok(not_from_here());
     }
-    let found = match session::token(&headers) {
-        Some(token) => session::find(&state.pool, &token).await?,
-        None => None,
-    };
+    let found = session::find(&state.pool, &headers).await?;
     Ok(upgrade.on_upgrade(move |socket| async move {
         match found {
             Some(_) => hold(socket).await,
@@ -211,11 +200,12 @@ async fn forbid(mut socket: WebSocket) {
 
 /// Refuses a request that could change something unless it comes from the site's own pages.
 /// SameSite=Lax keeps the cookie off most cross-site requests but not all, so anything but a GET
-/// from elsewhere, or one that doesn't say where it's from, is refused before it runs.
+/// or HEAD from elsewhere, or one that doesn't say where it's from, is refused before it runs.
+/// It covers every route, so a new one can't forget it.
 async fn same_origin(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let reads = matches!(*request.method(), Method::GET | Method::HEAD);
     if !reads && !from_here(request.headers(), &state.origin) {
-        return (StatusCode::FORBIDDEN, "not from this site").into_response();
+        return not_from_here();
     }
     next.run(request).await
 }
@@ -223,6 +213,42 @@ async fn same_origin(State(state): State<AppState>, request: Request, next: Next
 fn from_here(headers: &HeaderMap, origin: &HeaderValue) -> bool {
     headers.get(header::ORIGIN) == Some(origin)
 }
+
+fn not_from_here() -> Response {
+    (StatusCode::FORBIDDEN, "not from this site").into_response()
+}
+
+/// The site's origin as a browser sends it in `Origin`, from `ORIGIN`: `http` or `https` and a
+/// host, maybe with a port, and nothing after it. Browsers send the scheme and host in lowercase
+/// and leave out a default port, so they're written that way here; anything else would match no
+/// request, and every POST would be refused.
+pub fn origin(text: &str) -> Result<HeaderValue, String> {
+    let refused = || format!("{text:?} isn't an origin such as https://kokonoe.app");
+    let uri: Uri = text.parse().map_err(|_| refused())?;
+    let (Some(scheme), Some(authority)) = (uri.scheme_str(), uri.authority()) else {
+        return Err(refused());
+    };
+    let default_port = match scheme {
+        "http" => 80,
+        "https" => 443,
+        _ => return Err(refused()),
+    };
+    if authority.as_str().contains('@') || uri.path() != "/" || uri.query().is_some() {
+        return Err(refused());
+    }
+    let host = authority.host().to_ascii_lowercase();
+    let origin = match authority.port_u16() {
+        Some(port) if port != default_port => format!("{scheme}://{host}:{port}"),
+        _ => format!("{scheme}://{host}"),
+    };
+    HeaderValue::try_from(origin).map_err(|_| refused())
+}
+
+/// What a request gets while the database doesn't answer.
+const UNREACHABLE: (StatusCode, &str) = (
+    StatusCode::SERVICE_UNAVAILABLE,
+    "the database is unreachable",
+);
 
 /// The database failing a request: a 503, logged.
 struct Unavailable(sqlx::Error);
@@ -236,11 +262,7 @@ impl From<sqlx::Error> for Unavailable {
 impl IntoResponse for Unavailable {
     fn into_response(self) -> Response {
         tracing::warn!(error = %self.0, "the database failed a request");
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "the database is unreachable",
-        )
-            .into_response()
+        UNREACHABLE.into_response()
     }
 }
 

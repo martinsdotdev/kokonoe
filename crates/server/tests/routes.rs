@@ -199,6 +199,33 @@ async fn an_api_path_is_never_the_page() {
     );
 }
 
+#[test]
+fn the_origin_is_written_as_a_browser_sends_it() {
+    let origin =
+        |text| kokonoe_server::origin(text).map(|value| value.to_str().unwrap().to_owned());
+    for (text, sent) in [
+        ("https://kokonoe.app", "https://kokonoe.app"),
+        ("https://Kokonoe.App/", "https://kokonoe.app"),
+        ("HTTPS://kokonoe.app:443", "https://kokonoe.app"),
+        ("http://localhost:8080", "http://localhost:8080"),
+        ("http://localhost:80", "http://localhost"),
+    ] {
+        assert_eq!(origin(text).as_deref(), Ok(sent), "{text}");
+    }
+    for text in [
+        "",
+        "kokonoe.app",
+        "localhost:8080",
+        "ftp://kokonoe.app",
+        "https://kokonoe.app/play",
+        "https://kokonoe.app?a=b",
+        "https://someone@kokonoe.app",
+        " https://kokonoe.app",
+    ] {
+        assert!(origin(text).is_err(), "{text:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_build_without_the_fallback_page_is_refused_by_name() {
     let root = tempfile::tempdir().unwrap();

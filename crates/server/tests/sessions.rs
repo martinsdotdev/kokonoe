@@ -34,13 +34,11 @@ impl Started {
     }
 }
 
-async fn start(app: &Router, token: Option<&str>) -> Started {
+/// `POST /api/session` from the site's own page, with these `Cookie` headers.
+async fn post(app: &Router, cookies: &[&str]) -> Started {
     let mut request = Request::post("/api/session").header(header::ORIGIN, ORIGIN);
-    if let Some(token) = token {
-        request = request.header(
-            header::COOKIE,
-            format!("theme=dark; __Host-session={token}"),
-        );
+    for cookies in cookies {
+        request = request.header(header::COOKIE, *cookies);
     }
     let response = app
         .clone()
@@ -60,6 +58,15 @@ async fn start(app: &Router, token: Option<&str>) -> Started {
     }
 }
 
+/// `POST /api/session` holding `token`, if any. Another cookie comes first, as a browser's
+/// would, so the session's is found among others.
+async fn start(app: &Router, token: Option<&str>) -> Started {
+    match token {
+        Some(token) => post(app, &[&format!("theme=dark; __Host-session={token}")]).await,
+        None => post(app, &[]).await,
+    }
+}
+
 async fn accounts(pool: &PgPool) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM accounts")
         .fetch_one(pool)
@@ -67,12 +74,38 @@ async fn accounts(pool: &PgPool) -> i64 {
         .unwrap()
 }
 
-/// Whether the session expires a full 30 days from now, give or take the test's own time.
-async fn expires_in_full(pool: &PgPool) -> bool {
-    sqlx::query_scalar("SELECT expires_at > now() + interval '29 days 23 hours' FROM sessions")
+/// When the session `token` names expires, to compare before and after.
+async fn expiry(pool: &PgPool, token: &str) -> String {
+    let (id, _) = token.split_once('.').unwrap();
+    sqlx::query_scalar("SELECT expires_at::text FROM sessions WHERE id = $1")
+        .bind(id)
         .fetch_one(pool)
         .await
         .unwrap()
+}
+
+/// Sets the session `token` names to expire `when`, a Postgres interval from now.
+async fn expire(pool: &PgPool, token: &str, when: &str) {
+    let (id, _) = token.split_once('.').unwrap();
+    sqlx::query("UPDATE sessions SET expires_at = now() + $2::interval WHERE id = $1")
+        .bind(id)
+        .bind(when)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Whether the session `token` names expires a full 30 days from now, give or take the test's
+/// own time.
+async fn expires_in_full(pool: &PgPool, token: &str) -> bool {
+    let (id, _) = token.split_once('.').unwrap();
+    sqlx::query_scalar(
+        "SELECT expires_at > now() + interval '29 days 23 hours' FROM sessions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 #[tokio::test]
@@ -122,7 +155,7 @@ async fn a_first_visit_starts_a_guest_whose_secret_is_never_stored() {
         (32, 64),
         "16 and 32 random bytes, in hex"
     );
-    assert!(expires_in_full(&pool).await);
+    assert!(expires_in_full(&pool, &token).await);
 }
 
 #[tokio::test]
@@ -130,10 +163,34 @@ async fn a_reload_resumes_the_guest_without_writing() {
     let (_container, pool) = postgres().await;
     let (app, _root) = common::app(pool.clone());
     let guest = start(&app, None).await;
-    let again = start(&app, Some(&guest.token())).await;
+    let token = guest.token();
+    let before = expiry(&pool, &token).await;
+    let again = start(&app, Some(&token)).await;
     assert_eq!(again.handle, guest.handle);
     assert_eq!(again.set, None, "a fresh session isn't sent again");
+    assert_eq!(expiry(&pool, &token).await, before, "nor moved");
     assert_eq!(accounts(&pool).await, 1);
+}
+
+#[tokio::test]
+async fn the_session_cookie_is_found_by_its_exact_name_in_any_cookie_header() {
+    let (_container, pool) = postgres().await;
+    let (app, _root) = common::app(pool.clone());
+    let guest = start(&app, None).await;
+    let token = guest.token();
+
+    // HTTP/2 can send each cookie in a header of its own.
+    let split = post(&app, &["theme=dark", &format!("__Host-session={token}")]).await;
+    assert_eq!((split.handle, split.set), (guest.handle, None));
+    assert_eq!(accounts(&pool).await, 1);
+
+    let lookalike = post(&app, &[&format!("__Host-sessions={token}")]).await;
+    assert_ne!(
+        lookalike.token(),
+        token,
+        "another cookie's name isn't the session's"
+    );
+    assert_eq!(accounts(&pool).await, 2);
 }
 
 #[tokio::test]
@@ -142,16 +199,13 @@ async fn a_session_rolls_forward_at_most_once_a_day() {
     let (app, _root) = common::app(pool.clone());
     let guest = start(&app, None).await;
     let token = guest.token();
-    sqlx::query("UPDATE sessions SET expires_at = now() + interval '20 days'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    expire(&pool, &token, "20 days").await;
 
     let rolled = start(&app, Some(&token)).await;
     assert_eq!(rolled.handle, guest.handle);
     assert_eq!(rolled.token(), token, "the same session, kept for longer");
     assert!(rolled.set.unwrap().contains("Max-Age=2592000"));
-    assert!(expires_in_full(&pool).await);
+    assert!(expires_in_full(&pool, &token).await);
     assert_eq!(
         start(&app, Some(&token)).await.set,
         None,
@@ -160,36 +214,36 @@ async fn a_session_rolls_forward_at_most_once_a_day() {
 }
 
 #[tokio::test]
-async fn a_lost_or_stale_cookie_starts_a_new_guest() {
+async fn a_lost_or_unknown_cookie_starts_a_new_guest() {
     let (_container, pool) = postgres().await;
     let (app, _root) = common::app(pool.clone());
-    let guest = start(&app, None).await;
-    let token = guest.token();
+    let token = start(&app, None).await.token();
     let (id, _) = token.split_once('.').unwrap();
     let wrong_secret = format!("{id}.{}", "0".repeat(64));
-    let unknown = format!("{}.{}", "0".repeat(32), "0".repeat(64));
+    let unknown_id = format!("{}.{}", "0".repeat(32), "0".repeat(64));
 
     // No cookie is what clearing site data leaves.
-    let mut guests = 1;
-    for cookie in [
+    let cookies = [
         None,
-        Some(wrong_secret.as_str()),
-        Some(unknown.as_str()),
+        Some(&*wrong_secret),
+        Some(&*unknown_id),
         Some("crumbs"),
-    ] {
+    ];
+    for (made, cookie) in (2..).zip(cookies) {
         let next = start(&app, cookie).await;
         assert_ne!(next.token(), token, "{cookie:?}");
-        guests += 1;
-        assert_eq!(accounts(&pool).await, guests, "{cookie:?}");
+        assert_eq!(accounts(&pool).await, made, "{cookie:?}");
     }
+}
 
-    sqlx::query("UPDATE sessions SET expires_at = now() - interval '1 second' WHERE id = $1")
-        .bind(id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    assert_ne!(start(&app, Some(&token)).await.token(), token, "expired");
-    assert_eq!(accounts(&pool).await, guests + 1);
+#[tokio::test]
+async fn an_expired_session_starts_a_new_guest() {
+    let (_container, pool) = postgres().await;
+    let (app, _root) = common::app(pool.clone());
+    let token = start(&app, None).await.token();
+    expire(&pool, &token, "-1 second").await;
+    assert_ne!(start(&app, Some(&token)).await.token(), token);
+    assert_eq!(accounts(&pool).await, 2);
 }
 
 /// The app on a real port, since a socket needs a real connection to upgrade.
@@ -233,10 +287,15 @@ async fn next(socket: &mut Socket) -> Message {
 }
 
 #[tokio::test]
-async fn the_socket_takes_only_a_session_from_this_site() {
+async fn the_socket_takes_only_a_live_session_from_this_site() {
     let (_container, pool) = postgres().await;
-    let (app, _root) = common::app(pool);
+    let (app, _root) = common::app(pool.clone());
     let token = start(&app, None).await.token();
+    let expired = start(&app, None).await.token();
+    expire(&pool, &expired, "-1 second").await;
+    let (id, _) = token.split_once('.').unwrap();
+    let wrong_secret = format!("{id}.{}", "0".repeat(64));
+    let unknown_id = format!("{}.{}", "0".repeat(32), "0".repeat(64));
     let address = serve(app).await;
 
     for origin in [Some("https://evil.test"), None] {
@@ -248,14 +307,24 @@ async fn the_socket_takes_only_a_session_from_this_site() {
         }
     }
 
-    for stale in [None, Some("crumbs")] {
-        let mut socket = open(address, Some(ORIGIN), stale).await.unwrap();
+    let stale = [
+        None,
+        Some("crumbs"),
+        Some(&*wrong_secret),
+        Some(&*unknown_id),
+        Some(&*expired),
+    ];
+    for cookie in stale {
+        let mut socket = open(address, Some(ORIGIN), cookie).await.unwrap();
         let Message::Close(Some(close)) = next(&mut socket).await else {
-            panic!("{stale:?} wasn't closed");
+            panic!("{cookie:?} wasn't closed");
         };
-        assert_eq!(u16::from(close.code), 4003, "{stale:?}");
+        assert_eq!(u16::from(close.code), 4003, "{cookie:?}");
     }
 
+    // Due to roll, so a socket that moved it would show.
+    expire(&pool, &token, "20 days").await;
+    let before = expiry(&pool, &token).await;
     let mut socket = open(address, Some(ORIGIN), Some(&token)).await.unwrap();
     socket
         .send(Message::Ping("still there?".into()))
@@ -264,5 +333,10 @@ async fn the_socket_takes_only_a_session_from_this_site() {
     assert_eq!(
         next(&mut socket).await,
         Message::Pong("still there?".into())
+    );
+    assert_eq!(
+        expiry(&pool, &token).await,
+        before,
+        "the socket doesn't roll it"
     );
 }

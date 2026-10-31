@@ -27,8 +27,11 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		test.use({ colorScheme });
 
 		test('Home, New game and Import', async ({ page }) => {
+			await page.route('/api/session', (route) =>
+				route.fulfill({ json: { handle: 'guest-4821' } })
+			);
 			await page.goto('/');
-			await expect(page.getByRole('link', { name: 'Import game' })).toBeVisible();
+			await expect(page.locator('[data-account]')).toBeVisible();
 			await scan(page, 'Home');
 			await page.goto('/new-game');
 			await expect(page.getByRole('heading').first()).toBeVisible();

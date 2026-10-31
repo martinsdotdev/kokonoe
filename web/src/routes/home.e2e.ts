@@ -33,6 +33,29 @@ test('the computer card opens the sheet at the chosen Level', async ({ page }) =
 	await expect(page.getByLabel('Computer level')).toHaveValue('4');
 });
 
+test('Home shows the Guest’s Handle once the server starts a session', async ({ page }) => {
+	const methods: string[] = [];
+	await page.route('/api/session', (route) => {
+		methods.push(route.request().method());
+		return route.fulfill({ json: { handle: 'guest-4821' } });
+	});
+	await page.goto('/');
+	await expect(page.locator('[data-account]')).toHaveText('Playing as guest-4821');
+	expect(methods).toEqual(['POST']);
+});
+
+test('Home works without the server, showing no Account', async ({ page }) => {
+	const errors: Error[] = [];
+	page.on('pageerror', (error) => errors.push(error));
+	const answered = page.waitForResponse('/api/session');
+	await page.goto('/');
+	// sirv answers with its fallback page, as any static host might.
+	expect((await answered).headers()['content-type']).toContain('text/html');
+	await expect(page.getByRole('link', { name: 'Import game' })).toBeVisible();
+	await expect(page.locator('[data-account]')).toHaveCount(0);
+	expect(errors).toEqual([]);
+});
+
 test('Home loads no engine, with a saved game to continue', async ({ context, page }) => {
 	await page.goto('/play');
 	await page.getByRole('button', { name: 'Cell 5·5', exact: true }).click();

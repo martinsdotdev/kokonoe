@@ -1,6 +1,18 @@
 /* @ts-self-types="./kokonoe_wasm.d.ts" */
 
 /**
+ * Why the server closed a WebSocket (spec §10.3), as `kokonoe-protocol` names it: compare a
+ * `CloseEvent`'s `code` with these. 4001 asks for the newer build, which `updateNow` activates.
+ * Unlike the tsify types, it's a runtime enum, so the page names a code and its number stays in
+ * Rust.
+ * @enum {1012 | 4001}
+ */
+export const CloseCode = Object.freeze({
+    Restarting: 1012, "1012": "Restarting",
+    UpdateRequired: 4001, "4001": "UpdateRequired",
+});
+
+/**
  * A live game: its Record, the State it leads to, and the history between them.
  */
 export class Game {

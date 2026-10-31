@@ -1,0 +1,9 @@
+[package]
+name = "kokonoe-protocol"
+description = "What the Kokonoe server and its clients say to each other"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]

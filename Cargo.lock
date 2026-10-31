@@ -117,11 +117,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kokonoe-protocol"
+version = "0.1.0"
+
+[[package]]
 name = "kokonoe-wasm"
 version = "0.1.0"
 dependencies = [
  "js-sys",
  "kokonoe-engine",
+ "kokonoe-protocol",
  "tsify",
  "wasm-bindgen",
 ]

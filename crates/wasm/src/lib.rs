@@ -305,3 +305,14 @@ pub fn presets() -> Vec<Ts<Preset>> {
 fn typed<T: tsify::Tsify>(value: JsValue) -> Ts<T> {
     Ts::new_unchecked(value)
 }
+
+/// Why the server closed a WebSocket (spec §10.3), as `kokonoe-protocol` names it: compare a
+/// `CloseEvent`'s `code` with these. 4001 asks for the newer build, which `updateNow` activates.
+/// Unlike the tsify types, it's a runtime enum, so the page names a code and its number stays in
+/// Rust.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseCode {
+    Restarting = 1012,
+    UpdateRequired = 4001,
+}

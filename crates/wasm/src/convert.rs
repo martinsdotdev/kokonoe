@@ -7,6 +7,7 @@
 use core::fmt;
 
 use kokonoe_engine as engine;
+use kokonoe_protocol as protocol;
 
 use crate::types::{
     Board, BoardStatus, Cell, Continuation, DrawnOwner, Fallback, IllegalMove, Objective, Opening,
@@ -325,10 +326,26 @@ impl From<engine::Preset> for Preset {
     }
 }
 
+impl From<protocol::CloseCode> for crate::CloseCode {
+    fn from(close: protocol::CloseCode) -> crate::CloseCode {
+        match close {
+            protocol::CloseCode::Restarting => crate::CloseCode::Restarting,
+            protocol::CloseCode::UpdateRequired => crate::CloseCode::UpdateRequired,
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_close_codes_are_the_protocols() {
+        for close in protocol::CloseCode::ALL {
+            assert_eq!(crate::CloseCode::from(close) as u16, close.code());
+        }
+    }
 
     #[test]
     fn every_ruleset_round_trips() {

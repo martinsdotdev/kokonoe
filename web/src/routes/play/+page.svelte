@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { loadEngine, parseRulesetCode, type Ruleset } from '#lib/engine.js';
@@ -70,7 +70,8 @@
 		const query = session.stored
 			? gameQuery(session.id)
 			: playQuery({ code: rulesetCode(session.variant.ruleset), opponent: session.opponent });
-		if (location.search !== query) replaceState(resolve(`/play${query}`), {});
+		// Shallow, so nothing reloads and focus and scroll stay; in place, so Back still leaves.
+		if (location.search !== query) goto(resolve(`/play${query}`), { shallow: true, replace: true });
 	});
 
 	onDestroy(() => {

@@ -51,6 +51,7 @@ test('Home works without the server, showing no Account', async ({ page }) => {
 	await page.goto('/');
 	// sirv answers with its fallback page, as any static host might.
 	expect((await answered).headers()['content-type']).toContain('text/html');
+	await page.waitForLoadState('networkidle');
 	await expect(page.getByRole('link', { name: 'Import game' })).toBeVisible();
 	await expect(page.locator('[data-account]')).toHaveCount(0);
 	expect(errors).toEqual([]);

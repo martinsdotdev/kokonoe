@@ -1,11 +1,12 @@
 <!--
 	Home (spec §7.4): the way into a game, and back into saved ones. Online arrives with M2, and
 	Create custom with the editor (M3). Saved games come from IndexedDB with their board drawn, so
-	Home still loads no WASM.
+	Home still loads no WASM. Online, it starts a session and shows the Guest's Handle.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { startSession, type Me } from '#lib/account.js';
 	import Brand from '#lib/components/Brand.svelte';
 	import {
 		againstLabel,
@@ -26,8 +27,10 @@
 	let level: Level = $state(DEFAULT_LEVEL);
 	let unfinished: SavedGame | undefined = $state.raw();
 	let recent: SavedGame[] = $state.raw([]);
+	let me: Me | undefined = $state.raw();
 
 	onMount(() => {
+		startSession().then((found) => (me = found));
 		Promise.all([latestUnfinished(), recentGames(10)]).then(
 			([latest, games]) => {
 				unfinished = latest;
@@ -58,14 +61,28 @@
 		class="mx-auto flex max-w-[1240px] flex-wrap items-center justify-between gap-5 px-8 pt-7 pb-3"
 	>
 		<Brand />
-		<nav aria-label="Main">
-			<a href={resolve('/new-game')} class="px-3.5 py-2.5 font-medium text-foreground no-underline">
-				New game
-			</a>
-			<a href={resolve('/import')} class="px-3.5 py-2.5 font-medium text-foreground no-underline">
-				Import game
-			</a>
-		</nav>
+		<div class="flex flex-wrap items-center gap-3">
+			<nav aria-label="Main">
+				<a
+					href={resolve('/new-game')}
+					class="px-3.5 py-2.5 font-medium text-foreground no-underline"
+				>
+					New game
+				</a>
+				<a href={resolve('/import')} class="px-3.5 py-2.5 font-medium text-foreground no-underline">
+					Import game
+				</a>
+			</nav>
+			{#if me}
+				<p
+					data-account
+					class="m-0 rounded-full border-[1.5px] border-foreground px-3 py-1.5 font-mono text-sm"
+				>
+					<span class="sr-only">Playing as</span>
+					{me.handle}
+				</p>
+			{/if}
+		</div>
 	</header>
 
 	<main class="mx-auto flex max-w-[1240px] flex-col gap-12 px-8 pt-4 pb-16">

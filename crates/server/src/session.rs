@@ -21,7 +21,7 @@ const LIFETIME: i32 = 30 * 24 * 60 * 60;
 const ROLL_AFTER: i32 = 24 * 60 * 60;
 
 /// What the cookie holds: the session's id, to find it, and the secret that proves it's yours.
-pub struct Token {
+struct Token {
     id: String,
     secret: String,
 }
@@ -34,48 +34,45 @@ impl Token {
         }
     }
 
-    /// The `Set-Cookie` value that keeps this token for the session's lifetime.
+    /// The token in a request's cookies, if it has one.
+    fn from_headers(headers: &HeaderMap) -> Option<Token> {
+        let (id, secret) = headers
+            .get_all(header::COOKIE)
+            .iter()
+            .filter_map(|cookies| cookies.to_str().ok())
+            .flat_map(|cookies| cookies.split(';'))
+            .find_map(|cookie| cookie.trim().strip_prefix(COOKIE)?.strip_prefix('='))?
+            .split_once('.')?;
+        Some(Token {
+            id: id.to_owned(),
+            secret: secret.to_owned(),
+        })
+    }
+}
+
+/// A live session, and the Handle of the Account it belongs to.
+pub struct Session {
+    token: Token,
+    pub handle: String,
+    /// Whether it's a day or more since its expiry last moved, so it's due to [`roll`].
+    pub due: bool,
+}
+
+impl Session {
+    /// The `Set-Cookie` value that keeps the session for its lifetime.
     pub fn cookie(&self) -> HeaderValue {
+        let Token { id, secret } = &self.token;
         let cookie = format!(
-            "{COOKIE}={}.{}; Max-Age={LIFETIME}; Path=/; HttpOnly; Secure; SameSite=Lax",
-            self.id, self.secret
+            "{COOKIE}={id}.{secret}; Max-Age={LIFETIME}; Path=/; HttpOnly; Secure; SameSite=Lax"
         );
         HeaderValue::try_from(cookie).expect("hex is a valid header value")
     }
 }
 
-/// The token in a request's cookies, if it has one.
-pub fn token(headers: &HeaderMap) -> Option<Token> {
-    let (id, secret) = headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|cookies| cookies.to_str().ok())
-        .flat_map(|cookies| cookies.split(';'))
-        .find_map(|cookie| cookie.trim().strip_prefix(COOKIE)?.strip_prefix('='))?
-        .split_once('.')?;
-    Some(Token {
-        id: id.to_owned(),
-        secret: secret.to_owned(),
-    })
-}
-
-/// Who a session belongs to.
-pub struct Account {
-    pub handle: String,
-}
-
-/// A live session found by its token.
-pub struct Session {
-    pub account: Account,
-    /// Whether it's a day or more since its expiry last moved, so it's due to [`roll`].
-    pub due: bool,
-}
-
 /// Creates a Guest Account with a generated Handle, which needn't be unique, and a session for it.
-pub async fn start(pool: &PgPool) -> Result<(Token, Account), sqlx::Error> {
+pub async fn start(pool: &PgPool) -> Result<Session, sqlx::Error> {
     let token = Token::new();
-    let [high, low] = random::<2>();
-    let handle = format!("guest-{}", 1000 + u16::from_be_bytes([high, low]) % 9000);
+    let handle = format!("guest-{}", 1000 + u16::from_be_bytes(random()) % 9000);
     sqlx::query(
         "WITH guest AS (INSERT INTO accounts (handle) VALUES ($1) RETURNING id)
          INSERT INTO sessions (id, secret_hash, account_id, expires_at)
@@ -87,38 +84,44 @@ pub async fn start(pool: &PgPool) -> Result<(Token, Account), sqlx::Error> {
     .bind(LIFETIME)
     .execute(pool)
     .await?;
-    Ok((token, Account { handle }))
+    Ok(Session {
+        token,
+        handle,
+        due: false,
+    })
 }
 
-/// The live session `token` names, if its secret matches. An expired session is no session.
-pub async fn find(pool: &PgPool, token: &Token) -> Result<Option<Session>, sqlx::Error> {
+/// The live session a request's cookie names, if its secret matches. An expired session is no
+/// session.
+pub async fn find(pool: &PgPool, headers: &HeaderMap) -> Result<Option<Session>, sqlx::Error> {
+    let Some(token) = Token::from_headers(headers) else {
+        return Ok(None);
+    };
     let found: Option<(Vec<u8>, String, bool)> = sqlx::query_as(
-        "SELECT s.secret_hash, a.handle::text,
-                s.expires_at < now() + ($2 - $3) * interval '1 second'
+        "SELECT s.secret_hash, a.handle::text, s.expires_at < now() + $2 * interval '1 second'
          FROM sessions s JOIN accounts a ON a.id = s.account_id
          WHERE s.id = $1 AND s.expires_at > now()",
     )
     .bind(&token.id)
-    .bind(LIFETIME)
-    .bind(ROLL_AFTER)
+    .bind(LIFETIME - ROLL_AFTER)
     .fetch_optional(pool)
     .await?;
     Ok(found.and_then(|(secret_hash, handle, due)| {
         let matches: bool = hash(&token.secret).ct_eq(&secret_hash).into();
-        matches.then_some(Session {
-            account: Account { handle },
-            due,
-        })
+        matches.then_some(Session { token, handle, due })
     }))
 }
 
-/// Moves the session's expiry to a full lifetime from now; send [`Token::cookie`] with it.
-pub async fn roll(pool: &PgPool, token: &Token) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE sessions SET expires_at = now() + $2 * interval '1 second' WHERE id = $1")
-        .bind(&token.id)
-        .bind(LIFETIME)
-        .execute(pool)
-        .await?;
+/// Moves the session's expiry to a full lifetime from now; send [`Session::cookie`] with it.
+pub async fn roll(pool: &PgPool, session: &Session) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE sessions SET expires_at = now() + $2 * interval '1 second'
+         WHERE id = $1 AND expires_at > now()",
+    )
+    .bind(&session.token.id)
+    .bind(LIFETIME)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

@@ -5,29 +5,12 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use common::postgres;
 use sqlx::PgPool;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
 use tower::ServiceExt;
 
-/// A fresh Postgres, the one Fly runs, migrated as the server migrates at startup.
-async fn postgres() -> (ContainerAsync<Postgres>, PgPool) {
-    let container = Postgres::default()
-        .with_tag("18-alpine")
-        .start()
-        .await
-        .expect("the server's database tests start Postgres in Docker: is Docker running?");
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = kokonoe_server::connect(&url).await.unwrap();
-    kokonoe_server::MIGRATOR.run(&pool).await.unwrap();
-    (container, pool)
-}
-
 async fn health(pool: PgPool) -> StatusCode {
-    let root = common::web_root(&[]);
-    let app = kokonoe_server::app(pool, root.path()).unwrap();
+    let (app, _root) = common::app(pool);
     let request = Request::get("/healthz").body(Body::empty()).unwrap();
     app.oneshot(request).await.unwrap().status()
 }

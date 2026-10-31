@@ -1,17 +1,23 @@
 //! The Kokonoe server (spec §8). It serves the built SPA, so the app and its API share one origin
-//! and need no CORS: every page, a link preview for invite Rooms, and a health check.
+//! and need no CORS: every page, a link preview for invite Rooms, a health check, Guest sessions
+//! and the game socket.
+
+mod session;
 
 use std::path::Path;
 use std::time::Duration;
 
-use axum::Router;
 use axum::body::Bytes;
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Request, State};
 use axum::handler::HandlerWithoutStateExt;
-use axum::http::{HeaderValue, StatusCode, Uri, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use kokonoe_protocol::CloseCode;
+use serde::Serialize;
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
 use sqlx::postgres::PgPoolOptions;
@@ -49,12 +55,15 @@ struct AppState {
     pool: PgPool,
     /// The SPA's fallback page with the Room preview in its head.
     room_page: Bytes,
+    /// The site's own origin, such as `https://kokonoe.app`: the one `Origin` that a request
+    /// changing something, or opening the socket, may come from.
+    origin: HeaderValue,
 }
 
 /// The app: the SPA from `web_root`, as adapter-static built it, precompressed. Every path that
 /// names no file gets the fallback page `200.html`, so deep links resolve; a missing file gets a
-/// 404, never the page in its place.
-pub fn app(pool: PgPool, web_root: &Path) -> std::io::Result<Router> {
+/// 404, never the page in its place. `origin` is where the pages are served from.
+pub fn app(pool: PgPool, web_root: &Path, origin: HeaderValue) -> std::io::Result<Router> {
     let fallback = web_root.join("200.html");
     let unreadable = |why: &dyn std::fmt::Display| {
         std::io::Error::other(format!("{}: {why}", fallback.display()))
@@ -70,20 +79,29 @@ pub fn app(pool: PgPool, web_root: &Path) -> std::io::Result<Router> {
         .precompressed_br()
         .precompressed_gzip()
         .fallback(pages.into_service());
+    let state = AppState {
+        pool,
+        room_page,
+        origin,
+    };
     Ok(Router::new()
         .route("/healthz", get(health))
         .route("/r/{room}", get(room))
+        .route("/api/session", post(session))
+        .route("/api/socket", get(socket))
         .fallback_service(spa)
+        .layer(middleware::from_fn_with_state(state.clone(), same_origin))
         .layer(middleware::from_fn(cache))
-        .with_state(AppState { pool, room_page }))
+        .with_state(state))
 }
 
-/// The fallback page for a page's path, or a 404 for a file's: anything under `/_app/`, or with
-/// an extension. A stale tab asking for a chunk a deploy removed must fail, not get the page as
-/// the chunk, which a browser would then keep.
+/// The fallback page for a page's path, or a 404 for a file's: anything under `/_app/` or
+/// `/api/`, or with an extension. A stale tab asking for a chunk a deploy removed must fail, not
+/// get the page as the chunk, which a browser would then keep.
 fn page_or_missing(uri: &Uri, page: Bytes) -> Response {
     let path = uri.path();
     let file = path.starts_with("/_app/")
+        || path.starts_with("/api/")
         || path
             .rsplit('/')
             .next()
@@ -120,6 +138,110 @@ async fn health(State(state): State<AppState>) -> (StatusCode, &'static str) {
 /// An invite Room's link: the SPA, which opens the Room, with the preview for where it's shared.
 async fn room(State(state): State<AppState>) -> Html<Bytes> {
     Html(state.room_page)
+}
+
+/// What the SPA learns about whoever's playing.
+#[derive(Serialize)]
+struct Me<'a> {
+    handle: &'a str,
+}
+
+/// Starts a session, or resumes the one the cookie names. Without a live one, a new Guest
+/// Account is made for it, so a cleared or expired cookie starts a new Guest. The cookie is sent
+/// again only when the session's expiry moves.
+async fn session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, Unavailable> {
+    if let Some(token) = session::token(&headers)
+        && let Some(found) = session::find(&state.pool, &token).await?
+    {
+        let me = Json(Me {
+            handle: &found.account.handle,
+        });
+        if !found.due {
+            return Ok(me.into_response());
+        }
+        session::roll(&state.pool, &token).await?;
+        return Ok(([(header::SET_COOKIE, token.cookie())], me).into_response());
+    }
+    let (token, account) = session::start(&state.pool).await?;
+    let me = Json(Me {
+        handle: &account.handle,
+    });
+    Ok(([(header::SET_COOKIE, token.cookie())], me).into_response())
+}
+
+/// The game socket. One opened from another site is refused outright. One without a session is
+/// accepted and then closed with 4003, since a page can't read why a refused upgrade failed but
+/// can read a close code. One with a session stays open, answering pings, until Rooms give it
+/// something to say (KOK-56). It doesn't move the session's expiry: a socket has no cookie to
+/// send back.
+async fn socket(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Result<Response, Unavailable> {
+    if !from_here(&headers, &state.origin) {
+        return Ok((StatusCode::FORBIDDEN, "not from this site").into_response());
+    }
+    let found = match session::token(&headers) {
+        Some(token) => session::find(&state.pool, &token).await?,
+        None => None,
+    };
+    Ok(upgrade.on_upgrade(move |socket| async move {
+        match found {
+            Some(_) => hold(socket).await,
+            None => forbid(socket).await,
+        }
+    }))
+}
+
+async fn hold(mut socket: WebSocket) {
+    while let Some(Ok(_)) = socket.recv().await {}
+}
+
+async fn forbid(mut socket: WebSocket) {
+    let close = CloseFrame {
+        code: CloseCode::Forbidden.code(),
+        reason: "no session".into(),
+    };
+    let _ = socket.send(Message::Close(Some(close))).await;
+}
+
+/// Refuses a request that could change something unless it comes from the site's own pages.
+/// SameSite=Lax keeps the cookie off most cross-site requests but not all, so anything but a GET
+/// from elsewhere, or one that doesn't say where it's from, is refused before it runs.
+async fn same_origin(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let reads = matches!(*request.method(), Method::GET | Method::HEAD);
+    if !reads && !from_here(request.headers(), &state.origin) {
+        return (StatusCode::FORBIDDEN, "not from this site").into_response();
+    }
+    next.run(request).await
+}
+
+fn from_here(headers: &HeaderMap, origin: &HeaderValue) -> bool {
+    headers.get(header::ORIGIN) == Some(origin)
+}
+
+/// The database failing a request: a 503, logged.
+struct Unavailable(sqlx::Error);
+
+impl From<sqlx::Error> for Unavailable {
+    fn from(error: sqlx::Error) -> Unavailable {
+        Unavailable(error)
+    }
+}
+
+impl IntoResponse for Unavailable {
+    fn into_response(self) -> Response {
+        tracing::warn!(error = %self.0, "the database failed a request");
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the database is unreachable",
+        )
+            .into_response()
+    }
 }
 
 /// How long a browser keeps what it's sent. Vite's hashed files never change, so they're kept for

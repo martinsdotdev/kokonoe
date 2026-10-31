@@ -1,12 +1,12 @@
 //! What the server serves, on a stand-in for the built SPA. Nothing here reaches a database: the
-//! pool is lazy, and only the health check would connect.
+//! pool is lazy, and connects only if something queries it, which these tests never let happen.
 
 mod common;
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use common::{INDEX, lazy_pool, web_root};
+use common::{INDEX, lazy_pool, origin, web_root};
 use http_body_util::BodyExt;
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -24,7 +24,10 @@ fn app() -> (Router, TempDir) {
         ("service-worker.js", b"self;"),
         ("robots.txt", b"User-agent: *"),
     ]);
-    (kokonoe_server::app(lazy_pool(), root.path()).unwrap(), root)
+    (
+        kokonoe_server::app(lazy_pool(), root.path(), origin()).unwrap(),
+        root,
+    )
 }
 
 struct Answer {
@@ -169,8 +172,36 @@ async fn the_engine_goes_out_as_wasm() {
 }
 
 #[tokio::test]
+async fn a_post_from_another_site_is_refused_before_it_runs() {
+    let (app, _root) = app();
+    // The pool never connects, so getting this far proves nothing reached the database.
+    for origin in [Some("https://evil.test"), Some("null"), None] {
+        let mut request = Request::post("/api/session");
+        if let Some(origin) = origin {
+            request = request.header(header::ORIGIN, origin);
+        }
+        let answer = fetch(&app, request.body(Body::empty()).unwrap()).await;
+        assert_eq!(answer.status, StatusCode::FORBIDDEN, "{origin:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_api_path_is_never_the_page() {
+    let (app, _root) = app();
+    let missing = get(&app, "/api/nothing").await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND);
+    assert_eq!(missing.cache.as_deref(), Some("no-store"));
+    let read = get(&app, "/api/session").await;
+    assert_eq!(
+        read.status,
+        StatusCode::METHOD_NOT_ALLOWED,
+        "only a POST starts one"
+    );
+}
+
+#[tokio::test]
 async fn a_build_without_the_fallback_page_is_refused_by_name() {
     let root = tempfile::tempdir().unwrap();
-    let error = kokonoe_server::app(lazy_pool(), root.path()).unwrap_err();
+    let error = kokonoe_server::app(lazy_pool(), root.path(), origin()).unwrap_err();
     assert!(error.to_string().contains("200.html"), "{error}");
 }

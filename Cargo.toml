@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/wasm"]
+members = ["crates/engine", "crates/protocol", "crates/wasm"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ repository = "https://github.com/martinsdotdev/kokonoe"
 
 [workspace.dependencies]
 kokonoe-engine = { path = "crates/engine" }
+kokonoe-protocol = { path = "crates/protocol" }
 
 # The browser module, built by scripts/bindings.mjs, for the 100 KB game-screen budget. Opt-level
 # 2 beats "z" on both counts: 24.4 against 25.9 KB brotli, and about 1.4 times the search's

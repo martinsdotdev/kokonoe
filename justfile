@@ -3,6 +3,10 @@
 # Recipes run in sh, or in PowerShell on Windows, where cmd would resolve bash to WSL.
 set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
+# The server's database while serving locally: `just db` runs it. No test reads it; the
+# server's database tests start their own.
+export DATABASE_URL := env_var_or_default("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/kokonoe")
+
 [private]
 default:
     @just --list
@@ -14,6 +18,21 @@ install:
 # Serve the app.
 dev:
     pnpm -C web dev
+
+# Start a local Postgres for `just serve` in Docker, creating it the first time.
+[script('node')]
+db:
+    const { spawnSync } = require('node:child_process');
+    if (spawnSync('docker', ['start', 'kokonoe-db'], { stdio: 'ignore' }).status !== 0) {
+        const run = ['run', '-d', '--name', 'kokonoe-db', '-p', '5432:5432'];
+        const env = ['-e', 'POSTGRES_PASSWORD=postgres', '-e', 'POSTGRES_DB=kokonoe'];
+        const created = spawnSync('docker', [...run, ...env, 'postgres:18-alpine'], { stdio: 'inherit' });
+        process.exit(created.status ?? 1);
+    }
+
+# Build the SPA and serve it from the server, as production does, on port 8080.
+serve: build
+    cargo run -p kokonoe-server
 
 # Write the static SPA to web/build.
 build:

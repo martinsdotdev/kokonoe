@@ -1,0 +1,21 @@
+[package]
+name = "kokonoe-server"
+description = "The Kokonoe server: the SPA, and the authority for every networked game"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+axum = "0.8.9"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "macros"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "time"] }
+tower-http = { version = "0.7.1", features = ["fs"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tempfile = "3.27.0"
+testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
+tower = { version = "0.5.3", features = ["util"] }

@@ -13,7 +13,9 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
-			adapter: adapter({ fallback: '200.html' })
+			// Brotli and gzip copies, which the server sends as they are: no work per request, and the
+			// brotli the game screen's budget measures.
+			adapter: adapter({ fallback: '200.html', precompress: true })
 		})
 	],
 	test: {

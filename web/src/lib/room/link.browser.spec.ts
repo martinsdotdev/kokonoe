@@ -114,19 +114,26 @@ describe('a Room’s link', () => {
 		}
 	);
 
-	it('reconnects at once to resync, or when the server says what it doesn’t know', () => {
+	it('reconnects at once to resync', () => {
 		const { link: made, fake } = link();
 		fake.last().accept();
 		made.resync();
 		expect(fake.opened[0].closed).toBe(true);
 		expect(fake.opened).toHaveLength(2);
-		fake.last().accept();
-		fake.last().say({ type: 'Resigned' });
-		expect(fake.opened).toHaveLength(3);
-		expect(heard).toEqual([]);
 		// The forgotten socket's close says nothing.
 		fake.opened[0].end(1006);
 		expect(events.dropped).not.toHaveBeenCalled();
+	});
+
+	it('backs off before asking again after a frame it can’t read', () => {
+		const { fake } = link({ delays: [100] });
+		fake.last().accept();
+		fake.last().say({ type: 'Resigned' });
+		expect(heard).toEqual([]);
+		expect(events.dropped).toHaveBeenCalledOnce();
+		expect(fake.opened).toHaveLength(1);
+		vi.advanceTimersByTime(100);
+		expect(fake.opened).toHaveLength(2);
 	});
 
 	it('stops when disposed', () => {

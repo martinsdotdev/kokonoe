@@ -103,6 +103,11 @@ describe('following a Room’s link', () => {
 		taken.fake.last().end(CloseCode.Forbidden);
 		await phase(taken.visit).toBe('full');
 
+		const seated = visit(server(card({ X: 'a', O: 'b' }, 'X')));
+		await expect.poll(() => seated.fake.opened.length).toBe(1);
+		seated.fake.last().end(CloseCode.Forbidden);
+		await phase(seated.visit).toBe('problem');
+
 		const older = visit(server(card({ X: 'a', O: null }, 'X')));
 		await expect.poll(() => older.fake.opened.length).toBe(1);
 		older.fake.last().end(CloseCode.UpdateRequired);

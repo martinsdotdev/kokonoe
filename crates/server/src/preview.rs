@@ -13,14 +13,6 @@ use crate::{AppState, games};
 /// How long the page waits to name the game before it gives the plain invitation.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// What a link to a Room no one can find shows.
-const PLAIN: &str = r#"<meta property="og:type" content="website" />
-<meta property="og:site_name" content="Kokonoe" />
-<meta property="og:title" content="Join a game of Kokonoe" />
-<meta property="og:description" content="You’re invited to a game of Ultimate Tic-Tac-Toe." />
-<meta name="twitter:card" content="summary" />
-"#;
-
 /// The SPA's fallback page, split where the tags go: just before `</head>`.
 #[derive(Clone)]
 pub struct RoomPage {
@@ -38,41 +30,58 @@ impl RoomPage {
             tail: tail.to_owned(),
         })
     }
-
-    fn with(&self, tags: &str) -> Html<String> {
-        Html(format!("{}{tags}{}", self.head, self.tail))
-    }
 }
 
 /// The page for the Room `room`'s link.
 pub async fn room(State(state): State<AppState>, Path(room): Path<String>) -> Html<String> {
-    let Some(room) = RoomId::parse(&room) else {
-        return state.room_page.with(PLAIN);
+    let named = match RoomId::parse(&room) {
+        Some(room) => named(&state, &room).await,
+        None => None,
     };
-    match tokio::time::timeout(LOOKUP_TIMEOUT, games::summary(&state.pool, &room)).await {
-        Ok(Ok(Some(summary))) => state
-            .room_page
-            .with(&named(&summary.host, summary.variant())),
-        Ok(Ok(None)) => state.room_page.with(PLAIN),
+    let (title, description) = match &named {
+        Some(title) => (
+            title.as_str(),
+            "Casual, untimed Ultimate Tic-Tac-Toe on Kokonoe.",
+        ),
+        None => (
+            "Join a game of Kokonoe",
+            "You’re invited to a game of Ultimate Tic-Tac-Toe.",
+        ),
+    };
+    let RoomPage { head, tail } = &state.room_page;
+    Html(format!("{head}{}{tail}", tags(title, description)))
+}
+
+/// "guest-4821 invites you to a game of Standard", if the Room is found in time.
+async fn named(state: &AppState, room: &RoomId) -> Option<String> {
+    match tokio::time::timeout(LOOKUP_TIMEOUT, games::load(&state.pool, room)).await {
+        Ok(Ok(stored)) => {
+            let stored = stored?;
+            let variant = stored.variant();
+            Some(format!(
+                "{} invites you to a game of {variant}",
+                stored.host
+            ))
+        }
         Ok(Err(error)) => {
             tracing::warn!(%error, "a Room's preview couldn't name its game");
-            state.room_page.with(PLAIN)
+            None
         }
         Err(_) => {
             tracing::warn!("a Room's preview took too long to name its game");
-            state.room_page.with(PLAIN)
+            None
         }
     }
 }
 
-/// The tags that name the game. A Handle is the player's to choose, so it's escaped.
-fn named(host: &str, variant: &str) -> String {
-    let title = escape(&format!("{host} invites you to a game of {variant}"));
+/// The Open Graph tags. A Handle is the player's to choose, so the text is escaped.
+fn tags(title: &str, description: &str) -> String {
+    let (title, description) = (escape(title), escape(description));
     format!(
         r#"<meta property="og:type" content="website" />
 <meta property="og:site_name" content="Kokonoe" />
 <meta property="og:title" content="{title}" />
-<meta property="og:description" content="Casual, untimed Ultimate Tic-Tac-Toe on Kokonoe." />
+<meta property="og:description" content="{description}" />
 <meta name="twitter:card" content="summary" />
 "#
     )
@@ -91,4 +100,18 @@ fn escape(text: &str) -> String {
         }
         escaped
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markup_in_text_stays_text() {
+        assert_eq!(
+            escape(r#"<b>&"x'</b>"#),
+            "&lt;b&gt;&amp;&quot;x&#39;&lt;/b&gt;"
+        );
+        assert_eq!(escape("guest-4821 · Standard"), "guest-4821 · Standard");
+    }
 }

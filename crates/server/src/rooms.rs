@@ -1,5 +1,5 @@
 //! Every Room: the routes that make one and describe one, and the registry that finds the task
-//! playing one, loading it from Postgres the first time a socket asks for it after a start.
+//! playing one, loading it from Postgres when no task is.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -14,15 +14,24 @@ use sqlx::PgPool;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::random::bytes;
-use crate::room::{self, Command, Conn, Full, RoomId};
+use crate::room::{self, Command, Conn, Join, RoomId};
 use crate::session::{self, AccountId};
 use crate::{AppState, Unavailable, games};
 
-/// The Rooms being played, each reached through its task's commands.
+/// How many times a socket asks for its seat when the Room's task stops under it.
+const ATTEMPTS: usize = 3;
+
+/// The task playing a Room, if one has started. Its lock is held while the Room loads, so two
+/// sockets never start two tasks, and none starts from what Postgres held before an earlier task
+/// stopped.
+type Slot = Arc<tokio::sync::Mutex<Option<mpsc::Sender<Command>>>>;
+
+/// The Rooms being played. A Room's slot stays once it has loaded, a few bytes, while its task
+/// stops when its last socket leaves.
 #[derive(Clone)]
 pub struct Rooms {
     pool: PgPool,
-    live: Arc<Mutex<HashMap<RoomId, mpsc::Sender<Command>>>>,
+    slots: Arc<Mutex<HashMap<RoomId, Slot>>>,
 }
 
 /// A socket's place in a Room.
@@ -44,48 +53,60 @@ impl Rooms {
     pub fn new(pool: PgPool) -> Rooms {
         Rooms {
             pool,
-            live: Arc::default(),
+            slots: Arc::default(),
         }
     }
 
     /// Seats `account` in the Room `id`: the seat it already holds, or an empty one. Its messages
-    /// go to `out`. A Room whose task has stopped is loaded again, once.
+    /// go to `out`. A Room whose task stops before answering is loaded again.
     pub async fn join(
         &self,
         id: &RoomId,
         account: AccountId,
         handle: &str,
-        out: &mpsc::Sender<ServerMsg>,
+        out: mpsc::Sender<ServerMsg>,
     ) -> Result<Joined, Refused> {
-        for _ in 0..2 {
+        for _ in 0..ATTEMPTS {
             let room = self.find(id).await?;
             let (reply, answer) = oneshot::channel();
-            let join = Command::Join {
+            let join = Join {
                 account,
                 handle: handle.to_owned(),
                 out: out.clone(),
                 reply,
             };
-            if room.send(join).await.is_ok() {
-                match answer.await {
-                    Ok(Ok(conn)) => return Ok(Joined { conn, room }),
-                    Ok(Err(Full)) => return Err(Refused::Full),
-                    Err(_) => {}
-                }
+            if room.send(Command::Join(join)).await.is_err() {
+                continue;
             }
-            self.forget(id, &room);
+            match answer.await {
+                Ok(Some(conn)) => return Ok(Joined { conn, room }),
+                Ok(None) => return Err(Refused::Full),
+                Err(_) => continue,
+            }
         }
         Err(Refused::Unavailable)
     }
 
     /// The task playing the Room `id`, started from Postgres if none is.
     async fn find(&self, id: &RoomId) -> Result<mpsc::Sender<Command>, Refused> {
-        if let Some(room) = self.running(id) {
-            return Ok(room);
+        let slot = {
+            let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+            slots.entry(id.clone()).or_default().clone()
+        };
+        let mut task = slot.lock().await;
+        if let Some(room) = task.as_ref().filter(|room| !room.is_closed()) {
+            return Ok(room.clone());
         }
         let stored = match games::load(&self.pool, id).await {
             Ok(Some(stored)) => stored,
-            Ok(None) => return Err(Refused::NoRoom),
+            Ok(None) => {
+                // No slot for a Room that doesn't exist, so made-up ids can't fill the map.
+                let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+                if slots.get(id).is_some_and(|known| Arc::ptr_eq(known, &slot)) {
+                    slots.remove(id);
+                }
+                return Err(Refused::NoRoom);
+            }
             Err(error) => {
                 tracing::warn!(%error, room = %id, "a Room couldn't be loaded");
                 return Err(Refused::Unavailable);
@@ -95,27 +116,9 @@ impl Rooms {
             tracing::error!(?error, room = %id, "a stored game doesn't replay");
             Refused::Unavailable
         })?;
-        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
-        // Another socket may have loaded it meanwhile; the first task started is the one.
-        if let Some(room) = live.get(id).filter(|room| !room.is_closed()) {
-            return Ok(room.clone());
-        }
         let room = room::spawn(id.clone(), self.pool.clone(), game, stored.seats);
-        live.insert(id.clone(), room.clone());
+        *task = Some(room.clone());
         Ok(room)
-    }
-
-    fn running(&self, id: &RoomId) -> Option<mpsc::Sender<Command>> {
-        let live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
-        live.get(id).filter(|room| !room.is_closed()).cloned()
-    }
-
-    /// Forgets the task `room` for `id`, which has stopped, unless another has replaced it.
-    fn forget(&self, id: &RoomId, room: &mpsc::Sender<Command>) {
-        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
-        if live.get(id).is_some_and(|known| known.same_channel(room)) {
-            live.remove(id);
-        }
     }
 }
 
@@ -160,21 +163,21 @@ pub async fn card(
     Path(room): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, Unavailable> {
-    let never = [(header::CACHE_CONTROL, "no-store")];
-    let summary = match RoomId::parse(&room) {
-        Some(room) => games::summary(&state.pool, &room).await?,
+    let no_store = [(header::CACHE_CONTROL, "no-store")];
+    let stored = match RoomId::parse(&room) {
+        Some(room) => games::load(&state.pool, &room).await?,
         None => None,
     };
-    let Some(summary) = summary else {
-        return Ok((StatusCode::NOT_FOUND, never, "no such Room").into_response());
+    let Some(stored) = stored else {
+        return Ok((StatusCode::NOT_FOUND, no_store, "no such Room").into_response());
     };
     let asker = session::find(&state.pool, &headers).await?;
     let card = RoomCard {
-        variant: summary.variant().to_owned(),
-        you: asker.and_then(|asker| summary.seats.of(asker.account)),
-        players: summary.seats.players(),
-        host: summary.host,
-        rules: summary.ruleset_code,
+        variant: stored.variant().to_owned(),
+        rules: stored.record.ruleset.to_string(),
+        you: asker.and_then(|asker| stored.seats.of(asker.account)),
+        players: stored.seats.players(),
+        host: stored.host,
     };
-    Ok((never, Json(card)).into_response())
+    Ok((no_store, Json(card)).into_response())
 }

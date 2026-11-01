@@ -1,18 +1,28 @@
 //! What the server's tests share: a stand-in for the built SPA, the site's origin, a pool that
-//! never connects, and a real Postgres.
+//! never connects, a real Postgres, Guests, a server on its own runtime, and its sockets.
 
 // Each test crate compiles its own copy and uses only part of it.
 #![allow(dead_code)]
 
 use std::fs;
+use std::net::SocketAddr;
+use std::time::Duration;
 
-use axum::http::HeaderValue;
+use axum::Router;
+use axum::body::Body;
+use axum::http::{HeaderValue, Request, header};
+use futures_util::{SinkExt, StreamExt};
+use kokonoe_protocol::{ClientMsg, ServerMsg};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tempfile::TempDir;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
+use tokio::runtime::Runtime;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tower::ServiceExt;
 
 /// The fallback page every stand-in build has.
 pub const INDEX: &str =
@@ -54,6 +64,12 @@ pub fn lazy_pool() -> PgPool {
 /// A fresh Postgres in Docker, the one Fly runs, migrated as the server migrates at startup. It
 /// goes when the container is dropped, so `cargo test` needs Docker running.
 pub async fn postgres() -> (ContainerAsync<Postgres>, PgPool) {
+    let (container, url) = database().await;
+    (container, kokonoe_server::connect(&url).await.unwrap())
+}
+
+/// [`postgres`], as the URL a server started on its own connects to.
+pub async fn database() -> (ContainerAsync<Postgres>, String) {
     let container = Postgres::default()
         .with_tag("18-alpine")
         .start()
@@ -63,5 +79,121 @@ pub async fn postgres() -> (ContainerAsync<Postgres>, PgPool) {
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let pool = kokonoe_server::connect(&url).await.unwrap();
     kokonoe_server::MIGRATOR.run(&pool).await.unwrap();
-    (container, pool)
+    pool.close().await;
+    (container, url)
+}
+
+/// A new Guest's session token, the `id.secret` its cookie holds.
+pub async fn guest(app: &Router) -> String {
+    let request = Request::post("/api/session")
+        .header(header::ORIGIN, ORIGIN)
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let set = response.headers()[header::SET_COOKIE].to_str().unwrap();
+    let value = set.strip_prefix("__Host-session=").unwrap();
+    value.split(';').next().unwrap().to_owned()
+}
+
+/// The server, listening on its own runtime as a deployed one would, so [`Server::kill`] can stop
+/// everything it runs at once, as a crash does.
+pub struct Server {
+    pub address: SocketAddr,
+    runtime: Option<Runtime>,
+    _root: TempDir,
+}
+
+impl Server {
+    pub async fn start(url: &str) -> Server {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let root = web_root(&[]);
+        let (url, path) = (url.to_owned(), root.path().to_owned());
+        let address = runtime
+            .spawn(async move {
+                let pool = kokonoe_server::connect(&url).await.unwrap();
+                let app = kokonoe_server::app(pool, &path, origin()).unwrap();
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+                address
+            })
+            .await
+            .unwrap();
+        Server {
+            address,
+            runtime: Some(runtime),
+            _root: root,
+        }
+    }
+
+    /// Stops every task the server runs, its Rooms and sockets included, without a goodbye.
+    pub fn kill(mut self) {
+        self.stop();
+    }
+
+    fn stop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+pub type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// A socket to `address` from the site's own page, holding the session `token`.
+pub async fn open(address: SocketAddr, token: &str) -> Socket {
+    let mut request = format!("ws://{address}/api/socket")
+        .into_client_request()
+        .unwrap();
+    let headers = request.headers_mut();
+    headers.insert(header::ORIGIN, ORIGIN.parse().unwrap());
+    let cookie = format!("__Host-session={token}").parse().unwrap();
+    headers.insert(header::COOKIE, cookie);
+    tokio_tungstenite::connect_async(request).await.unwrap().0
+}
+
+/// Sends `message` as the page would.
+pub async fn say(socket: &mut Socket, message: &ClientMsg) {
+    let text = serde_json::to_string(message).unwrap();
+    socket.send(Message::Text(text.into())).await.unwrap();
+}
+
+/// The next frame that isn't a ping or a pong, within 5 s.
+pub async fn frame(socket: &mut Socket) -> Message {
+    loop {
+        let next = tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .expect("the server answers in time");
+        match next.unwrap().unwrap() {
+            Message::Ping(_) | Message::Pong(_) => {}
+            frame => return frame,
+        }
+    }
+}
+
+/// The next message the server sends.
+pub async fn hear(socket: &mut Socket) -> ServerMsg {
+    match frame(socket).await {
+        Message::Text(text) => serde_json::from_str(&text).unwrap(),
+        other => panic!("not a message: {other:?}"),
+    }
+}
+
+/// The code the server closes the socket with next.
+pub async fn closed(socket: &mut Socket) -> u16 {
+    match frame(socket).await {
+        Message::Close(Some(close)) => close.code.into(),
+        other => panic!("not closed: {other:?}"),
+    }
 }

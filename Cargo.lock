@@ -1348,6 +1348,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "http-body-util",
+ "kokonoe-engine",
  "kokonoe-protocol",
  "serde",
  "serde_json",

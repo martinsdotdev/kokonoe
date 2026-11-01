@@ -3,12 +3,12 @@
 //! table opens no session. A session lasts 30 days from its last use, moved forward at most once
 //! a day so a page load doesn't write every time.
 
-use std::fmt::Write;
-
 use axum::http::{HeaderMap, HeaderValue, header};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use subtle::ConstantTimeEq;
+
+use crate::random::{bytes, hex};
 
 /// The cookie's name. With `__Host-` the browser keeps it only if it's Secure, for the whole
 /// site, and set by this host itself, so a subdomain can't plant a session.
@@ -29,8 +29,8 @@ struct Token {
 impl Token {
     fn new() -> Token {
         Token {
-            id: hex(&random::<16>()),
-            secret: hex(&random::<32>()),
+            id: hex(&bytes::<16>()),
+            secret: hex(&bytes::<32>()),
         }
     }
 
@@ -50,9 +50,15 @@ impl Token {
     }
 }
 
-/// A live session, and the Handle of the Account it belongs to.
+/// An Account, by its id in `accounts`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, sqlx::Type)]
+#[sqlx(transparent)]
+pub struct AccountId(i64);
+
+/// A live session, and the Account it belongs to.
 pub struct Session {
     token: Token,
+    pub account: AccountId,
     pub handle: String,
     /// Whether it's a day or more since its expiry last moved, so it's due to [`roll`].
     pub due: bool,
@@ -72,20 +78,22 @@ impl Session {
 /// Creates a Guest Account with a generated Handle, which needn't be unique, and a session for it.
 pub async fn start(pool: &PgPool) -> Result<Session, sqlx::Error> {
     let token = Token::new();
-    let handle = format!("guest-{}", 1000 + u16::from_be_bytes(random()) % 9000);
-    sqlx::query(
+    let handle = format!("guest-{}", 1000 + u16::from_be_bytes(bytes()) % 9000);
+    let account = sqlx::query_scalar(
         "WITH guest AS (INSERT INTO accounts (handle) VALUES ($1) RETURNING id)
          INSERT INTO sessions (id, secret_hash, account_id, expires_at)
-         SELECT $2, $3, id, now() + $4 * interval '1 second' FROM guest",
+         SELECT $2, $3, id, now() + $4 * interval '1 second' FROM guest
+         RETURNING account_id",
     )
     .bind(&handle)
     .bind(&token.id)
     .bind(hash(&token.secret))
     .bind(LIFETIME)
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
     Ok(Session {
         token,
+        account,
         handle,
         due: false,
     })
@@ -97,8 +105,9 @@ pub async fn find(pool: &PgPool, headers: &HeaderMap) -> Result<Option<Session>,
     let Some(token) = Token::from_headers(headers) else {
         return Ok(None);
     };
-    let found: Option<(Vec<u8>, String, bool)> = sqlx::query_as(
-        "SELECT s.secret_hash, a.handle::text, s.expires_at < now() + $2 * interval '1 second'
+    let found: Option<(Vec<u8>, AccountId, String, bool)> = sqlx::query_as(
+        "SELECT s.secret_hash, a.id, a.handle::text,
+                s.expires_at < now() + $2 * interval '1 second'
          FROM sessions s JOIN accounts a ON a.id = s.account_id
          WHERE s.id = $1 AND s.expires_at > now()",
     )
@@ -106,9 +115,14 @@ pub async fn find(pool: &PgPool, headers: &HeaderMap) -> Result<Option<Session>,
     .bind(LIFETIME - ROLL_AFTER)
     .fetch_optional(pool)
     .await?;
-    Ok(found.and_then(|(secret_hash, handle, due)| {
+    Ok(found.and_then(|(secret_hash, account, handle, due)| {
         let matches: bool = hash(&token.secret).ct_eq(&secret_hash).into();
-        matches.then_some(Session { token, handle, due })
+        matches.then_some(Session {
+            token,
+            account,
+            handle,
+            due,
+        })
     }))
 }
 
@@ -127,18 +141,4 @@ pub async fn roll(pool: &PgPool, session: &Session) -> Result<(), sqlx::Error> {
 
 fn hash(secret: &str) -> Vec<u8> {
     Sha256::digest(secret).to_vec()
-}
-
-/// `N` bytes from the operating system's generator, which fails only on a broken system.
-fn random<const N: usize>() -> [u8; N] {
-    let mut bytes = [0; N];
-    getrandom::fill(&mut bytes).expect("the operating system has no random numbers");
-    bytes
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut text, byte| {
-        let _ = write!(text, "{byte:02x}");
-        text
-    })
 }

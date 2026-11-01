@@ -4,17 +4,15 @@
 mod common;
 
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use common::{ORIGIN, postgres};
-use futures_util::{SinkExt, StreamExt};
+use common::{ORIGIN, next, postgres, try_open};
+use futures_util::SinkExt;
 use http_body_util::BodyExt;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::{Error, Message};
 use tower::ServiceExt;
 
@@ -254,38 +252,6 @@ async fn serve(app: Router) -> SocketAddr {
     address
 }
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn open(
-    address: SocketAddr,
-    origin: Option<&str>,
-    token: Option<&str>,
-) -> Result<Socket, Error> {
-    let mut request = format!("ws://{address}/api/socket")
-        .into_client_request()
-        .unwrap();
-    if let Some(origin) = origin {
-        request
-            .headers_mut()
-            .insert(header::ORIGIN, origin.parse().unwrap());
-    }
-    if let Some(token) = token {
-        let cookie = format!("__Host-session={token}").parse().unwrap();
-        request.headers_mut().insert(header::COOKIE, cookie);
-    }
-    let (socket, _) = tokio_tungstenite::connect_async(request).await?;
-    Ok(socket)
-}
-
-async fn next(socket: &mut Socket) -> Message {
-    tokio::time::timeout(Duration::from_secs(5), socket.next())
-        .await
-        .expect("the server answers")
-        .unwrap()
-        .unwrap()
-}
-
 #[tokio::test]
 async fn the_socket_takes_only_a_live_session_from_this_site() {
     let (_container, pool) = postgres().await;
@@ -299,7 +265,7 @@ async fn the_socket_takes_only_a_live_session_from_this_site() {
     let address = serve(app).await;
 
     for origin in [Some("https://evil.test"), None] {
-        match open(address, origin, Some(&token)).await {
+        match try_open(address, origin, Some(&token)).await {
             Err(Error::Http(response)) => {
                 assert_eq!(response.status(), StatusCode::FORBIDDEN, "{origin:?}")
             }
@@ -315,7 +281,7 @@ async fn the_socket_takes_only_a_live_session_from_this_site() {
         Some(&*expired),
     ];
     for cookie in stale {
-        let mut socket = open(address, Some(ORIGIN), cookie).await.unwrap();
+        let mut socket = try_open(address, Some(ORIGIN), cookie).await.unwrap();
         let Message::Close(Some(close)) = next(&mut socket).await else {
             panic!("{cookie:?} wasn't closed");
         };
@@ -325,7 +291,7 @@ async fn the_socket_takes_only_a_live_session_from_this_site() {
     // Due to roll, so a socket that moved it would show.
     expire(&pool, &token, "20 days").await;
     let before = expiry(&pool, &token).await;
-    let mut socket = open(address, Some(ORIGIN), Some(&token)).await.unwrap();
+    let mut socket = try_open(address, Some(ORIGIN), Some(&token)).await.unwrap();
     socket
         .send(Message::Ping("still there?".into()))
         .await

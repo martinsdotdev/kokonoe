@@ -1,7 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
+	CloseCode,
 	Game,
 	loadEngine,
+	protocolVersion,
+	rulesVersion,
 	newSeed,
 	presets,
 	choose,
@@ -295,6 +298,19 @@ describe('values crossing the boundary', () => {
 		// A JS exception thrown through the WASM frames would have left the Game borrowed.
 		expect(game.play(1, cell('24'))).toHaveProperty('Now');
 		expect(game.undo()).toBe(cell('24'));
+	});
+});
+
+describe('a Room’s socket', () => {
+	it('names the versions a Hello sends, and the codes the server closes with', () => {
+		expect([rulesVersion(), protocolVersion()]).toEqual([1, 1]);
+		const names = every<keyof typeof CloseCode>()([
+			'Restarting',
+			'UpdateRequired',
+			'Forbidden',
+			'NoRoom'
+		]);
+		expect(names.map((name) => CloseCode[name])).toEqual([1012, 4001, 4003, 4004]);
 	});
 });
 

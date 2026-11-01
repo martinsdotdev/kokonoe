@@ -3,26 +3,35 @@
 
 mod common;
 
+use std::time::Duration;
+
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use common::{ORIGIN, Server, Socket, closed, database, guest, hear, open, say};
+use common::{
+    Container, ORIGIN, Server, Socket, closed, cookie, database, guest, hear, open, say, session_id,
+};
+use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
-use kokonoe_engine::{Cell, Outcome, Player, Preset, RULES_VERSION, Record};
+use kokonoe_engine::{Cell, Depth, Outcome, Player, Preset, RULES_VERSION, Record};
 use kokonoe_protocol::{ClientMsg, PROTOCOL, Players, Rejection, Role, ServerMsg};
 use sqlx::PgPool;
 use tempfile::TempDir;
+use tokio_tungstenite::tungstenite::Message;
 use tower::ServiceExt;
 
 /// X takes Local boards 0, 1 and 2, each with a row, while O sends X wherever it needs to go:
 /// `TOP_ROW` in `web/src/lib/game/games.fixtures.ts`.
 const TOP_ROW: &str = "03 30 04 40 05 51 13 31 14 41 15 52 26 62 27 72 28";
 
-fn top_row() -> Vec<u16> {
-    TOP_ROW
+/// The opening of `LINE_OF_MIDDLE_BOARDS`, the engine's Deep game in `tests/deep.rs`.
+const DEEP_OPENING: &str = "280 803 031";
+
+fn cells(digits: &str) -> Vec<u16> {
+    digits
         .split(' ')
-        .map(|digits| {
-            let digits: Vec<u8> = digits.bytes().map(|digit| digit - b'0').collect();
+        .map(|cell| {
+            let digits: Vec<u8> = cell.bytes().map(|digit| digit - b'0').collect();
             Cell::from_digits(&digits).unwrap().index()
         })
         .collect()
@@ -30,9 +39,7 @@ fn top_row() -> Vec<u16> {
 
 /// Everything a test needs: Postgres, the app for its HTTP routes, and a server for sockets.
 struct World {
-    _container: testcontainers_modules::testcontainers::ContainerAsync<
-        testcontainers_modules::postgres::Postgres,
-    >,
+    _container: Container,
     url: String,
     pool: PgPool,
     app: Router,
@@ -52,6 +59,45 @@ async fn world() -> World {
         app,
         _root: root,
         server,
+    }
+}
+
+/// A Room with both seats filled and both sockets welcomed, the host as X.
+struct Table {
+    room: String,
+    host: String,
+    joiner: String,
+    x: Socket,
+    o: Socket,
+    /// Who sits where, as the last `Welcome` said.
+    players: Players,
+}
+
+impl World {
+    /// A Room of `rules` with both seats filled, the host as X.
+    async fn table(&self, rules: &str) -> Table {
+        let (host, joiner) = (guest(&self.app).await, guest(&self.app).await);
+        let room = room(&self.app, &host, rules, "X").await;
+        let mut x = self.enter(&host, &room).await;
+        welcomed(&mut x).await;
+        let mut o = self.enter(&joiner, &room).await;
+        welcomed(&mut x).await;
+        let (_, _, players) = welcomed(&mut o).await;
+        Table {
+            room,
+            host,
+            joiner,
+            x,
+            o,
+            players,
+        }
+    }
+
+    /// A socket that has said `Hello` to `room`.
+    async fn enter(&self, token: &str, room: &str) -> Socket {
+        let mut socket = open(self.server.address, token).await;
+        say(&mut socket, &hello(room)).await;
+        socket
     }
 }
 
@@ -91,19 +137,15 @@ async fn create(app: &Router, token: Option<&str>, body: &str) -> Answer {
         .header(header::ORIGIN, ORIGIN)
         .header(header::CONTENT_TYPE, "application/json");
     if let Some(token) = token {
-        request = request.header(header::COOKIE, format!("__Host-session={token}"));
+        request = request.header(header::COOKIE, cookie(token));
     }
     fetch(app, request.body(Body::from(body.to_owned())).unwrap()).await
 }
 
-/// A Standard Room with `token`'s Guest in `seat`.
-async fn room(app: &Router, token: &str, seat: &str) -> String {
-    let made = create(
-        app,
-        Some(token),
-        &format!(r#"{{"rules":"std","seat":"{seat}"}}"#),
-    )
-    .await;
+/// A Room of `rules` with `token`'s Guest in `seat`.
+async fn room(app: &Router, token: &str, rules: &str, seat: &str) -> String {
+    let body = format!(r#"{{"rules":"{rules}","seat":"{seat}"}}"#);
+    let made = create(app, Some(token), &body).await;
     assert_eq!(made.status, StatusCode::CREATED);
     made.json["room"].as_str().unwrap().to_owned()
 }
@@ -112,18 +154,26 @@ async fn room(app: &Router, token: &str, seat: &str) -> String {
 async fn card(app: &Router, token: Option<&str>, room: &str) -> Answer {
     let mut request = Request::get(format!("/api/rooms/{room}"));
     if let Some(token) = token {
-        request = request.header(header::COOKIE, format!("__Host-session={token}"));
+        request = request.header(header::COOKIE, cookie(token));
     }
     fetch(app, request.body(Body::empty()).unwrap()).await
 }
 
+/// The page at `path`.
+async fn page(app: &Router, path: &str) -> String {
+    let request = Request::get(path).body(Body::empty()).unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    String::from_utf8(body.to_vec()).unwrap()
+}
+
 async fn handle(pool: &PgPool, token: &str) -> String {
-    let (id, _) = token.split_once('.').unwrap();
     sqlx::query_scalar(
         "SELECT a.handle::text FROM sessions s JOIN accounts a ON a.id = s.account_id
          WHERE s.id = $1",
     )
-    .bind(id)
+    .bind(session_id(token))
     .fetch_one(pool)
     .await
     .unwrap()
@@ -146,11 +196,8 @@ fn hello(room: &str) -> ClientMsg {
     }
 }
 
-/// A socket that has said `Hello` to `room`.
-async fn enter(server: &Server, token: &str, room: &str) -> Socket {
-    let mut socket = open(server.address, token).await;
-    say(&mut socket, &hello(room)).await;
-    socket
+async fn step(socket: &mut Socket, ply: u16, cell: u16) {
+    say(socket, &ClientMsg::Move { ply, cell }).await;
 }
 
 /// The `Welcome` a socket hears next: its seat, the Record and the players.
@@ -161,17 +208,8 @@ async fn welcomed(socket: &mut Socket) -> (Player, Record, Players) {
     }
 }
 
-/// A Room with both seats filled, the host as X: its id, the host's token, and X's and O's
-/// sockets.
-async fn seated(world: &World) -> (String, String, Socket, Socket) {
-    let (host, joiner) = (guest(&world.app).await, guest(&world.app).await);
-    let room = room(&world.app, &host, "X").await;
-    let mut x = enter(&world.server, &host, &room).await;
-    welcomed(&mut x).await;
-    let mut o = enter(&world.server, &joiner, &room).await;
-    welcomed(&mut x).await;
-    welcomed(&mut o).await;
-    (room, host, x, o)
+fn indices(record: &Record) -> Vec<u16> {
+    record.moves.iter().map(|cell| cell.index()).collect()
 }
 
 fn moved(ply: u16, cell: u16) -> ServerMsg {
@@ -183,23 +221,27 @@ fn rejected(reason: Rejection) -> ServerMsg {
 }
 
 /// Plays `cells` from `ply`, each by the side to move, and checks both sockets hear each move.
-async fn play(x: &mut Socket, o: &mut Socket, ply: u16, cells: &[u16]) {
+async fn play(table: &mut Table, ply: u16, cells: &[u16]) {
     for (ply, &cell) in (ply..).zip(cells) {
-        let mover = if ply % 2 == 0 { &mut *x } else { &mut *o };
-        say(mover, &ClientMsg::Move { ply, cell }).await;
-        assert_eq!(hear(x).await, moved(ply, cell));
-        assert_eq!(hear(o).await, moved(ply, cell));
+        let mover = if ply % 2 == 0 {
+            &mut table.x
+        } else {
+            &mut table.o
+        };
+        step(mover, ply, cell).await;
+        assert_eq!(hear(&mut table.x).await, moved(ply, cell));
+        assert_eq!(hear(&mut table.o).await, moved(ply, cell));
     }
 }
 
 /// Sends each move by the side named, and checks it's refused for its reason.
-async fn refuse(x: &mut Socket, o: &mut Socket, moves: &[(Player, u16, u16, Rejection)]) {
+async fn refuse(table: &mut Table, moves: &[(Player, u16, u16, Rejection)]) {
     for &(by, ply, cell, reason) in moves {
         let socket = match by {
-            Player::X => &mut *x,
-            Player::O => &mut *o,
+            Player::X => &mut table.x,
+            Player::O => &mut table.o,
         };
-        say(socket, &ClientMsg::Move { ply, cell }).await;
+        step(socket, ply, cell).await;
         assert_eq!(
             hear(socket).await,
             rejected(reason),
@@ -217,10 +259,15 @@ async fn creating_a_room_needs_a_session_and_a_preset() {
         StatusCode::FORBIDDEN
     );
     let host = guest(&world.app).await;
-    for rules in ["standard", "cont+both"] {
-        let body = format!(r#"{{"rules":"{rules}","seat":"X"}}"#);
-        let refused = create(&world.app, Some(&host), &body).await;
-        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{rules}");
+    let refused = [
+        r#"{"rules":"standard","seat":"X"}"#,
+        r#"{"rules":"cont+both","seat":"X"}"#,
+        r#"{"rules":"std","seat":"Either"}"#,
+        r#"{"rules":"std"}"#,
+    ];
+    for body in refused {
+        let answer = create(&world.app, Some(&host), body).await;
+        assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     }
 
     let made = create(&world.app, Some(&host), standard).await;
@@ -266,7 +313,7 @@ async fn a_random_seat_lands_on_either_side() {
     let world = world().await;
     let host = guest(&world.app).await;
     for _ in 0..64 {
-        room(&world.app, &host, "Random").await;
+        room(&world.app, &host, "std", "Random").await;
     }
     let (x, o): (i64, i64) = sqlx::query_as(
         "SELECT count(*) FILTER (WHERE x_id IS NOT NULL), count(*) FILTER (WHERE o_id IS NOT NULL)
@@ -282,15 +329,15 @@ async fn a_random_seat_lands_on_either_side() {
 #[tokio::test]
 async fn the_card_tells_a_joiner_what_they_join() {
     let world = world().await;
-    let host = guest(&world.app).await;
-    let room = room(&world.app, &host, "O").await;
+    let (host, joiner) = (guest(&world.app).await, guest(&world.app).await);
+    let room = room(&world.app, &host, "std", "O").await;
     let name = handle(&world.pool, &host).await;
 
-    let stranger = card(&world.app, None, &room).await;
-    assert_eq!(stranger.status, StatusCode::OK);
-    assert_eq!(stranger.cache.as_deref(), Some("no-store"));
+    let asked = card(&world.app, Some(&joiner), &room).await;
+    assert_eq!(asked.status, StatusCode::OK);
+    assert_eq!(asked.cache.as_deref(), Some("no-store"));
     assert_eq!(
-        stranger.json,
+        asked.json,
         serde_json::json!({
             "host": name,
             "variant": "Standard",
@@ -299,8 +346,7 @@ async fn the_card_tells_a_joiner_what_they_join() {
             "you": null,
         })
     );
-    let own = card(&world.app, Some(&host), &room).await;
-    assert_eq!(own.json["you"], "O");
+    assert_eq!(card(&world.app, Some(&host), &room).await.json["you"], "O");
 
     for missing in ["00000000000000000000", "abc", "6F1C0A9B3E2D4C5A7B8E"] {
         let answer = card(&world.app, None, missing).await;
@@ -309,26 +355,34 @@ async fn the_card_tells_a_joiner_what_they_join() {
     }
 }
 
-/// The page at `path`.
-async fn page(app: &Router, path: &str) -> String {
-    let request = Request::get(path).body(Body::empty()).unwrap();
-    let response = app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    String::from_utf8(body.to_vec()).unwrap()
+#[tokio::test]
+async fn the_card_names_both_players_once_the_room_is_full() {
+    let world = world().await;
+    let table = world.table("d3").await;
+    let joiner = card(&world.app, Some(&table.joiner), &table.room).await;
+    assert_eq!(joiner.json["you"], "O");
+    assert_eq!(
+        (&joiner.json["variant"], &joiner.json["rules"]),
+        (&serde_json::json!("Deep"), &serde_json::json!("d3"))
+    );
+    let stranger = card(&world.app, None, &table.room).await;
+    assert_eq!(stranger.json["you"], serde_json::Value::Null);
+    assert_eq!(
+        stranger.json["players"],
+        serde_json::to_value(&table.players).unwrap()
+    );
 }
 
 #[tokio::test]
 async fn a_room_link_names_its_game_escaped() {
     let world = world().await;
     let host = guest(&world.app).await;
-    let room = room(&world.app, &host, "X").await;
-    let (id, _) = host.split_once('.').unwrap();
+    let room = room(&world.app, &host, "std", "X").await;
     sqlx::query(
         "UPDATE accounts SET handle = $2
          WHERE id = (SELECT account_id FROM sessions WHERE id = $1)",
     )
-    .bind(id)
+    .bind(session_id(&host))
     .bind(r#"<b>&"x'"#)
     .execute(&world.pool)
     .await
@@ -350,20 +404,20 @@ async fn a_room_link_names_its_game_escaped() {
 async fn two_players_play_a_whole_game() {
     let world = world().await;
     let (host, joiner) = (guest(&world.app).await, guest(&world.app).await);
-    let room = room(&world.app, &host, "X").await;
+    let room = room(&world.app, &host, "std", "X").await;
     let (host_name, joiner_name) = (
         handle(&world.pool, &host).await,
         handle(&world.pool, &joiner).await,
     );
 
-    let mut x = enter(&world.server, &host, &room).await;
+    let mut x = world.enter(&host, &room).await;
     let (you, record, players) = welcomed(&mut x).await;
     assert_eq!(you, Player::X);
     assert_eq!(record.ruleset, Preset::Standard.ruleset());
     assert!(record.moves.is_empty());
     assert_eq!(players.get(Player::O), None, "waiting for the joiner");
 
-    let mut o = enter(&world.server, &joiner, &room).await;
+    let mut o = world.enter(&joiner, &room).await;
     for (socket, seat) in [(&mut x, Player::X), (&mut o, Player::O)] {
         let (you, _, players) = welcomed(socket).await;
         assert_eq!(you, seat);
@@ -371,102 +425,119 @@ async fn two_players_play_a_whole_game() {
         assert_eq!(players.get(Player::O), Some(&*joiner_name));
     }
 
-    let cells = top_row();
+    let mut table = Table {
+        room,
+        host,
+        joiner,
+        x,
+        o,
+        players: Players::default(),
+    };
+    let cells = cells(TOP_ROW);
     let (last, rest) = cells.split_last().unwrap();
-    for (ply, &cell) in (0..).zip(rest) {
-        play(&mut x, &mut o, ply, &[cell]).await;
-        let written = stored(&world.pool, &room).await;
-        assert_eq!(
-            written.len(),
-            usize::from(ply) + 1,
-            "stored before it was told"
-        );
-    }
+    play(&mut table, 0, rest).await;
     let ply = rest.len() as u16;
-    say(&mut x, &ClientMsg::Move { ply, cell: *last }).await;
+    step(&mut table.x, ply, *last).await;
     let ended = ServerMsg::Ended {
         outcome: Outcome::Objective(Player::X),
     };
-    for socket in [&mut x, &mut o] {
+    for socket in [&mut table.x, &mut table.o] {
         assert_eq!(hear(socket).await, moved(ply, *last));
         assert_eq!(hear(socket).await, ended);
     }
-    let result: Option<String> = sqlx::query_scalar("SELECT result FROM games WHERE room = $1")
-        .bind(&room)
-        .fetch_one(&world.pool)
-        .await
-        .unwrap();
+    let (moves, result): (Vec<i32>, Option<String>) =
+        sqlx::query_as("SELECT moves, result FROM games WHERE room = $1")
+            .bind(&table.room)
+            .fetch_one(&world.pool)
+            .await
+            .unwrap();
+    assert_eq!(moves.len(), cells.len());
     assert_eq!(result.as_deref(), Some("1-0"));
 
-    say(
-        &mut o,
-        &ClientMsg::Move {
-            ply: ply + 1,
-            cell: 0,
-        },
-    )
-    .await;
-    assert_eq!(hear(&mut o).await, ended, "a move after the end");
+    step(&mut table.o, ply + 1, 0).await;
+    assert_eq!(hear(&mut table.o).await, ended, "a move after the end");
+}
+
+#[tokio::test]
+async fn a_deep_room_plays_its_cells_at_depth_3() {
+    let world = world().await;
+    let mut table = world.table("d3").await;
+    let cells = cells(DEEP_OPENING);
+    assert!(cells.iter().any(|&cell| cell > 80), "{cells:?}");
+    play(&mut table, 0, &cells).await;
+    refuse(&mut table, &[(Player::O, 3, 729, Rejection::IllegalMove)]).await;
+
+    let mut again = world.enter(&table.host, &table.room).await;
+    let (_, record, _) = welcomed(&mut again).await;
+    assert_eq!(record.ruleset.depth, Depth::Three);
+    assert_eq!(indices(&record), cells);
 }
 
 #[tokio::test]
 async fn a_refused_move_changes_nothing() {
     let world = world().await;
     let (host, joiner) = (guest(&world.app).await, guest(&world.app).await);
-    let room = room(&world.app, &host, "X").await;
-    let mut x = enter(&world.server, &host, &room).await;
+    let room = room(&world.app, &host, "std", "X").await;
+    let mut x = world.enter(&host, &room).await;
     welcomed(&mut x).await;
-    say(&mut x, &ClientMsg::Move { ply: 0, cell: 40 }).await;
+    step(&mut x, 0, 40).await;
     assert_eq!(
         hear(&mut x).await,
         rejected(Rejection::NotAllowed),
         "before the joiner"
     );
 
-    let mut o = enter(&world.server, &joiner, &room).await;
+    let mut o = world.enter(&joiner, &room).await;
     welcomed(&mut x).await;
     welcomed(&mut o).await;
-    let refusals = [
-        (Player::X, 0, 81, Rejection::IllegalMove),
-        (Player::O, 0, 40, Rejection::NotAllowed),
-        (Player::X, 2, 40, Rejection::OutOfOrder { want: 0 }),
-    ];
-    refuse(&mut x, &mut o, &refusals).await;
-    play(&mut x, &mut o, 0, &[40]).await;
-    let refusals = [
-        (Player::X, 1, 36, Rejection::NotAllowed),
-        (Player::O, 1, 40, Rejection::IllegalMove),
-        (Player::O, 1, 0, Rejection::IllegalMove),
-    ];
-    refuse(&mut x, &mut o, &refusals).await;
+    let mut table = Table {
+        room,
+        host,
+        joiner,
+        x,
+        o,
+        players: Players::default(),
+    };
+    refuse(
+        &mut table,
+        &[
+            (Player::X, 0, 81, Rejection::IllegalMove),
+            (Player::O, 0, 40, Rejection::NotAllowed),
+            (Player::X, 2, 40, Rejection::OutOfOrder { want: 0 }),
+        ],
+    )
+    .await;
+    play(&mut table, 0, &[40]).await;
+    refuse(
+        &mut table,
+        &[
+            (Player::X, 1, 36, Rejection::NotAllowed),
+            (Player::O, 1, 40, Rejection::IllegalMove),
+            (Player::O, 1, 0, Rejection::IllegalMove),
+        ],
+    )
+    .await;
 
-    assert_eq!(stored(&world.pool, &room).await, [40]);
-    let mut again = enter(&world.server, &host, &room).await;
+    assert_eq!(stored(&world.pool, &table.room).await, [40]);
+    let mut again = world.enter(&table.host, &table.room).await;
     let (_, record, _) = welcomed(&mut again).await;
-    assert_eq!(
-        record
-            .moves
-            .iter()
-            .map(|cell| cell.index())
-            .collect::<Vec<_>>(),
-        [40]
-    );
+    assert_eq!(indices(&record), [40]);
 }
 
 #[tokio::test]
 async fn a_resent_move_says_nothing_new() {
     let world = world().await;
-    let (room, _, mut x, mut o) = seated(&world).await;
-    play(&mut x, &mut o, 0, &[40]).await;
-    say(&mut x, &ClientMsg::Move { ply: 0, cell: 40 }).await;
-    play(&mut x, &mut o, 1, &[36]).await;
-    assert_eq!(stored(&world.pool, &room).await, [40, 36]);
+    let mut table = world.table("std").await;
+    play(&mut table, 0, &[40]).await;
+    step(&mut table.x, 0, 40).await;
+    play(&mut table, 1, &[36]).await;
+    assert_eq!(stored(&world.pool, &table.room).await, [40, 36]);
 }
 
 #[tokio::test]
 async fn hello_checks_the_build_and_the_room() {
     let world = world().await;
-    let (room, _, _x, _o) = seated(&world).await;
+    let table = world.table("std").await;
     let stranger = guest(&world.app).await;
 
     let builds = [(PROTOCOL + 1, RULES_VERSION), (PROTOCOL, RULES_VERSION + 1)];
@@ -475,7 +546,7 @@ async fn hello_checks_the_build_and_the_room() {
         let hello = ClientMsg::Hello {
             protocol,
             rules_version,
-            room: room.clone(),
+            room: table.room.clone(),
             role: Role::Player,
         };
         say(&mut socket, &hello).await;
@@ -486,117 +557,158 @@ async fn hello_checks_the_build_and_the_room() {
         );
     }
     for missing in ["00000000000000000000", "abc"] {
-        let mut socket = enter(&world.server, &stranger, missing).await;
+        let mut socket = world.enter(&stranger, missing).await;
         assert_eq!(closed(&mut socket).await, 4004, "{missing}");
     }
-    let mut third = enter(&world.server, &stranger, &room).await;
+    let mut third = world.enter(&stranger, &table.room).await;
     assert_eq!(closed(&mut third).await, 4003, "full");
 
     let host = guest(&world.app).await;
-    let other = self::room(&world.app, &host, "X").await;
-    let mut twice = enter(&world.server, &host, &other).await;
+    let other = room(&world.app, &host, "std", "X").await;
+    let mut twice = world.enter(&host, &other).await;
     welcomed(&mut twice).await;
     say(&mut twice, &hello(&other)).await;
     assert_eq!(closed(&mut twice).await, 4003, "a second Hello");
 
     let mut first = open(world.server.address, &host).await;
-    say(&mut first, &ClientMsg::Move { ply: 0, cell: 40 }).await;
+    step(&mut first, 0, 40).await;
     assert_eq!(closed(&mut first).await, 1008, "a move before Hello");
+}
+
+#[tokio::test]
+async fn a_frame_that_is_not_a_message_closes_the_socket() {
+    let world = world().await;
+    let mut table = world.table("std").await;
+    table.x.send(Message::text("40 please")).await.unwrap();
+    assert_eq!(closed(&mut table.x).await, 1007, "not JSON");
+    let unknown = r#"{"type":"Resign"}"#;
+    table.o.send(Message::text(unknown)).await.unwrap();
+    assert_eq!(closed(&mut table.o).await, 1007, "an unknown type");
+
+    let mut binary = open(world.server.address, &table.host).await;
+    binary.send(Message::binary(vec![0; 4])).await.unwrap();
+    assert_eq!(closed(&mut binary).await, 1003, "binary before Hello");
+    let mut binary = world.enter(&table.host, &table.room).await;
+    welcomed(&mut binary).await;
+    binary.send(Message::binary(vec![0; 4])).await.unwrap();
+    assert_eq!(closed(&mut binary).await, 1003, "binary after Hello");
+
+    let mut huge = world.enter(&table.joiner, &table.room).await;
+    welcomed(&mut huge).await;
+    huge.send(Message::text("x".repeat(8192))).await.unwrap();
+    assert_eq!(closed(&mut huge).await, 1002, "too big");
+}
+
+#[tokio::test]
+async fn a_socket_that_never_says_hello_is_closed() {
+    let world = world().await;
+    let token = guest(&world.app).await;
+    let mut silent = open(world.server.address, &token).await;
+    let close = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if let Some(Ok(Message::Close(Some(close)))) = silent.next().await {
+                break u16::from(close.code);
+            }
+        }
+    });
+    assert_eq!(close.await.expect("closed within 15 s"), 1008);
 }
 
 #[tokio::test]
 async fn a_reconnect_gets_a_fresh_welcome_and_plays_on() {
     let world = world().await;
-    let (host, joiner) = (guest(&world.app).await, guest(&world.app).await);
-    let room = room(&world.app, &host, "X").await;
-    let mut x = enter(&world.server, &host, &room).await;
-    welcomed(&mut x).await;
-    let mut o = enter(&world.server, &joiner, &room).await;
-    welcomed(&mut x).await;
-    welcomed(&mut o).await;
-    let cells = top_row();
-    play(&mut x, &mut o, 0, &cells[..3]).await;
+    let mut table = world.table("std").await;
+    let cells = cells(TOP_ROW);
+    play(&mut table, 0, &cells[..3]).await;
 
-    drop(o);
-    let mut o = enter(&world.server, &joiner, &room).await;
-    let (you, record, players) = welcomed(&mut o).await;
+    table.o = world.enter(&table.joiner, &table.room).await;
+    let (you, record, players) = welcomed(&mut table.o).await;
     assert_eq!(you, Player::O);
-    assert_eq!(record.moves.len(), 3);
-    assert!(players.get(Player::X).is_some() && players.get(Player::O).is_some());
-    play(&mut x, &mut o, 3, &cells[3..5]).await;
+    assert_eq!(indices(&record), cells[..3]);
+    assert_eq!(players, table.players);
+    play(&mut table, 3, &cells[3..5]).await;
+}
+
+#[tokio::test]
+async fn a_room_no_one_is_in_is_loaded_again() {
+    let world = world().await;
+    let Table {
+        room, host, x, o, ..
+    } = world.table("std").await;
+    drop((x, o));
+    let cells = cells(TOP_ROW);
+    // Behind the Room's back: only a Room loaded again would show this move.
+    sqlx::query("UPDATE games SET moves = $2 WHERE room = $1")
+        .bind(&room)
+        .bind(vec![i32::from(cells[0])])
+        .execute(&world.pool)
+        .await
+        .unwrap();
+
+    let reloaded = async {
+        loop {
+            let mut x = world.enter(&host, &room).await;
+            let (_, record, _) = welcomed(&mut x).await;
+            if indices(&record) == cells[..1] {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), reloaded)
+        .await
+        .expect("the empty Room stopped, and was loaded from Postgres again");
 }
 
 #[tokio::test]
 async fn a_restart_rebuilds_every_room_from_postgres() {
     let mut world = world().await;
-    let (host, joiner) = (guest(&world.app).await, guest(&world.app).await);
-    let room = room(&world.app, &host, "X").await;
-    let mut x = enter(&world.server, &host, &room).await;
-    welcomed(&mut x).await;
-    let mut o = enter(&world.server, &joiner, &room).await;
-    welcomed(&mut x).await;
-    let (_, _, players) = welcomed(&mut o).await;
-    let cells = top_row();
-    play(&mut x, &mut o, 0, &cells[..8]).await;
+    let mut table = world.table("std").await;
+    let cells = cells(TOP_ROW);
+    play(&mut table, 0, &cells[..8]).await;
 
-    let server = std::mem::replace(&mut world.server, Server::start(&world.url).await);
-    server.kill();
-    drop((x, o));
+    world.server.kill();
+    world.server = Server::start(&world.url).await;
 
-    let mut x = enter(&world.server, &host, &room).await;
-    let mut o = enter(&world.server, &joiner, &room).await;
-    for (socket, seat) in [(&mut x, Player::X), (&mut o, Player::O)] {
-        let (you, record, again) = welcomed(socket).await;
+    table.x = world.enter(&table.host, &table.room).await;
+    table.o = world.enter(&table.joiner, &table.room).await;
+    for (socket, seat) in [(&mut table.x, Player::X), (&mut table.o, Player::O)] {
+        let (you, record, players) = welcomed(socket).await;
         assert_eq!(you, seat);
-        assert_eq!(again, players);
-        let moves: Vec<u16> = record.moves.iter().map(|cell| cell.index()).collect();
-        assert_eq!(moves, cells[..8]);
+        assert_eq!(players, table.players);
+        assert_eq!(indices(&record), cells[..8]);
     }
     let (last, rest) = cells.split_last().unwrap();
-    play(&mut x, &mut o, 8, &rest[8..]).await;
+    play(&mut table, 8, &rest[8..]).await;
     let ply = rest.len() as u16;
-    say(&mut x, &ClientMsg::Move { ply, cell: *last }).await;
-    assert_eq!(hear(&mut o).await, moved(ply, *last));
-    assert!(matches!(hear(&mut o).await, ServerMsg::Ended { .. }));
+    step(&mut table.x, ply, *last).await;
+    assert_eq!(hear(&mut table.o).await, moved(ply, *last));
+    assert!(matches!(hear(&mut table.o).await, ServerMsg::Ended { .. }));
 }
 
 #[tokio::test]
 async fn a_move_that_cannot_be_written_is_never_acknowledged() {
     let world = world().await;
-    let (room, host, mut x, mut o) = seated(&world).await;
-    let cells = top_row();
-    play(&mut x, &mut o, 0, &cells[..2]).await;
+    let mut table = world.table("std").await;
+    let cells = cells(TOP_ROW);
+    play(&mut table, 0, &cells[..2]).await;
 
     sqlx::query("ALTER TABLE games ADD CONSTRAINT short CHECK (cardinality(moves) < 3)")
         .execute(&world.pool)
         .await
         .unwrap();
-    say(
-        &mut x,
-        &ClientMsg::Move {
-            ply: 2,
-            cell: cells[2],
-        },
-    )
-    .await;
-    assert_eq!(closed(&mut x).await, 1011);
-    assert_eq!(closed(&mut o).await, 1011);
-    assert_eq!(stored(&world.pool, &room).await.len(), 2);
+    step(&mut table.x, 2, cells[2]).await;
+    assert_eq!(closed(&mut table.x).await, 1011);
+    assert_eq!(closed(&mut table.o).await, 1011);
+    assert_eq!(stored(&world.pool, &table.room).await.len(), 2);
 
     sqlx::query("ALTER TABLE games DROP CONSTRAINT short")
         .execute(&world.pool)
         .await
         .unwrap();
-    let mut x = enter(&world.server, &host, &room).await;
+    let mut x = world.enter(&table.host, &table.room).await;
     let (_, record, _) = welcomed(&mut x).await;
     assert_eq!(record.moves.len(), 2, "rebuilt from what was stored");
-    say(
-        &mut x,
-        &ClientMsg::Move {
-            ply: 2,
-            cell: cells[2],
-        },
-    )
-    .await;
+    step(&mut x, 2, cells[2]).await;
     assert_eq!(hear(&mut x).await, moved(2, cells[2]));
 }

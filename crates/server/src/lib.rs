@@ -10,6 +10,8 @@ mod rooms;
 mod session;
 mod socket;
 
+pub use room::Timing;
+
 use std::path::Path;
 use std::time::Duration;
 
@@ -58,8 +60,14 @@ struct AppState {
 
 /// The app: the SPA from `web_root`, as adapter-static built it, precompressed. Every path that
 /// names no file gets the fallback page `200.html`, so deep links resolve; a missing file gets a
-/// 404, never the page in its place. `origin` is where the pages are served from.
-pub fn app(pool: PgPool, web_root: &Path, origin: HeaderValue) -> std::io::Result<Router> {
+/// 404, never the page in its place. `origin` is where the pages are served from, and `timing` how
+/// long a Room's offers wait for their answers.
+pub fn app(
+    pool: PgPool,
+    web_root: &Path,
+    origin: HeaderValue,
+    timing: Timing,
+) -> std::io::Result<Router> {
     let fallback = web_root.join("200.html");
     let unreadable = |why: &dyn std::fmt::Display| {
         std::io::Error::other(format!("{}: {why}", fallback.display()))
@@ -74,7 +82,7 @@ pub fn app(pool: PgPool, web_root: &Path, origin: HeaderValue) -> std::io::Resul
         .precompressed_gzip()
         .fallback(pages.into_service());
     let state = AppState {
-        rooms: rooms::Rooms::new(pool.clone()),
+        rooms: rooms::Rooms::new(pool.clone(), timing),
         pool,
         room_page,
         origin,

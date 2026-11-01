@@ -4,6 +4,8 @@
 // Each test crate compiles its own copy and uses only part of it.
 #![allow(dead_code)]
 
+pub mod table;
+
 use std::fs;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -13,6 +15,7 @@ use axum::body::Body;
 use axum::http::{HeaderValue, Request, header};
 use futures_util::{SinkExt, StreamExt};
 use kokonoe_protocol::{ClientMsg, ServerMsg};
+use kokonoe_server::Timing;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tempfile::TempDir;
@@ -49,7 +52,7 @@ pub fn web_root(files: &[(&str, &[u8])]) -> TempDir {
 /// The app over `pool` and a build with only the fallback page, served from [`ORIGIN`].
 pub fn app(pool: PgPool) -> (axum::Router, TempDir) {
     let root = web_root(&[]);
-    let app = kokonoe_server::app(pool, root.path(), origin()).unwrap();
+    let app = kokonoe_server::app(pool, root.path(), origin(), Timing::default()).unwrap();
     (app, root)
 }
 
@@ -99,6 +102,12 @@ pub async fn guest(app: &Router) -> String {
     value.split(';').next().unwrap().to_owned()
 }
 
+/// How long a test server's offers wait: long enough to answer, short enough to watch lapse.
+pub const TIMING: Timing = Timing {
+    takeback: Duration::from_millis(600),
+    rematch: Duration::from_millis(600),
+};
+
 /// The server, listening on its own runtime as a deployed one would, so [`Server::kill`] can stop
 /// everything it runs at once, as a crash does.
 pub struct Server {
@@ -119,7 +128,7 @@ impl Server {
         let address = runtime
             .spawn(async move {
                 let pool = kokonoe_server::connect(&url).await.unwrap();
-                let app = kokonoe_server::app(pool, &path, origin()).unwrap();
+                let app = kokonoe_server::app(pool, &path, origin(), TIMING).unwrap();
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let address = listener.local_addr().unwrap();
                 tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

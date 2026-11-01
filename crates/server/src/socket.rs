@@ -11,7 +11,7 @@ use kokonoe_engine::RULES_VERSION;
 use kokonoe_protocol::{ClientMsg, CloseCode, PROTOCOL, ServerMsg};
 use tokio::sync::mpsc;
 
-use crate::room::{Command, Conn, RoomId};
+use crate::room::{Act, Command, Conn, RoomId};
 use crate::rooms::{Joined, Refused};
 use crate::session::{self, Session};
 use crate::{AppState, Unavailable, from_here, not_from_here};
@@ -131,15 +131,13 @@ async fn relay(
     loop {
         tokio::select! {
             received = socket.recv() => match received {
-                Some(Ok(Message::Text(text))) => match serde_json::from_str(&text) {
-                    Ok(ClientMsg::Move { ply, cell }) => {
-                        if room.send(Command::Move { conn, ply, cell }).await.is_err() {
+                Some(Ok(Message::Text(text))) => match serde_json::from_str(&text).map(Act::of) {
+                    Ok(Some(act)) => {
+                        if room.send(Command::Act { conn, act }).await.is_err() {
                             return (close_code::ERROR, "the Room stopped");
                         }
                     }
-                    Ok(ClientMsg::Hello { .. }) => {
-                        return (CloseCode::Forbidden.into(), "hello again");
-                    }
+                    Ok(None) => return (CloseCode::Forbidden.into(), "hello again"),
                     Err(_) => return (close_code::INVALID, "not a message"),
                 },
                 Some(Ok(Message::Binary(_))) => return (close_code::UNSUPPORTED, "text only"),

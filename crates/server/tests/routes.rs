@@ -9,6 +9,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use common::{INDEX, lazy_pool, origin, web_root};
 use http_body_util::BodyExt;
+use kokonoe_server::Timing;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -26,7 +27,7 @@ fn app() -> (Router, TempDir) {
         ("robots.txt", b"User-agent: *"),
     ]);
     (
-        kokonoe_server::app(lazy_pool(), root.path(), origin()).unwrap(),
+        kokonoe_server::app(lazy_pool(), root.path(), origin(), Timing::default()).unwrap(),
         root,
     )
 }
@@ -244,6 +245,7 @@ fn the_origin_is_written_as_a_browser_sends_it() {
 #[tokio::test]
 async fn a_build_without_the_fallback_page_is_refused_by_name() {
     let root = tempfile::tempdir().unwrap();
-    let error = kokonoe_server::app(lazy_pool(), root.path(), origin()).unwrap_err();
+    let error =
+        kokonoe_server::app(lazy_pool(), root.path(), origin(), Timing::default()).unwrap_err();
     assert!(error.to_string().contains("200.html"), "{error}");
 }

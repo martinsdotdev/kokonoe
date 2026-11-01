@@ -14,7 +14,7 @@ use sqlx::PgPool;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::random::bytes;
-use crate::room::{self, Command, Conn, Join, RoomId};
+use crate::room::{self, Command, Conn, Join, RoomId, Timing};
 use crate::session::{self, AccountId};
 use crate::{AppState, Unavailable, games};
 
@@ -31,6 +31,7 @@ type Slot = Arc<tokio::sync::Mutex<Option<mpsc::Sender<Command>>>>;
 #[derive(Clone)]
 pub struct Rooms {
     pool: PgPool,
+    timing: Timing,
     slots: Arc<Mutex<HashMap<RoomId, Slot>>>,
 }
 
@@ -50,9 +51,10 @@ pub enum Refused {
 }
 
 impl Rooms {
-    pub fn new(pool: PgPool) -> Rooms {
+    pub fn new(pool: PgPool, timing: Timing) -> Rooms {
         Rooms {
             pool,
+            timing,
             slots: Arc::default(),
         }
     }
@@ -116,7 +118,7 @@ impl Rooms {
             tracing::error!(?error, room = %id, "a stored game doesn't replay");
             Refused::Unavailable
         })?;
-        let room = room::spawn(id.clone(), self.pool.clone(), game, stored.seats);
+        let room = room::spawn(id.clone(), self.pool.clone(), self.timing, game, stored);
         *task = Some(room.clone());
         Ok(room)
     }
@@ -148,7 +150,14 @@ pub async fn create(
     };
     let room = RoomId::new();
     let seed = Seed(u64::from_le_bytes(bytes()));
-    games::insert(&state.pool, &room, ruleset, seed, host.account, seat).await?;
+    let game = games::NewGame {
+        ruleset,
+        seed,
+        host: host.account,
+        seat,
+        takebacks: asked.takebacks,
+    };
+    games::insert(&state.pool, &room, game).await?;
     let link = [(header::LOCATION, format!("/r/{room}"))];
     let created = CreatedRoom {
         room: room.to_string(),
@@ -176,6 +185,7 @@ pub async fn card(
         variant: stored.variant().to_owned(),
         rules: stored.record.ruleset.to_string(),
         you: asker.and_then(|asker| stored.seats.of(asker.account)),
+        takebacks: stored.takebacks,
         players: stored.seats.players(),
         host: stored.host,
     };

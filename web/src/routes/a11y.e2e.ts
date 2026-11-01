@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { INTO_A_WON_BOARD, TOP_ROW } from '../lib/game/games.fixtures.js';
+import { HOST, JOINER, ROOM, fakeRoom } from './room.fixtures.js';
 import { focusBoard, play, typeMoves } from './steps.js';
 
 /** WCAG 2.2 AA (spec §7.7), with the A and AA rules of every version before it. */
@@ -55,6 +56,36 @@ for (const colorScheme of ['light', 'dark'] as const) {
 			await page.getByRole('link', { name: 'Replay' }).click();
 			await expect(page.locator('[data-caption]')).toBeVisible();
 			await scan(page, 'the Replay viewer');
+		});
+
+		test('an invite Room: the joiner’s card, the host’s wait, and the game', async ({ page }) => {
+			const room = await fakeRoom(page, {
+				you: 'O',
+				players: { X: HOST, O: JOINER },
+				moves: [],
+				card: {
+					host: HOST,
+					variant: 'Standard',
+					rules: 'std',
+					players: { X: HOST, O: null },
+					you: null
+				}
+			});
+			await page.goto(`/r/${ROOM}`);
+			await expect(page.getByRole('button', { name: 'Accept' })).toBeVisible();
+			await scan(page, 'the joiner’s card');
+			await page.getByRole('button', { name: 'Accept' }).click();
+			await expect(page.getByRole('group', { name: 'The Global board' })).toBeVisible();
+			await scan(page, 'the game');
+			room.close(1011);
+			await expect(page.getByRole('alert')).toBeVisible();
+			await scan(page, 'reconnecting');
+
+			await page.unrouteAll();
+			await fakeRoom(page, { you: 'X', players: { X: HOST, O: null }, moves: [] });
+			await page.goto(`/r/${ROOM}`);
+			await expect(page.getByRole('button', { name: 'Copy link' })).toBeVisible();
+			await scan(page, 'the host’s wait');
 		});
 
 		test('the game screen in Deep', async ({ page }) => {

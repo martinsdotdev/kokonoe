@@ -1,50 +1,80 @@
 <!--
 	The New game sheet (spec §7.4): pick the opponent and the variant, read the game's rules, start.
-	Home's cards prefill it through `vs`, `level` and `rules` in the query. Online opponents arrive
-	in M2, and saved Custom variants in M3.
+	Home's cards prefill it through `vs`, `level` and `rules` in the query. A friend plays in an
+	invite Room, made here; Quick match arrives later in M2, and saved Custom variants in M3.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { Player } from '#lib/engine.js';
+	import { startSession } from '#lib/account.js';
 	import Brand from '#lib/components/Brand.svelte';
 	import { DEFAULT_LEVEL, LEVELS, playQuery, type Level, type Opponent } from '#lib/game/launch.js';
 	import { describeRules, rulesetCode } from '#lib/game/rules.js';
 	import { SHELF, presetByCode } from '#lib/game/shelf.js';
+	import { createRoom } from '#lib/room/api.js';
 
 	const params = page.url.searchParams;
 	const asked = LEVELS.find((n) => String(n) === params.get('level'));
 	const prefill = presetByCode(params.get('rules') ?? 'std');
 
-	let kind: Opponent['kind'] = $state(params.get('vs') === 'hotseat' ? 'hotseat' : 'computer');
+	type Kind = Opponent['kind'] | 'friend';
+	const kinds: Kind[] = ['computer', 'hotseat', 'friend'];
+	let kind: Kind = $state(kinds.find((k) => k === params.get('vs')) ?? 'computer');
 	let level: Level = $state(asked ?? DEFAULT_LEVEL);
-	let seat = $state<Player | 'Random'>('X');
+	/** The seat against the computer, X unless chosen; in an invite Room, Random (spec §10.1). */
+	let seats = $state<Record<'computer' | 'friend', Player | 'Random'>>({
+		computer: 'X',
+		friend: 'Random'
+	});
+	const seat = $derived(kind === 'friend' ? seats.friend : seats.computer);
 	let chosen = $state(prefill?.name ?? 'Standard');
+	/** An invite Room is being made, or why it couldn't be. */
+	let creating = $state(false);
+	let failure: string | null = $state(null);
 
 	const preset = $derived(SHELF.find((p) => p.name === chosen) ?? SHELF[0]);
+	const opponents: Record<Kind, string> = {
+		computer: '',
+		hotseat: 'Two players, one screen',
+		friend: 'A friend, by invite link'
+	};
 	const summary = $derived([
 		{
 			label: 'Opponent',
-			value: kind === 'computer' ? `Computer, Level ${level}` : 'Two players, one screen'
+			value: kind === 'computer' ? `Computer, Level ${level}` : opponents[kind]
 		},
-		...(kind === 'computer'
-			? [
+		...(kind === 'hotseat'
+			? []
+			: [
 					{
 						label: 'You play',
 						value:
 							seat === 'Random'
-								? 'X or O, drawn when you start'
+								? `X or O, drawn when ${kind === 'friend' ? 'the Room is made' : 'you start'}`
 								: seat === 'X'
 									? 'X, moving first'
 									: 'O, moving second'
 					}
-				]
-			: []),
+				]),
+		...(kind === 'friend' ? [{ label: 'Game', value: 'Casual, untimed' }] : []),
 		...describeRules(preset.ruleset)
 	]);
 
+	/** Makes an invite Room on the server, and opens its link to wait there for a friend. */
+	const invite = async () => {
+		creating = true;
+		failure = null;
+		const room =
+			(await startSession()) && (await createRoom({ rules: rulesetCode(preset.ruleset), seat }));
+		creating = false;
+		if (room) return goto(resolve('/r/[room]', { room }));
+		failure = 'Kokonoe’s server can’t be reached. Invite a friend once you’re online.';
+	};
+
 	const start = () => {
+		if (kind === 'friend') return invite();
 		const random: Player = crypto.getRandomValues(new Uint8Array(1))[0] & 1 ? 'O' : 'X';
 		const opponent: Opponent =
 			kind === 'computer'
@@ -82,7 +112,7 @@
 			<fieldset class="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
 				<legend class={legend}>1 · OPPONENT</legend>
 				<div class="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
-					{#each [{ value: 'computer', name: 'Computer', detail: 'Offline, on this device' }, { value: 'hotseat', name: 'Pass and play', detail: 'Two players, one screen' }] as const as option (option.value)}
+					{#each [{ value: 'computer', name: 'Computer', detail: 'Offline, on this device' }, { value: 'hotseat', name: 'Pass and play', detail: 'Two players, one screen' }, { value: 'friend', name: 'A friend', detail: 'Online, by invite link' }] as const as option (option.value)}
 						<label class={card}>
 							<input
 								type="radio"
@@ -98,19 +128,21 @@
 						</label>
 					{/each}
 				</div>
-				{#if kind === 'computer'}
+				{#if kind !== 'hotseat'}
 					<div class="flex flex-wrap items-center gap-x-6 gap-y-3">
-						<label class="flex items-center gap-3 text-sm font-medium">
-							Computer level
-							<select
-								bind:value={level}
-								class="min-h-11 rounded-md border-[1.5px] border-foreground bg-card px-3 text-[15px]"
-							>
-								{#each LEVELS as n (n)}
-									<option value={n}>Level {n} of 8</option>
-								{/each}
-							</select>
-						</label>
+						{#if kind === 'computer'}
+							<label class="flex items-center gap-3 text-sm font-medium">
+								Computer level
+								<select
+									bind:value={level}
+									class="min-h-11 rounded-md border-[1.5px] border-foreground bg-card px-3 text-[15px]"
+								>
+									{#each LEVELS as n (n)}
+										<option value={n}>Level {n} of 8</option>
+									{/each}
+								</select>
+							</label>
+						{/if}
 						<fieldset class="m-0 flex items-center gap-2 border-0 p-0">
 							<legend class="float-left mr-3 p-0 text-sm font-medium">You play</legend>
 							{#each ['X', 'O', 'Random'] as const as option (option)}
@@ -121,7 +153,8 @@
 										type="radio"
 										name="seat"
 										value={option}
-										bind:group={seat}
+										checked={seat === option}
+										onchange={() => (seats[kind === 'friend' ? 'friend' : 'computer'] = option)}
 										class="accent-foreground"
 									/>
 									{option}
@@ -163,7 +196,11 @@
 			<span class="font-mono text-[13px] tracking-[0.08em] text-muted-foreground">YOUR GAME</span>
 			<h2 class="m-0 font-display text-3xl leading-[1.1] font-semibold">
 				{preset.name}
-				{kind === 'computer' ? 'against the computer' : 'pass and play'}
+				{kind === 'computer'
+					? 'against the computer'
+					: kind === 'friend'
+						? 'with a friend'
+						: 'pass and play'}
 			</h2>
 			<dl class="m-0 flex flex-col gap-2.5 text-[15px]">
 				{#each summary as row (row.label)}
@@ -175,11 +212,19 @@
 			</dl>
 			<button
 				type="button"
-				class="min-h-13 rounded-md bg-primary text-[17px] font-semibold text-primary-foreground"
+				class="min-h-13 rounded-md bg-primary text-[17px] font-semibold text-primary-foreground disabled:opacity-60"
+				disabled={creating}
 				onclick={start}
 			>
-				Start game
+				{kind === 'friend'
+					? creating
+						? 'Creating the Room…'
+						: 'Create invite Room'
+					: 'Start game'}
 			</button>
+			{#if failure}
+				<p class="m-0 text-sm" role="alert">{failure}</p>
+			{/if}
 		</aside>
 	</main>
 </div>

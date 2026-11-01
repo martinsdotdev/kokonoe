@@ -1,12 +1,4 @@
-import {
-	Game,
-	newSeed,
-	type Board,
-	type Cell,
-	type IllegalMove,
-	type Player,
-	type Status
-} from '#lib/engine.js';
+import { Game, newSeed, type Board, type Cell, type Player, type Status } from '#lib/engine.js';
 import { WorkerComputer, type Computer } from './computer.js';
 import { againstLabel, type Level, type Opponent } from './launch.js';
 import type { GameFile } from './gamefile.js';
@@ -21,25 +13,15 @@ import {
 	type Seat
 } from './moves.js';
 import { illegalMove, openRecord } from './record.js';
+import { FLASH_MS, named } from './refusal.js';
 import { resultText, type End } from './result.js';
 import { rulesetCode, type Variant } from './rules.js';
 import { browserStore, savedVariant, type GameStore, type SavedGame } from './saved.js';
 import type { Controls, GameSession } from './screen.js';
 import { boardView, type BoardView } from './view.js';
 
-/** How long an illegal tap flashes the Board it names. */
-const FLASH_MS = 700;
-
 /** The computer never moves sooner than this after the player (spec §6). */
 const PACE_MS = 500;
-
-/** The Board an IllegalMove names, if it names one other than the Global board. */
-const named = (illegal: IllegalMove): Board | null => {
-	if (typeof illegal === 'string') return null;
-	const board: Board =
-		'BeneathDecided' in illegal ? illegal.BeneathDecided.board : illegal.OutsideActiveBoards.within;
-	return board.length ? board : null;
-};
 
 /** Resolves after `ms`, or rejects when `signal` aborts first. */
 const delay = (ms: number, signal: AbortSignal) =>

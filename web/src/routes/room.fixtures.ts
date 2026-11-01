@@ -46,7 +46,8 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 			takebacks: false,
 			offer: null,
 			draws: { X: 0, O: 0 },
-			end: null
+			end: null,
+			rematch: null
 		}
 	});
 	await page.route('/api/session', (route) => route.fulfill({ json: { handle: JOINER } }));

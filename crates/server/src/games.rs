@@ -74,6 +74,8 @@ pub struct Stored {
     /// Null for a game that goes on, or one that ended before Terminations were kept, which the
     /// rules can end again.
     pub end: Option<GameEnd>,
+    /// The Room this game's rematch made, once one has.
+    pub rematch: Option<RoomId>,
 }
 
 impl Stored {
@@ -241,8 +243,9 @@ pub async fn offer_draw(
     Ok(done.rows_affected() == 1)
 }
 
-/// Makes `rematch` the next game of the finished Room `room`: the same rules and option, a new
-/// Seed, and its players in each other's seats.
+/// Makes `rematch` the next game of the finished Room `room`, which had none: the same rules and
+/// option, a new Seed, and its players in each other's seats. The old row names it, in the same
+/// statement, so a game is rematched once.
 pub async fn rematch(
     pool: &PgPool,
     room: &RoomId,
@@ -250,10 +253,15 @@ pub async fn rematch(
     seed: Seed,
 ) -> Result<bool, sqlx::Error> {
     let done = sqlx::query(
-        "INSERT INTO games
-             (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id, takebacks)
-         SELECT $2, $3, ruleset, ruleset_code, $4, host_id, o_id, x_id, takebacks
-         FROM games WHERE room = $1 AND result IS NOT NULL",
+        "WITH made AS (
+             INSERT INTO games
+                 (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id, takebacks)
+             SELECT $2, $3, ruleset, ruleset_code, $4, host_id, o_id, x_id, takebacks
+             FROM games WHERE room = $1 AND result IS NOT NULL AND rematch IS NULL
+             RETURNING room
+         )
+         UPDATE games SET rematch = made.room, updated_at = now()
+         FROM made WHERE games.room = $1",
     )
     .bind(room.as_str())
     .bind(rematch.as_str())
@@ -277,6 +285,7 @@ struct StoredRow {
     o_draw_offers: i16,
     result: Option<String>,
     termination: Option<String>,
+    rematch: Option<String>,
 }
 
 /// The Room `room`, as the server last stored it. Its Record is read through the engine's own
@@ -286,7 +295,7 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
         "SELECT json_build_object('rules_version', g.rules_version, 'ruleset', g.ruleset,
                                   'seed', g.seed, 'moves', g.moves)::text AS record,
                 h.handle::text AS host, g.x_id, x.handle::text AS x, g.o_id, o.handle::text AS o,
-                g.takebacks, g.x_draw_offers, g.o_draw_offers, g.result, g.termination
+                g.takebacks, g.x_draw_offers, g.o_draw_offers, g.result, g.termination, g.rematch
          FROM games g
          JOIN accounts h ON h.id = g.host_id
          LEFT JOIN accounts x ON x.id = g.x_id
@@ -329,6 +338,10 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
             o: draws(found.o_draw_offers),
         },
         end,
+        rematch: match found.rematch {
+            Some(rematch) => Some(RoomId::parse(&rematch).ok_or_else(|| unreadable("a Room id"))?),
+            None => None,
+        },
     }))
 }
 

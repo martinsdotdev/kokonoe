@@ -81,10 +81,34 @@ export interface Ruleset {
 }
 
 /**
+ * What `GET /api/rooms/<room>` answers: the host's Handle, the Variant's name and Ruleset code,
+ * who sits where, and the seat the asker already holds.
+ */
+export interface RoomCard {
+    host: string;
+    variant: string;
+    rules: string;
+    players: Players;
+    you: Player | null;
+}
+
+/**
+ * What `POST /api/rooms` answers: the Room's link is `/r/<room>`.
+ */
+export interface CreatedRoom {
+    room: string;
+}
+
+/**
  * What `play` did: the move went in (`Now`), was already made at that ply (`Already`), or was
  * refused, as an illegal move or a ply out of order.
  */
 export type PlayResult = { Now: Status } | "Already" | { Illegal: IllegalMove } | { OutOfOrder: { want: Ply; got: Ply } };
+
+/**
+ * What a client says on a Room's socket.
+ */
+export type ClientMsg = { type: "Hello"; protocol: number; rules_version: number; room: string; role: Role } | { type: "Move"; ply: Ply; cell: Cell };
 
 /**
  * What one search from a root found: a move the tactics force, or the visits of every root move
@@ -93,9 +117,36 @@ export type PlayResult = { Now: Status } | "Already" | { Illegal: IllegalMove } 
 export type Searched = { Forced: Cell } | { Visits: Visit[] };
 
 /**
+ * What the server says on a Room's socket. A `Welcome` comes after `Hello`, and again to every
+ * socket when a seat fills; it replaces everything the page knew.
+ */
+export type ServerMsg = { type: "Welcome"; you: Player; snapshot: Snapshot } | { type: "Moved"; ply: Ply; cell: Cell } | { type: "Rejected"; reason: Rejection } | { type: "Ended"; outcome: Outcome };
+
+/**
+ * Who holds each seat, by Handle: `null` while it waits for someone.
+ */
+export interface Players {
+    X: string | null;
+    O: string | null;
+}
+
+/**
+ * Why the server refused a move. `OutOfOrder` means the page is behind: it reconnects.
+ */
+export type Rejection = "IllegalMove" | { OutOfOrder: { want: Ply } } | "NotAllowed";
+
+/**
  * `FirstTo` holds N, 1 to 9.
  */
 export type Objective = "Line" | { FirstTo: number };
+
+/**
+ * `POST /api/rooms`: a Preset by its Ruleset code, and the host's seat.
+ */
+export interface NewRoom {
+    rules: string;
+    seat: SeatChoice;
+}
 
 /**
  * `Random` holds k, the dealt plies, 1 to 8.
@@ -105,6 +156,11 @@ export type Opening = "Free" | { Random: number };
 export interface Preset {
     name: string;
     ruleset: Ruleset;
+}
+
+export interface Snapshot {
+    record: Record;
+    players: Players;
 }
 
 export type BoardStatus = "Open" | { Won: Player } | "Drawn";
@@ -119,6 +175,10 @@ export type Outcome = { Objective: Player } | { MostWon: Player } | "Draw";
 
 export type Player = "X" | "O";
 
+export type Role = "Player";
+
+export type SeatChoice = "X" | "O" | "Random";
+
 
 /**
  * Why the server closed a WebSocket (spec §10.3), as `kokonoe-protocol` names it: compare a
@@ -130,6 +190,7 @@ export enum CloseCode {
     Restarting = 1012,
     UpdateRequired = 4001,
     Forbidden = 4003,
+    NoRoom = 4004,
 }
 
 /**
@@ -223,6 +284,16 @@ export function parseRulesetCode(code: string): Ruleset;
 export function presets(): Preset[];
 
 /**
+ * The version of the Room's messages this build speaks, which its `Hello` names.
+ */
+export function protocolVersion(): number;
+
+/**
+ * The rules version this build plays, which a Room's `Hello` names.
+ */
+export function rulesVersion(): number;
+
+/**
  * The Ruleset code of spec §4.2: `std`, or the settings that differ from Standard.
  */
 export function rulesetCode(ruleset: Ruleset): string;
@@ -266,6 +337,8 @@ export interface InitOutput {
     readonly notation: (a: any, b: number) => [number, number, number, number];
     readonly parseRulesetCode: (a: number, b: number) => [number, number, number];
     readonly presets: () => [number, number];
+    readonly protocolVersion: () => number;
+    readonly rulesVersion: () => number;
     readonly rulesetCode: (a: any) => [number, number, number, number];
     readonly search: (a: any, b: number, c: number, d: any, e: number) => [number, number, number];
     readonly shares: (a: number, b: number) => [number, number, number, number];

@@ -7,3 +7,15 @@ rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
+kokonoe-engine.workspace = true
+# The messages' JSON, for the server. The browser module declares their TypeScript shapes as
+# mirrors in kokonoe-wasm and never builds this, so it leaves the feature off.
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"], optional = true }
+
+[features]
+serde = ["dep:serde", "kokonoe-engine/serde"]
+
+[dev-dependencies]
+# The protocol's own tests, with the JSON they pin.
+kokonoe-protocol = { path = ".", features = ["serde"] }
+serde_json = "1.0"

@@ -24,6 +24,11 @@
 mod convert;
 mod js;
 mod types;
+#[allow(
+    dead_code,
+    reason = "declarations for the page, which builds and reads the JSON itself"
+)]
+mod wire;
 
 use kokonoe_engine as engine;
 use tsify::Ts;
@@ -292,6 +297,18 @@ pub fn notation(
     Ok(cell.to_string())
 }
 
+/// The rules version this build plays, which a Room's `Hello` names.
+#[wasm_bindgen(js_name = rulesVersion)]
+pub fn rules_version() -> u32 {
+    engine::RULES_VERSION
+}
+
+/// The version of the Room's messages this build speaks, which its `Hello` names.
+#[wasm_bindgen(js_name = protocolVersion)]
+pub fn protocol_version() -> u32 {
+    kokonoe_protocol::PROTOCOL
+}
+
 /// The five Presets, Standard first.
 #[wasm_bindgen]
 pub fn presets() -> Vec<Ts<Preset>> {
@@ -316,4 +333,5 @@ pub enum CloseCode {
     Restarting = 1012,
     UpdateRequired = 4001,
     Forbidden = 4003,
+    NoRoom = 4004,
 }

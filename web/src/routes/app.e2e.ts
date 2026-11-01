@@ -21,7 +21,7 @@ const bodyBackgroundMatches = (page: Page, hex: string) =>
 test('a deep link loads the app through the fallback page', async ({ page }) => {
 	const response = await page.goto('/r/abc');
 	expect(response?.status()).toBe(200);
-	await expect(page).toHaveTitle('Kokonoe');
+	await expect(page.getByRole('heading', { name: 'This game doesn’t exist' })).toBeVisible();
 });
 
 test('the heading is set in self-hosted Fraunces', async ({ page }) => {

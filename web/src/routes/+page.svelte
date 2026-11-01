@@ -184,6 +184,18 @@
 						Start pass and play
 					</a>
 				</article>
+				<article class={card}>
+					<h3 class="m-0 font-display text-2xl font-semibold">Invite a friend</h3>
+					<p class="m-0 text-muted-foreground">
+						Send a link, and play on your own devices. Casual and untimed, online.
+					</p>
+					<a
+						href={resolve('/new-game?vs=friend')}
+						class="{button} mt-auto self-start bg-primary text-primary-foreground"
+					>
+						Invite a friend
+					</a>
+				</article>
 			</div>
 		</section>
 

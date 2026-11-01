@@ -102,10 +102,11 @@ pub async fn guest(app: &Router) -> String {
     value.split(';').next().unwrap().to_owned()
 }
 
-/// How long a test server's offers wait: long enough to answer, short enough to watch lapse.
+/// How long a test server's offers wait: long enough to answer, short enough to watch lapse, and
+/// apart, so a takeback can't wait as a rematch does.
 pub const TIMING: Timing = Timing {
-    takeback: Duration::from_millis(600),
-    rematch: Duration::from_millis(600),
+    takeback: Duration::from_millis(400),
+    rematch: Duration::from_millis(900),
 };
 
 /// The server, listening on its own runtime as a deployed one would, so [`Server::kill`] can stop

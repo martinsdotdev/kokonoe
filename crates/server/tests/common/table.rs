@@ -6,7 +6,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
 use kokonoe_engine::{Cell, Player, RULES_VERSION, Record};
-use kokonoe_protocol::{ClientMsg, PROTOCOL, Players, Rejection, Role, ServerMsg};
+use kokonoe_protocol::{ClientMsg, PROTOCOL, Players, Rejection, Role, ServerMsg, Snapshot};
 use sqlx::PgPool;
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -203,12 +203,18 @@ pub async fn step(socket: &mut Socket, ply: u16, cell: u16) {
     say(socket, &ClientMsg::Move { ply, cell }).await;
 }
 
-/// The `Welcome` a socket hears next: its seat, the Record and the players.
-pub async fn welcomed(socket: &mut Socket) -> (Player, Record, Players) {
+/// The `Welcome` a socket hears next: its seat, and the Room as it stands.
+pub async fn welcome(socket: &mut Socket) -> (Player, Snapshot) {
     match hear(socket).await {
-        ServerMsg::Welcome { you, snapshot } => (you, snapshot.record, snapshot.players),
+        ServerMsg::Welcome { you, snapshot } => (you, snapshot),
         other => panic!("not a Welcome: {other:?}"),
     }
+}
+
+/// The `Welcome` a socket hears next: its seat, the Record and the players.
+pub async fn welcomed(socket: &mut Socket) -> (Player, Record, Players) {
+    let (you, snapshot) = welcome(socket).await;
+    (you, snapshot.record, snapshot.players)
 }
 
 pub fn indices(record: &Record) -> Vec<u16> {
@@ -223,14 +229,20 @@ pub fn rejected(reason: Rejection) -> ServerMsg {
     ServerMsg::Rejected { reason }
 }
 
+impl Table {
+    /// The socket of the player in `seat`.
+    pub fn socket(&mut self, seat: Player) -> &mut Socket {
+        match seat {
+            Player::X => &mut self.x,
+            Player::O => &mut self.o,
+        }
+    }
+}
+
 /// Plays `cells` from `ply`, each by the side to move, and checks both sockets hear each move.
 pub async fn play(table: &mut Table, ply: u16, cells: &[u16]) {
     for (ply, &cell) in (ply..).zip(cells) {
-        let mover = if ply % 2 == 0 {
-            &mut table.x
-        } else {
-            &mut table.o
-        };
+        let mover = table.socket(kokonoe_engine::Ply::new(ply).player());
         step(mover, ply, cell).await;
         assert_eq!(hear(&mut table.x).await, moved(ply, cell));
         assert_eq!(hear(&mut table.o).await, moved(ply, cell));
@@ -240,10 +252,7 @@ pub async fn play(table: &mut Table, ply: u16, cells: &[u16]) {
 /// Sends each move by the side named, and checks it's refused for its reason.
 pub async fn refuse(table: &mut Table, moves: &[(Player, u16, u16, Rejection)]) {
     for &(by, ply, cell, reason) in moves {
-        let socket = match by {
-            Player::X => &mut table.x,
-            Player::O => &mut table.o,
-        };
+        let socket = table.socket(by);
         step(socket, ply, cell).await;
         assert_eq!(
             hear(socket).await,

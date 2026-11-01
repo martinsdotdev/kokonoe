@@ -4,7 +4,7 @@
  */
 import type { Cell, Player } from '#lib/engine.js';
 import type { GameFile } from './gamefile.js';
-import type { Opponent } from './launch.js';
+import type { SavedOpponent } from './saved.js';
 import { boardLabel, notation } from './notation.js';
 import { at, lineage, localOf, type BoardView } from './view.js';
 
@@ -77,7 +77,14 @@ export const gameFile = (
 	game: Omit<GameFile, 'seats'> & { seats: Record<Player, Seat> }
 ): GameFile => ({ ...game, seats: { X: seatLabel(game.seats.X), O: seatLabel(game.seats.O) } });
 
-export const seats = (opponent: Opponent): Record<Player, Seat> => {
+export const seats = (opponent: SavedOpponent): Record<Player, Seat> => {
+	if (opponent.kind === 'room') {
+		const seat = (player: Player): Seat => ({
+			name: opponent.players[player],
+			detail: player === opponent.you ? 'You' : null
+		});
+		return { X: seat('X'), O: seat('O') };
+	}
 	if (opponent.kind === 'hotseat') {
 		return { X: { name: 'Player 1', detail: null }, O: { name: 'Player 2', detail: null } };
 	}

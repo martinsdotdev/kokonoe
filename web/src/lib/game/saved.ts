@@ -1,7 +1,8 @@
 /**
- * Offline games in IndexedDB (spec §5.1 and §14): every game from its first move, finished or
- * not. Plain data with no engine in it, so Home can list and preview games without loading the
- * WASM. A Record carries its own `rules_version`; the database's version covers only its shape.
+ * Saved games in IndexedDB (spec §5.1 and §14): every game on this device from its first move,
+ * finished or not, and this page's copy of each invite Room it played, kept after every move. Plain
+ * data with no engine in it, so Home can list and preview games without loading the WASM. A Record
+ * carries its own `rules_version`; the database's version covers only its shape.
  */
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { BoardStatus, Cell, Player, Record } from '#lib/engine.js';
@@ -9,13 +10,27 @@ import type { Opponent } from './launch.js';
 import type { Variant } from './rules.js';
 import type { BoardView } from './view.js';
 
-/** One offline game as stored. */
+/** An invite Room's game as this page last heard it: its Room, this page's seat, both Handles. */
+export interface RoomOpponent {
+	kind: 'room';
+	room: string;
+	you: Player;
+	players: { X: string; O: string };
+}
+
+/** Who a saved game was against: on this device, or a friend in an invite Room. */
+export type SavedOpponent = Opponent | RoomOpponent;
+
+/** One saved game. */
 export interface SavedGame {
-	/** Also the game's address, `/play?game=<id>`, and its Replay's, `/replay?game=<id>`. */
+	/**
+	 * Also its Replay's address, `/replay?game=<id>`, and for a game on this device its own,
+	 * `/play?game=<id>`. A Room's game is kept by its Room's id, and resumes at `/r/<room>`.
+	 */
 	id: string;
 	record: Record;
 	variant: { name: string; code: string };
-	opponent: Opponent;
+	opponent: SavedOpponent;
 	/** Who resigned, which a Record can't hold. */
 	resigned: Player | null;
 	/** When the game began and was last played, in epoch milliseconds. */
@@ -29,6 +44,12 @@ export interface SavedGame {
 	result: string | null;
 }
 
+/** A game played on this device, which `/play` can resume. */
+export type OfflineSaved = SavedGame & { opponent: Opponent };
+
+export const isOffline = (saved: SavedGame): saved is OfflineSaved =>
+	saved.opponent.kind !== 'room';
+
 /** Where a game keeps itself: IndexedDB, or a fake in tests. */
 export interface GameStore {
 	save(game: SavedGame): Promise<void>;
@@ -41,9 +62,11 @@ interface Schema extends DBSchema {
 export const DATABASE = 'kokonoe';
 /**
  * Version 2 names Boards in the stored view by path, which depth 3 needs (KOK-39). Version 3
- * lists the view's dealt Cells (KOK-45).
+ * lists the view's dealt Cells (KOK-45). Version 4 keeps invite Rooms' games (KOK-56): it rewrites
+ * nothing, but a build that doesn't know a `room` opponent mustn't open a store holding one, and
+ * would otherwise resume it as pass and play.
  */
-const VERSION = 3;
+const VERSION = 4;
 
 /** A view as version 1 stored it: depth 2, each Local board by its Space. */
 export interface ViewVersion1 {

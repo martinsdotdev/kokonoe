@@ -9,6 +9,8 @@
 	import { resolve } from '$app/paths';
 	import Brand from '#lib/components/Brand.svelte';
 	import GameScreen from '#lib/game/GameScreen.svelte';
+	import { moves, turnLine } from '#lib/game/listing.js';
+	import MiniBoard from '#lib/game/MiniBoard.svelte';
 	import JoinCard from './JoinCard.svelte';
 	import { RoomVisit, type VisitOptions } from './visit.svelte.js';
 	import WaitingCard from './WaitingCard.svelte';
@@ -106,6 +108,23 @@
 					<p class="m-0 text-muted-foreground">{notice.text}</p>
 				{/if}
 				{#if phase.kind === 'offline'}
+					{#if phase.saved}
+						{@const saved = phase.saved}
+						<figure class="m-0 flex items-center gap-4.5" data-saved>
+							<div class="w-[120px] shrink-0">
+								<MiniBoard
+									view={saved.view}
+									label={`The board after ${moves(saved.record.moves.length)}`}
+								/>
+							</div>
+							<figcaption class="flex flex-col gap-1">
+								<span class="font-semibold">
+									{saved.result ?? turnLine(saved)}
+								</span>
+								<span class="text-sm text-muted-foreground">As you last saw it.</span>
+							</figcaption>
+						</figure>
+					{/if}
 					<button type="button" class={button} onclick={() => visit.retry()}>Try again</button>
 				{:else if phase.kind === 'update'}
 					<button type="button" class={button} onclick={() => location.reload()}>Reload</button>

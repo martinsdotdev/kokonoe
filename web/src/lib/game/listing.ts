@@ -2,7 +2,7 @@
  * How Home words a saved game: when it was played, whose move it is, and what it is. Also the day
  * a game file dates it by.
  */
-import type { SavedGame } from './saved.js';
+import type { RoomOpponent, SavedGame } from './saved.js';
 
 const time = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' });
 const day = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
@@ -35,17 +35,29 @@ export const dayOf = (time: number): string => {
 /** "1 move" or "12 moves": the moves players made, as the result banner counts them. */
 export const moves = (n: number): string => `${n} ${n === 1 ? 'move' : 'moves'}`;
 
+/** The friend a Room's game is against, by Handle. */
+const friend = ({ you, players }: RoomOpponent): string => players[you === 'X' ? 'O' : 'X'];
+
 /** Whose move an unfinished game waits for: "Your move against the computer". */
 export const turnLine = ({ opponent, toMove }: SavedGame): string => {
 	if (opponent.kind === 'hotseat') return `${toMove} to move · pass and play`;
+	if (opponent.kind === 'room') {
+		return toMove === opponent.you
+			? `Your move against ${friend(opponent)}`
+			: `${friend(opponent)}’s move`;
+	}
 	return toMove === opponent.seat ? 'Your move against the computer' : 'The computer’s move';
 };
 
-/** "Standard · Level 3 · 12 moves", or "Tic-Tac-Ku · 4 moves" when passing and playing. */
+/**
+ * "Standard · Level 3 · 12 moves", "Standard · with guest-4821 · 12 moves" for a Room's, or
+ * "Tic-Tac-Ku · 4 moves" when passing and playing.
+ */
 export const detailLine = ({ variant, opponent, record }: SavedGame): string =>
 	[
 		variant.name,
 		opponent.kind === 'computer' ? `Level ${opponent.level}` : null,
+		opponent.kind === 'room' ? `with ${friend(opponent)}` : null,
 		moves(record.moves.length)
 	]
 		.filter(Boolean)

@@ -11,15 +11,31 @@ import {
 } from '#lib/engine.js';
 import type { GameFile } from '#lib/game/gamefile.js';
 import { dayOf } from '#lib/game/listing.js';
-import { dealtMoves, gameFile, playedMove, type Move, type Seat } from '#lib/game/moves.js';
+import { againstLabel } from '#lib/game/launch.js';
+import { dealtMoves, gameFile, playedMove, seats, type Move, type Seat } from '#lib/game/moves.js';
 import { openRecord } from '#lib/game/record.js';
 import { Refusals } from '#lib/game/refusal.svelte.js';
-import type { End } from '#lib/game/result.js';
+import { resultText, type End } from '#lib/game/result.js';
 import { rulesetCode, type Variant } from '#lib/game/rules.js';
+import {
+	browserStore,
+	type GameStore,
+	type RoomOpponent,
+	type SavedGame
+} from '#lib/game/saved.js';
 import type { GameSession } from '#lib/game/screen.js';
 import { presetByCode } from '#lib/game/shelf.js';
 import { boardView, type BoardView } from '#lib/game/view.js';
 import { full } from './api.js';
+
+export interface RoomOptions {
+	/** The Room's id, which the saved game is kept by. */
+	room: string;
+	/** Where the game keeps itself: IndexedDB unless a test brings its own. */
+	store?: GameStore;
+	/** When the game began, if this page saved it before. */
+	started?: number;
+}
 
 /** What a Room's game needs of its socket. */
 export interface RoomLink {
@@ -30,8 +46,6 @@ export interface RoomLink {
 }
 
 type Welcome = Extract<ServerMsg, { type: 'Welcome' }>;
-
-const opponent = (player: Player): Player => (player === 'X' ? 'O' : 'X');
 
 /** An Outcome has one key, so its JSON is one spelling. */
 const sameOutcome = (a: Outcome, b: Outcome) => JSON.stringify(a) === JSON.stringify(b);
@@ -58,11 +72,13 @@ const replay = (record: GameRecord): { game: Game; moves: Move[] } => {
  * flashes at once, as offline; one it allows is sent, and the board waits for the server's
  * `Moved` before showing it. Anything out of step, a gap in plies or a refusal, reconnects for a
  * fresh `Welcome`, and the board waits for that.
+ *
+ * Once both seats are filled it keeps itself after every move it hears, so Home can return to the
+ * Room and, once it's over, replay it offline.
  */
 export class RoomGame implements GameSession {
 	readonly variant: Variant;
 	readonly controls = null;
-	readonly replay = undefined;
 	/** The seat this page plays. */
 	you: Player;
 	/** Who holds each seat, by Handle. */
@@ -77,13 +93,20 @@ export class RoomGame implements GameSession {
 	#refused = new Refusals();
 	#game: Game;
 	#link: RoomLink;
-	#started = Date.now();
+	#room: string;
+	#store: GameStore;
+	#started: number;
+	/** A save has succeeded, so the Replay can open it. */
+	#stored = $state.raw(false);
 
 	/** The game a first `Welcome` holds. Throws an UnplayableGame when its Record can't be played. */
-	constructor(welcome: Welcome, link: RoomLink) {
+	constructor(welcome: Welcome, link: RoomLink, options: RoomOptions) {
 		const { record, players } = welcome.snapshot;
 		const { game, moves } = replay(record);
 		this.#link = link;
+		this.#room = options.room;
+		this.#store = options.store ?? browserStore;
+		this.#started = options.started ?? Date.now();
 		this.#game = game;
 		this.variant = {
 			name: presetByCode(rulesetCode(record.ruleset))?.name ?? 'Custom variant',
@@ -95,6 +118,7 @@ export class RoomGame implements GameSession {
 		this.view = $state.raw(boardView(game));
 		this.status = $state.raw(game.status());
 		this.won = $state.raw(this.#counts());
+		this.#save();
 	}
 
 	/** Everything a later `Welcome` holds, in place of what the page knew. */
@@ -108,6 +132,7 @@ export class RoomGame implements GameSession {
 		this.#pending = null;
 		this.#connected = true;
 		this.#refresh();
+		this.#save();
 	}
 
 	/** The socket dropped: no moves until the next `Welcome`. */
@@ -148,15 +173,16 @@ export class RoomGame implements GameSession {
 	}
 
 	get seats(): Record<Player, Seat> {
-		const seat = (player: Player): Seat => ({
-			name: this.players[player] ?? 'Waiting…',
-			detail: player === this.you ? 'You' : null
-		});
-		return { X: seat('X'), O: seat('O') };
+		return seats(this.#opponent('Waiting…'));
 	}
 
 	get against(): string {
-		return `vs ${this.players[opponent(this.you)] ?? 'a friend'}`;
+		return againstLabel(this.#opponent('a friend'));
+	}
+
+	/** The saved game's id once it's kept, for the Replay. */
+	get replay(): string | undefined {
+		return this.#stored ? this.#room : undefined;
 	}
 
 	/** Both seats are taken, so the game can begin. */
@@ -231,6 +257,40 @@ export class RoomGame implements GameSession {
 		this.#refresh();
 		this.moves = [...this.moves, playedMove(this.moves.length + 1, cell, before, this.view)];
 		this.replied = mover !== this.you;
+		this.#save();
+	}
+
+	/** The Room as a saved game's opponent, naming an empty seat `empty`. */
+	#opponent(empty: string): RoomOpponent {
+		const { X, O } = this.players;
+		return {
+			kind: 'room',
+			room: this.#room,
+			you: this.you,
+			players: { X: X ?? empty, O: O ?? empty }
+		};
+	}
+
+	/** Keeps the game, once both seats are filled and someone has moved. A failed save costs play nothing. */
+	#save() {
+		if (!this.seated || this.moves.every((move) => move.dealt)) return;
+		const end = this.end;
+		const saved: SavedGame = {
+			id: this.#room,
+			record: this.#game.record(),
+			variant: { name: this.variant.name, code: rulesetCode(this.variant.ruleset) },
+			opponent: this.#opponent(''),
+			resigned: null,
+			started: this.#started,
+			updated: Date.now(),
+			view: this.view,
+			toMove: end ? null : this.toMove,
+			result: end ? resultText(end, this.variant.ruleset, this.won) : null
+		};
+		this.#store.save(saved).then(
+			() => (this.#stored = true),
+			(error: unknown) => console.error('The game couldn’t be saved.', error)
+		);
 	}
 
 	/** Out of step with the server: wait, without moving, for a fresh `Welcome`. */

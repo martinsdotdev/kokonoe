@@ -1,21 +1,13 @@
 /** Fakes for the Room's unit tests: sockets a test plays the server on, and its messages. */
-import type { Players, Record, Ruleset, ServerMsg } from '#lib/engine.js';
+import type { Players, Record, ServerMsg } from '#lib/engine.js';
+import { SHELF } from '#lib/game/shelf.js';
 import type { SocketLike } from './link.js';
 
 export const ROOM = '6f1c0a9b3e2d4c5a7b8e';
 
-export const STANDARD: Ruleset = {
-	depth: 2,
-	continuation: 'Off',
-	drawn_owner: 'Neither',
-	objective: 'Line',
-	fallback: 'Draw',
-	opening: 'Free'
-};
-
-export const record = (moves: number[] = [], ruleset = STANDARD): Record => ({
+export const record = (moves: number[] = []): Record => ({
 	rules_version: 1,
-	ruleset,
+	ruleset: SHELF[0].ruleset,
 	seed: '00000000005eed00',
 	moves
 });

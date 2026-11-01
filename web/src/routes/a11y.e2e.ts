@@ -37,6 +37,16 @@ for (const colorScheme of ['light', 'dark'] as const) {
 			await page.goto('/new-game');
 			await expect(page.getByRole('heading').first()).toBeVisible();
 			await scan(page, 'New game');
+			await page.goto('/new-game?vs=friend');
+			await page.getByRole('button', { name: 'Create invite Room' }).click();
+			await expect(page.getByRole('alert')).toBeVisible();
+			await scan(page, 'New game, inviting a friend, offline');
+			await page.goto('/r/6f1c0a9b3e2d4c5a7b8e');
+			await expect(page.getByRole('heading', { name: 'You’re offline' })).toBeVisible();
+			await scan(page, 'a Room’s link offline');
+			await page.goto('/r/abc');
+			await expect(page.getByRole('heading', { name: 'This game doesn’t exist' })).toBeVisible();
+			await scan(page, 'a Room that doesn’t exist');
 			await page.goto('/import');
 			await expect(page.getByRole('heading', { name: 'Import a game' })).toBeVisible();
 			await scan(page, 'Import');
@@ -78,7 +88,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 			await expect(page.getByRole('group', { name: 'The Global board' })).toBeVisible();
 			await scan(page, 'the game');
 			room.close(1011);
-			await expect(page.getByRole('alert')).toBeVisible();
+			await expect(page.locator('[data-trouble]')).toBeVisible();
 			await scan(page, 'reconnecting');
 
 			await page.unrouteAll();

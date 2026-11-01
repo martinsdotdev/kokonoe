@@ -4,20 +4,12 @@
  */
 import type { Page, WebSocketRoute } from '@playwright/test';
 import type { ClientMsg, Players, RoomCard, ServerMsg } from '../lib/engine.js';
+import { SHELF } from '../lib/game/shelf.js';
 
 export const ROOM = '6f1c0a9b3e2d4c5a7b8e';
 
 export const HOST = 'guest-4821';
 export const JOINER = 'guest-1066';
-
-const STANDARD = {
-	depth: 2,
-	continuation: 'Off',
-	drawn_owner: 'Neither',
-	objective: 'Line',
-	fallback: 'Draw',
-	opening: 'Free'
-} as const;
 
 export interface FakeRoom {
 	/** The page's seat, its Room's players, and the moves the Room holds: what a Welcome says. */
@@ -43,7 +35,12 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 		type: 'Welcome',
 		you: room.you,
 		snapshot: {
-			record: { rules_version: 1, ruleset: STANDARD, seed: '00000000005eed00', moves: room.moves },
+			record: {
+				rules_version: 1,
+				ruleset: SHELF[0].ruleset,
+				seed: '00000000005eed00',
+				moves: room.moves
+			},
 			players: room.players
 		}
 	});
@@ -68,6 +65,12 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 		say: (message: ServerMsg) => last().send(JSON.stringify(message)),
 		/** The Room's Welcome again, on the newest socket. */
 		welcome: () => last().send(JSON.stringify(welcome())),
+		/** `handle` takes the empty seat, and the Room welcomes the page again, as the server does. */
+		join: (handle: string) => {
+			room.players =
+				room.players.X === null ? { ...room.players, X: handle } : { ...room.players, O: handle };
+			last().send(JSON.stringify(welcome()));
+		},
 		/** A move the Room accepts, told on the newest socket. */
 		moved: (ply: number, cell: number) => {
 			room.moves = [...room.moves, cell];

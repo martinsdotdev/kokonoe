@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { TOP_ROW, cells } from '../lib/game/games.fixtures.js';
 import { HOST, JOINER, ROOM, fakeRoom } from './room.fixtures.js';
-import { cell, marked } from './steps.js';
+import { cell, focusBoard, marked, settledFocus, stepThrough, typeMoves } from './steps.js';
 
 const top = cells(TOP_ROW);
 const digits = TOP_ROW.split(' ');
@@ -24,29 +24,10 @@ test('a host invites a friend from Home, and plays once they join', async ({ con
 	const link = `${new URL(page.url()).origin}/r/${ROOM}`;
 	await expect(page.getByLabel('Invite link')).toHaveValue(link);
 	await page.getByRole('button', { name: 'Copy link' }).click();
-	await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
+	await expect(page.getByRole('status')).toHaveText('Link copied.');
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(link);
 
-	room.say({
-		type: 'Welcome',
-		you: 'X',
-		snapshot: {
-			record: {
-				rules_version: 1,
-				ruleset: {
-					depth: 2,
-					continuation: 'Off',
-					drawn_owner: 'Neither',
-					objective: 'Line',
-					fallback: 'Draw',
-					opening: 'Free'
-				},
-				seed: '00000000005eed00',
-				moves: []
-			},
-			players: { X: HOST, O: JOINER }
-		}
-	});
+	room.join(JOINER);
 	await expect(board(page)).toBeVisible();
 	await expect(page.getByRole('banner').getByText(`vs ${JOINER}`)).toBeVisible();
 });
@@ -83,6 +64,74 @@ test('an illegal tap flashes and sends nothing', async ({ page }) => {
 	expect(room.moves()).toEqual([]);
 });
 
+test('a move can be typed, as offline', async ({ page }) => {
+	const room = await fakeRoom(page, { you: 'X', players: { X: HOST, O: JOINER }, moves: [] });
+	await page.goto(`/r/${ROOM}`);
+	await expect(board(page)).toBeVisible();
+	await focusBoard(page);
+	await typeMoves(page, digits[0]);
+	await expect.poll(() => room.moves()).toEqual([{ type: 'Move', ply: 0, cell: top[0] }]);
+});
+
+test.describe('on a phone', () => {
+	test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+	test('a tapped move waits for the server, then lands', async ({ page }) => {
+		const room = await fakeRoom(page, { you: 'X', players: { X: HOST, O: JOINER }, moves: [] });
+		await page.goto(`/r/${ROOM}`);
+		await stepThrough(page, digits[0], (target) => target.tap());
+		await expect.poll(() => room.moves()).toEqual([{ type: 'Move', ply: 0, cell: top[0] }]);
+		await expect(marked(page)).toHaveCount(0);
+		room.moved(0, top[0]);
+		// The move landed: the view steps to the Board it Sent O to.
+		await expect.poll(() => settledFocus(page)).toEqual([3]);
+	});
+});
+
+test('a host whose connection drops while waiting is told', async ({ page }) => {
+	const room = await fakeRoom(page, { you: 'X', players: { X: HOST, O: null }, moves: [] });
+	await page.goto(`/r/${ROOM}`);
+	await expect(page.getByRole('button', { name: 'Copy link' })).toBeVisible();
+	room.close(1011);
+	await expect(page.getByRole('status')).toHaveText('Connection lost. Reconnecting…');
+	await expect.poll(() => room.hellos()).toBe(2);
+	await expect(page.getByRole('status')).toHaveText('');
+	room.join(JOINER);
+	await expect(board(page)).toBeVisible();
+	await expect(page.locator('main h1'), 'focus follows the game in').toBeFocused();
+});
+
+test('the sheet says so when the server can’t make a Room', async ({ page }) => {
+	await page.goto('/new-game?vs=friend');
+	await page.getByRole('button', { name: 'Create invite Room' }).click();
+	await expect(page.getByRole('alert')).toHaveText(
+		'Kokonoe’s server couldn’t make the Room. Invite a friend once you’re online.'
+	);
+	await expect(page).toHaveURL(/\/new-game/);
+});
+
+test('a Room’s link offline offers to try again', async ({ page }) => {
+	await page.goto(`/r/${ROOM}`);
+	await expect(page.getByRole('heading', { name: 'You’re offline' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+});
+
+test('the sheet loads no engine, inviting a friend', async ({ page }) => {
+	const loaded: string[] = [];
+	const scripts: Promise<string>[] = [];
+	page.on('response', (response) => {
+		const path = new URL(response.url()).pathname;
+		if (!/\.(m?js|wasm)$/.test(path)) return;
+		loaded.push(path);
+		scripts.push(response.text());
+	});
+	await page.goto('/new-game?vs=friend');
+	await expect(page.getByRole('button', { name: 'Create invite Room' })).toBeVisible();
+	await page.waitForLoadState('networkidle');
+	expect(loaded.filter((path) => path.endsWith('.wasm'))).toEqual([]);
+	for (const script of await Promise.all(scripts)) expect(script).not.toContain('kokonoe_wasm_bg');
+});
+
 test('a joiner reads the card, and joins on Accept or leaves on Decline', async ({ page }) => {
 	const room = await fakeRoom(page, {
 		you: 'O',
@@ -110,6 +159,7 @@ test('a joiner reads the card, and joins on Accept or leaves on Decline', async 
 	await page.goto(`/r/${ROOM}`);
 	await page.getByRole('button', { name: 'Accept' }).click();
 	await expect(board(page)).toBeVisible();
+	await expect(page.locator('main h1'), 'focus follows the page into the game').toBeFocused();
 	expect(room.said[0]).toEqual({
 		type: 'Hello',
 		protocol: 1,
@@ -125,9 +175,10 @@ test('a dropped socket reconnects into the game as it now stands', async ({ page
 	await page.goto(`/r/${ROOM}`);
 	await expect(board(page)).toBeVisible();
 	room.close(1011);
-	await expect(page.getByRole('alert')).toHaveText('Connection lost. Reconnecting…');
+	await expect(page.locator('[data-trouble]')).toHaveText('Connection lost. Reconnecting…');
+	await expect(page.locator('[data-spoken]')).toHaveText('Connection lost. Reconnecting…');
 	await expect.poll(() => room.hellos()).toBe(2);
-	await expect(page.getByRole('alert')).toHaveCount(0);
+	await expect(page.locator('[data-trouble]')).toHaveCount(0);
 	await expect(marked(page)).toHaveCount(0);
 
 	room.moved(0, top[0]);

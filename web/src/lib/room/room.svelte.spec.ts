@@ -74,6 +74,16 @@ describe('a Room’s game', () => {
 		expect(room.moves).toHaveLength(2);
 	});
 
+	it('waits for a fresh Welcome after a resync, taking no moves', () => {
+		const { room, sent } = game('X');
+		room.receive({ type: 'Rejected', reason: 'IllegalMove' });
+		expect(room.frozen).toBe(true);
+		room.play(top[0]);
+		expect(sent).toEqual([]);
+		room.welcome(welcome('X'));
+		expect(room.frozen).toBe(false);
+	});
+
 	it('takes everything a later Welcome holds', () => {
 		const { room } = game('X', { X: 'guest-4821', O: null });
 		expect(room.seated).toBe(false);
@@ -95,7 +105,7 @@ describe('a Room’s game', () => {
 
 	it('says when the connection is lost, and takes no moves meanwhile', () => {
 		const { room, sent } = game('X');
-		room.connected = false;
+		room.dropped();
 		expect(room.trouble).toEqual({ message: 'Connection lost. Reconnecting…' });
 		room.play(top[0]);
 		expect(sent).toEqual([]);

@@ -34,6 +34,37 @@ db:
 serve: build
     cargo run -p kokonoe-server
 
+# Play online while developing: the server on 8080, which takes Vite's origin, behind Vite's dev
+# server on 5173, which sends it `/api` and the socket. Open two browsers with their own cookies,
+# such as Chrome and Firefox, for two players.
+[script('node')]
+online: db
+    const { spawn, spawnSync } = require('node:child_process');
+    const { existsSync } = require('node:fs');
+    // The server won't start without a build's fallback page, though Vite serves the pages.
+    if (!existsSync('web/build/200.html')) {
+        const built = spawnSync('pnpm', ['-C', 'web', 'build'], { stdio: 'inherit', shell: true });
+        if (built.status !== 0) process.exit(built.status ?? 1);
+    }
+    const env = (extra) => ({ ...process.env, ...extra });
+    const children = [
+        spawn('cargo', ['run', '-p', 'kokonoe-server'], {
+            stdio: 'inherit',
+            env: env({ ORIGIN: 'http://localhost:5173', PORT: '8080' })
+        }),
+        spawn('pnpm', ['-C', 'web', 'dev'], {
+            stdio: 'inherit',
+            shell: true,
+            env: env({ KOKONOE_API: 'http://localhost:8080' })
+        })
+    ];
+    for (const child of children) {
+        child.on('exit', (code) => {
+            for (const other of children) other.kill();
+            process.exit(code ?? 0);
+        });
+    }
+
 # Write the static SPA to web/build.
 build:
     pnpm -C web build

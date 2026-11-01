@@ -4,7 +4,15 @@ import { playwright } from '@vitest/browser-playwright';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 
+/**
+ * The server to send `/api` to, sockets included, while developing (`just online`). Unset, the
+ * dev server has no API, and pages work offline as under any static host.
+ */
+const api = process.env.KOKONOE_API;
+
 export default defineConfig({
+	// The server checks each request's Origin, so the dev server keeps the port it was told.
+	server: { strictPort: true, proxy: api ? { '/api': { target: api, ws: true } } : undefined },
 	plugins: [
 		tailwindcss(),
 		sveltekit({

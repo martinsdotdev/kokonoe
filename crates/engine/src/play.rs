@@ -10,6 +10,7 @@ use crate::repr::{BoardRepr, Masks, Repr, has_line, select};
 use crate::rng::Rng;
 use crate::ruleset::{Continuation, Depth, Fallback, Objective, Opening, Ruleset};
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Player {
     X,
@@ -705,6 +706,7 @@ impl BoardStatus {
 
 /// How a game ended. A game ends when the objective is met, or when every child of the Global
 /// board is Decided and nothing can change any more.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Outcome {
     /// This player met the objective. When one move met it for both players, the mover.

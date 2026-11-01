@@ -24,10 +24,11 @@
 	class="flex flex-col gap-5 rounded-[10px] border-[1.5px] border-foreground bg-card p-6 shadow-[6px_6px_0_var(--muted)]"
 >
 	<span class="font-mono text-[13px] tracking-[0.08em] text-muted-foreground">INVITATION</span>
-	<h1 id="invitation" class="m-0 font-display text-4xl leading-[1.1] font-semibold">
+	<h1 id="invitation" class="m-0 font-display text-4xl leading-[1.1] font-semibold" tabindex="-1">
 		<span data-host>{card.host}</span> invites you to a game of {card.variant}
 	</h1>
-	<ul aria-label="The game" class="m-0 flex list-none flex-wrap gap-2 p-0">
+	<!-- role="list", since Safari drops a list's role with its markers. -->
+	<ul aria-label="The game" role="list" class="m-0 flex list-none flex-wrap gap-2 p-0">
 		<li class={chip}>{preset ? 'Preset' : 'Custom variant'}</li>
 		<li class={chip}>Casual</li>
 		<li class={chip}>Untimed</li>

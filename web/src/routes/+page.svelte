@@ -1,6 +1,7 @@
 <!--
-	Home (spec §7.4): the way into a game, and back into saved ones. Online arrives with M2, and
-	Create custom with the editor (M3). Saved games come from IndexedDB with their board drawn, so
+	Home (spec §7.4): the way into a game, and back into saved ones. Inviting a friend opens the New
+	game sheet for an invite Room; Quick match arrives later in M2, and Create custom with the editor
+	(M3). Saved games come from IndexedDB with their board drawn, so
 	Home still loads no WASM. Online, it starts a session and shows the Guest's Handle.
 -->
 <script lang="ts">

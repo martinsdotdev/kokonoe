@@ -3,7 +3,7 @@ import { startSession } from '#lib/account.js';
 import { ENGINE } from '#lib/game/problem.js';
 import { UnplayableGame } from '#lib/game/record.js';
 import { updateNow } from '#lib/update.js';
-import { isRoomId, roomCard } from './api.js';
+import { full, isRoomId, roomCard } from './api.js';
 import { Link, type LinkOptions } from './link.js';
 import { hello } from './protocol.js';
 import { RoomGame } from './room.svelte.js';
@@ -84,7 +84,7 @@ export class RoomVisit {
 		if (card === undefined) this.phase = { kind: 'offline' };
 		else if (card === 'missing') this.phase = { kind: 'missing' };
 		else if (card.you) this.#connect();
-		else if (card.players.X && card.players.O) this.phase = { kind: 'full', players: card.players };
+		else if (full(card.players)) this.phase = { kind: 'full', players: card.players };
 		else this.phase = { kind: 'join', card };
 	}
 
@@ -100,9 +100,7 @@ export class RoomVisit {
 		if (this.#disposed) return;
 		const events = {
 			message: (message: ServerMsg) => this.#heard(message),
-			dropped: () => {
-				if (this.#game) this.#game.connected = false;
-			},
+			dropped: () => this.#game?.dropped(),
 			ended: (code: number) => this.#ended(code)
 		};
 		this.#link = new Link(hello(this.room), events, { open: this.#options.open });
@@ -117,33 +115,40 @@ export class RoomVisit {
 			else this.#game = new RoomGame(message, link);
 		} catch (error) {
 			link.dispose();
-			const why = error instanceof UnplayableGame ? ` ${error.message}` : '';
-			if (!(error instanceof UnplayableGame)) console.error('The game couldn’t open.', error);
-			this.phase = { kind: 'problem', message: `This game can’t be played here.${why}` };
+			let message = 'This game can’t be played here.';
+			if (error instanceof UnplayableGame) message += ` ${error.message}`;
+			else console.error('The game couldn’t open.', error);
+			this.phase = { kind: 'problem', message };
 			return;
 		}
-		this.#game.connected = true;
 		this.phase = { kind: 'playing', game: this.#game };
 	}
 
 	async #ended(code: number) {
-		if (this.#game) this.#game.connected = false;
-		if (code === CloseCode.NoRoom) {
-			this.phase = { kind: 'missing' };
-		} else if (code === CloseCode.UpdateRequired) {
-			await (this.#options.update ?? updateNow)().catch((error: unknown) => {
-				console.error('The newer build couldn’t be installed.', error);
-				this.phase = { kind: 'update' };
-			});
-		} else {
-			// Not allowed: the seat it asked for went to someone else first.
-			const card = await roomCard(this.room, this.#options.fetch);
-			if (this.#disposed) return;
-			this.phase =
-				card && card !== 'missing' && card.players.X && card.players.O
-					? { kind: 'full', players: card.players }
-					: { kind: 'problem', message: 'Kokonoe’s server didn’t let this page into the game.' };
+		this.#game?.dropped();
+		if (code === CloseCode.NoRoom) this.phase = { kind: 'missing' };
+		else if (code === CloseCode.UpdateRequired) await this.#update();
+		else await this.#refused();
+	}
+
+	/** The server plays a newer build: install it and reload, or say why not. */
+	async #update() {
+		try {
+			await (this.#options.update ?? updateNow)();
+		} catch (error) {
+			console.error('The newer build couldn’t be installed.', error);
+			if (!this.#disposed) this.phase = { kind: 'update' };
 		}
+	}
+
+	/** The server didn't let the socket in: someone else took the seat first, most likely. */
+	async #refused() {
+		const card = await roomCard(this.room, this.#options.fetch);
+		if (this.#disposed) return;
+		this.phase =
+			card && card !== 'missing' && !card.you && full(card.players)
+				? { kind: 'full', players: card.players }
+				: { kind: 'problem', message: 'Kokonoe’s server didn’t let this page into the game.' };
 	}
 
 	#online = () => this.retry();

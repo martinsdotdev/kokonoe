@@ -2,6 +2,7 @@ import { CloseCode, loadEngine, type Players, type RoomCard, type ServerMsg } fr
 import { startSession } from '#lib/account.js';
 import { ENGINE } from '#lib/game/problem.js';
 import { UnplayableGame } from '#lib/game/record.js';
+import { loadGame, type GameStore, type SavedGame } from '#lib/game/saved.js';
 import { updateNow } from '#lib/update.js';
 import { full, isRoomId, roomCard } from './api.js';
 import { Link, type LinkOptions } from './link.js';
@@ -11,8 +12,8 @@ import { RoomGame } from './room.svelte.js';
 /** Where a visit to a Room's link stands. */
 export type Phase =
 	| { kind: 'loading' }
-	/** The server can't be reached, and a Room is played on it. */
-	| { kind: 'offline' }
+	/** The server can't be reached, and a Room is played on it: the game as this page last saw it. */
+	| { kind: 'offline'; saved: SavedGame | undefined }
 	| { kind: 'missing' }
 	| { kind: 'full'; players: Players }
 	/** A seat is free: the joiner's card, until they accept. */
@@ -27,6 +28,8 @@ export type Phase =
 export interface VisitOptions {
 	fetch?: typeof globalThis.fetch;
 	open?: LinkOptions['open'];
+	/** Where the game keeps itself, and was read back from: IndexedDB unless a test brings its own. */
+	store?: GameStore & { load(id: string): Promise<SavedGame | undefined> };
 	/** Installs the newer build and reloads into it. */
 	update?: () => Promise<void>;
 	window?: Window;
@@ -43,6 +46,10 @@ export class RoomVisit {
 	#window: Window;
 	#link: Link | null = null;
 	#game: RoomGame | null = null;
+	/** The game as this page last saved it, if it played here before. */
+	#saved: Promise<SavedGame | undefined>;
+	/** When the game began, if this page saved it before. */
+	#started: number | undefined;
 	#disposed = false;
 
 	constructor(room: string, options: VisitOptions = {}) {
@@ -50,6 +57,8 @@ export class RoomVisit {
 		this.#options = options;
 		this.#window = options.window ?? window;
 		this.#window.addEventListener('online', this.#online);
+		const saved = options.store ? options.store.load(room) : loadGame(room);
+		this.#saved = saved.catch(() => undefined);
 		this.#start();
 	}
 
@@ -81,7 +90,7 @@ export class RoomVisit {
 		const me = await startSession(fetch);
 		const card = me && (await roomCard(this.room, fetch));
 		if (this.#disposed) return;
-		if (card === undefined) this.phase = { kind: 'offline' };
+		if (card === undefined) this.phase = { kind: 'offline', saved: await this.#saved };
 		else if (card === 'missing') this.phase = { kind: 'missing' };
 		else if (card.you) this.#connect();
 		else if (full(card.players)) this.phase = { kind: 'full', players: card.players };
@@ -97,6 +106,8 @@ export class RoomVisit {
 			this.phase = { kind: 'problem', message: ENGINE };
 			return;
 		}
+		// Read before the socket opens, so every message finds the game it's for.
+		this.#started = (await this.#saved)?.started;
 		if (this.#disposed) return;
 		const events = {
 			message: (message: ServerMsg) => this.#heard(message),
@@ -112,7 +123,10 @@ export class RoomVisit {
 		if (message.type !== 'Welcome') return this.#game?.receive(message);
 		try {
 			if (this.#game) this.#game.welcome(message);
-			else this.#game = new RoomGame(message, link);
+			else {
+				const options = { room: this.room, store: this.#options.store, started: this.#started };
+				this.#game = new RoomGame(message, link, options);
+			}
 		} catch (error) {
 			link.dispose();
 			let message = 'This game can’t be played here.';

@@ -5,6 +5,7 @@
  * it.
  */
 import type { Player } from '#lib/engine.js';
+import type { SavedOpponent } from './saved.js';
 
 export const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 export type Level = (typeof LEVELS)[number];
@@ -51,9 +52,14 @@ export const replayQuery = (id: string | null, ply = 0): '' | `?${string}` => {
 	return params.size ? `?${params}` : '';
 };
 
-/** Who the game is against, for headers and lists: "vs Computer · Level 3", "Pass and play". */
-export const againstLabel = (opponent: Opponent): string =>
-	opponent.kind === 'computer' ? `vs Computer · Level ${opponent.level}` : 'Pass and play';
+/**
+ * Who the game is against, for headers and lists: "vs Computer · Level 3", "Pass and play", or a
+ * friend's Handle, "vs guest-4821".
+ */
+export const againstLabel = (opponent: SavedOpponent): string => {
+	if (opponent.kind === 'room') return `vs ${opponent.players[opponent.you === 'X' ? 'O' : 'X']}`;
+	return opponent.kind === 'computer' ? `vs Computer · Level ${opponent.level}` : 'Pass and play';
+};
 
 /** The new game a `/play` URL asks for, or what's wrong with it. */
 export const readLaunch = (params: Pick<URLSearchParams, 'get'>): Launch | { error: string } => {

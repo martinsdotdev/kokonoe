@@ -42,7 +42,11 @@
 		);
 	});
 
-	const saved = (game: SavedGame) => resolve(`/play${gameQuery(game.id)}`);
+	/** Where an unfinished game goes on: its Room's link, or the game screen. */
+	const saved = (game: SavedGame) =>
+		game.opponent.kind === 'room'
+			? resolve('/r/[room]', { room: game.opponent.room })
+			: resolve(`/play${gameQuery(game.id)}`);
 	/** A finished game opens in the Replay viewer, and an unfinished one resumes. */
 	const recentLink = (game: SavedGame) =>
 		game.result === null ? saved(game) : resolve(`/replay${replayQuery(game.id)}`);

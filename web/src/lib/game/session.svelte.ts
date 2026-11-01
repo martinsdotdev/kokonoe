@@ -12,11 +12,11 @@ import {
 	type Move,
 	type Seat
 } from './moves.js';
-import { illegalMove, openRecord } from './record.js';
+import { illegalMove, openRecord, UnplayableGame } from './record.js';
 import { Refusals } from './refusal.svelte.js';
 import { resultText, type End } from './result.js';
 import { rulesetCode, type Variant } from './rules.js';
-import { browserStore, savedVariant, type GameStore, type SavedGame } from './saved.js';
+import { browserStore, isOffline, savedVariant, type GameStore, type SavedGame } from './saved.js';
 import type { Controls, GameSession } from './screen.js';
 import { boardView, type BoardView } from './view.js';
 
@@ -95,6 +95,8 @@ export class OfflineGame implements GameSession, Controls {
 	 * Throws an UnplayableGame when this version of Kokonoe can't play the Record on.
 	 */
 	static resume(saved: SavedGame, options: Options = {}): OfflineGame {
+		// `/play` sends a Room's game to its Room first.
+		if (!isOffline(saved)) throw new UnplayableGame('It’s played in an invite Room.');
 		// Only `open` checks the Record's rules version, so check with it before replaying.
 		openRecord(saved.record).free();
 		return new OfflineGame(savedVariant(saved), saved.opponent, options, saved);

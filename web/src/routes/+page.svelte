@@ -129,7 +129,8 @@
 						<p class="m-0 text-sm text-muted-foreground">{detailLine(unfinished)}</p>
 						<a
 							href={saved(unfinished)}
-							class="{button} mt-auto self-start bg-primary text-primary-foreground">Resume</a
+							class="{button} mt-auto self-start bg-primary text-primary-foreground"
+							>Resume<span class="sr-only">, {againstLabel(unfinished.opponent)}</span></a
 						>
 					</div>
 				</article>

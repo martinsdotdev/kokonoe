@@ -31,7 +31,9 @@
 			style:color={toMove ? ink : 'var(--muted-foreground)'}
 			style:font-weight={toMove ? 600 : 400}
 		>
-			{[seat.detail, toMove ? (doing ?? 'To move') : 'Waiting'].filter(Boolean).join(' · ')}
+			{[seat.detail ?? (seat.yours ? 'You' : null), toMove ? (doing ?? 'To move') : 'Waiting']
+				.filter(Boolean)
+				.join(' · ')}
 		</div>
 	</div>
 	<span class="font-mono text-[13px] text-muted-foreground">{player}</span>

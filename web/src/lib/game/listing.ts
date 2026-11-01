@@ -2,7 +2,8 @@
  * How Home words a saved game: when it was played, whose move it is, and what it is. Also the day
  * a game file dates it by.
  */
-import type { RoomOpponent, SavedGame } from './saved.js';
+import { friend } from './launch.js';
+import type { SavedGame } from './saved.js';
 
 const time = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' });
 const day = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
@@ -34,9 +35,6 @@ export const dayOf = (time: number): string => {
 
 /** "1 move" or "12 moves": the moves players made, as the result banner counts them. */
 export const moves = (n: number): string => `${n} ${n === 1 ? 'move' : 'moves'}`;
-
-/** The friend a Room's game is against, by Handle. */
-const friend = ({ you, players }: RoomOpponent): string => players[you === 'X' ? 'O' : 'X'];
 
 /** Whose move an unfinished game waits for: "Your move against the computer". */
 export const turnLine = ({ opponent, toMove }: SavedGame): string => {

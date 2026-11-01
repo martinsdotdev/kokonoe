@@ -5,7 +5,6 @@
  * it.
  */
 import type { Player } from '#lib/engine.js';
-import type { SavedOpponent } from './saved.js';
 
 export const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 export type Level = (typeof LEVELS)[number];
@@ -18,6 +17,20 @@ export type Level = (typeof LEVELS)[number];
 export const DEFAULT_LEVEL: Level = 2;
 
 export type Opponent = { kind: 'hotseat' } | { kind: 'computer'; level: Level; seat: Player };
+
+/** A friend in an invite Room, as a saved game names them: the Room, this page's seat, both Handles. */
+export interface RoomOpponent {
+	kind: 'room';
+	room: string;
+	you: Player;
+	players: Record<Player, string>;
+}
+
+/** Who a saved game was against: on this device, or a friend in an invite Room. */
+export type SavedOpponent = Opponent | RoomOpponent;
+
+/** The friend a Room's game is against, by Handle. */
+export const friend = ({ you, players }: RoomOpponent): string => players[you === 'X' ? 'O' : 'X'];
 
 export interface Launch {
 	code: string;
@@ -57,7 +70,7 @@ export const replayQuery = (id: string | null, ply = 0): '' | `?${string}` => {
  * friend's Handle, "vs guest-4821".
  */
 export const againstLabel = (opponent: SavedOpponent): string => {
-	if (opponent.kind === 'room') return `vs ${opponent.players[opponent.you === 'X' ? 'O' : 'X']}`;
+	if (opponent.kind === 'room') return `vs ${friend(opponent)}`;
 	return opponent.kind === 'computer' ? `vs Computer · Level ${opponent.level}` : 'Pass and play';
 };
 

@@ -34,7 +34,7 @@
 			// A Room's game is played at its Room, never resumed here.
 			if (saved.opponent.kind === 'room') {
 				const { room } = saved.opponent;
-				goto(resolve('/r/[room]', { room }), { replaceState: true });
+				if (!left) goto(resolve('/r/[room]', { room }), { replaceState: true });
 				return null;
 			}
 			try {

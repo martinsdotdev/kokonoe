@@ -9,6 +9,7 @@
 	import { resolve } from '$app/paths';
 	import Brand from '#lib/components/Brand.svelte';
 	import GameScreen from '#lib/game/GameScreen.svelte';
+	import { replayQuery } from '#lib/game/launch.js';
 	import { moves, turnLine } from '#lib/game/listing.js';
 	import MiniBoard from '#lib/game/MiniBoard.svelte';
 	import JoinCard from './JoinCard.svelte';
@@ -110,20 +111,23 @@
 				{#if phase.kind === 'offline'}
 					{#if phase.saved}
 						{@const saved = phase.saved}
-						<figure class="m-0 flex items-center gap-4.5" data-saved>
+						<figure class="m-0 flex items-center gap-4.5">
 							<div class="w-[120px] shrink-0">
 								<MiniBoard
 									view={saved.view}
-									label={`The board after ${moves(saved.record.moves.length)}`}
+									label={`The board as you last saw it, after ${moves(saved.record.moves.length)}`}
 								/>
 							</div>
-							<figcaption class="flex flex-col gap-1">
-								<span class="font-semibold">
-									{saved.result ?? turnLine(saved)}
-								</span>
-								<span class="text-sm text-muted-foreground">As you last saw it.</span>
-							</figcaption>
+							<figcaption class="font-semibold">{saved.result ?? turnLine(saved)}</figcaption>
 						</figure>
+						{#if saved.result}
+							<a
+								href={resolve(`/replay${replayQuery(saved.id)}`)}
+								class="font-semibold text-foreground"
+							>
+								Replay this game
+							</a>
+						{/if}
 					{/if}
 					<button type="button" class={button} onclick={() => visit.retry()}>Try again</button>
 				{:else if phase.kind === 'update'}

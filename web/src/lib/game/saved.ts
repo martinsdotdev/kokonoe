@@ -6,20 +6,10 @@
  */
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { BoardStatus, Cell, Player, Record } from '#lib/engine.js';
-import type { Opponent } from './launch.js';
-import type { Variant } from './rules.js';
+import type { SavedOpponent } from './launch.js';
+import { resultText, type End } from './result.js';
+import { rulesetCode, type Variant } from './rules.js';
 import type { BoardView } from './view.js';
-
-/** An invite Room's game as this page last heard it: its Room, this page's seat, both Handles. */
-export interface RoomOpponent {
-	kind: 'room';
-	room: string;
-	you: Player;
-	players: { X: string; O: string };
-}
-
-/** Who a saved game was against: on this device, or a friend in an invite Room. */
-export type SavedOpponent = Opponent | RoomOpponent;
 
 /** One saved game. */
 export interface SavedGame {
@@ -44,16 +34,40 @@ export interface SavedGame {
 	result: string | null;
 }
 
-/** A game played on this device, which `/play` can resume. */
-export type OfflineSaved = SavedGame & { opponent: Opponent };
-
-export const isOffline = (saved: SavedGame): saved is OfflineSaved =>
-	saved.opponent.kind !== 'room';
-
 /** Where a game keeps itself: IndexedDB, or a fake in tests. */
 export interface GameStore {
 	save(game: SavedGame): Promise<void>;
 }
+
+/** A store a game is also read back from. */
+export interface ReadingStore extends GameStore {
+	load(id: string): Promise<SavedGame | undefined>;
+}
+
+/** A game where it stands, as saved: what Home shows of it, worked out without the engine. */
+export const savedGame = (game: {
+	id: string;
+	record: Record;
+	variant: Variant;
+	opponent: SavedOpponent;
+	resigned: Player | null;
+	started: number;
+	view: BoardView;
+	toMove: Player | null;
+	end: End | null;
+	won: { X: number; O: number };
+}): SavedGame => ({
+	id: game.id,
+	record: game.record,
+	variant: { name: game.variant.name, code: rulesetCode(game.variant.ruleset) },
+	opponent: game.opponent,
+	resigned: game.resigned,
+	started: game.started,
+	updated: Date.now(),
+	view: game.view,
+	toMove: game.end ? null : game.toMove,
+	result: game.end ? resultText(game.end, game.variant.ruleset, game.won) : null
+});
 
 interface Schema extends DBSchema {
 	games: { key: string; value: SavedGame; indexes: { updated: number } };
@@ -125,6 +139,10 @@ const database = (name: string): Promise<IDBPDatabase<Schema>> => {
 				}
 			}
 		},
+		// An older build's tab still holds the store: the upgrade waits until it closes.
+		blocked() {
+			console.warn('Saved games wait for another Kokonoe tab to close.');
+		},
 		// A newer build wants to change the store: step aside so its upgrade isn't blocked.
 		blocking() {
 			forget();
@@ -174,4 +192,7 @@ export const savedVariant = (saved: SavedGame): Variant => ({
 	ruleset: saved.record.ruleset
 });
 
-export const browserStore: GameStore = { save: (game) => saveGame(game) };
+export const browserStore: ReadingStore = {
+	save: (game) => saveGame(game),
+	load: (id) => loadGame(id)
+};

@@ -255,9 +255,9 @@ test.describe('a Room’s game kept on this device', () => {
 		await expect(page.getByRole('link', { name: 'Replay' })).toBeVisible();
 
 		await page.goto('/');
-		const recent = page.locator('[data-recent="finished"]');
-		await expect(recent).toContainText(`vs ${HOST}`);
-		await expect(recent).toContainText('X wins on a line · Replay');
+		const recent = page.getByRole('link', {
+			name: new RegExp(`vs ${HOST} ?, Standard ?, X wins on a line · Replay$`)
+		});
 		await recent.click();
 		await expect(page).toHaveURL(`/replay?game=${ROOM}`);
 		await expect(page.locator('[data-caption]')).toBeVisible();
@@ -273,7 +273,11 @@ test.describe('a Room’s game kept on this device', () => {
 		await page.goto('/');
 		await expect(page.getByText(`${JOINER}’s move`)).toBeVisible();
 		await expect(page.getByText(`Standard · with ${JOINER} · 1 move`)).toBeVisible();
-		await page.getByRole('link', { name: 'Resume', exact: true }).click();
+		const listed = page.getByRole('link', {
+			name: new RegExp(`vs ${JOINER} ?, Standard ?, Unfinished · Resume$`)
+		});
+		await expect(listed).toHaveAttribute('href', `/r/${ROOM}`);
+		await page.getByRole('link', { name: new RegExp(`^Resume ?, vs ${JOINER}$`) }).click();
 		await expect(page).toHaveURL(`/r/${ROOM}`);
 		await expect(marked(page)).toHaveCount(1);
 
@@ -292,7 +296,9 @@ test.describe('a Room’s game kept on this device', () => {
 		await page.unrouteAll();
 		await page.goto(`/r/${ROOM}`);
 		await expect(page.getByRole('heading', { name: 'You’re offline' })).toBeVisible();
-		await expect(page.locator('[data-saved]')).toContainText(`${JOINER}’s move`);
-		await expect(page.getByRole('img', { name: 'The board after 1 move' })).toBeVisible();
+		await expect(page.getByRole('figure', { name: `${JOINER}’s move` })).toBeVisible();
+		await expect(
+			page.getByRole('img', { name: 'The board as you last saw it, after 1 move' })
+		).toBeVisible();
 	});
 });

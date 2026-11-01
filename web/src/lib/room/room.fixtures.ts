@@ -1,6 +1,5 @@
 /** Fakes for the Room's unit tests: sockets a test plays the server on, and its messages. */
 import type { Players, Record, ServerMsg } from '#lib/engine.js';
-import type { GameStore, SavedGame } from '#lib/game/saved.js';
 import { SHELF } from '#lib/game/shelf.js';
 import type { SocketLike } from './link.js';
 
@@ -68,19 +67,4 @@ export const sockets = () => {
 	return { opened, open, last: () => opened[opened.length - 1] };
 };
 
-/** Keeps every save, cloned the way IndexedDB clones it, and reads them back by id. */
-export class FakeStore implements GameStore {
-	saves: SavedGame[] = [];
-
-	get last(): SavedGame | undefined {
-		return this.saves.at(-1);
-	}
-
-	async save(game: SavedGame) {
-		this.saves.push(structuredClone(game));
-	}
-
-	async load(id: string) {
-		return this.saves.findLast((game) => game.id === id);
-	}
-}
+export { FakeStore } from '#lib/game/store.fixtures.js';

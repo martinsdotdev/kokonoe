@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { openDB } from 'idb';
 import {
 	fromVersion1,
@@ -132,5 +132,31 @@ describe('saved games in IndexedDB', () => {
 		await saveGame(room, db);
 		expect(await latestUnfinished(db)).toEqual(room);
 		expect((await recentGames(5, db)).map((saved) => saved.id)).toEqual([room.id, 'a']);
+	});
+
+	it('upgrades past another tab that steps aside, and says so while one doesn’t', async () => {
+		const db = fresh();
+		const polite = await openDB(db, 3, {
+			upgrade(raw) {
+				raw.createObjectStore('games', { keyPath: 'id' }).createIndex('updated', 'updated');
+			},
+			blocking: () => polite.close()
+		});
+		await polite.put('games', game('a', 1));
+		expect(await loadGame('a', db)).toEqual(game('a', 1));
+
+		const other = fresh();
+		const stubborn = await openDB(other, 3, {
+			upgrade(raw) {
+				raw.createObjectStore('games', { keyPath: 'id' }).createIndex('updated', 'updated');
+			}
+		});
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const loading = loadGame('a', other);
+		await expect.poll(() => warn.mock.calls.length).toBeGreaterThan(0);
+		expect(warn).toHaveBeenCalledWith('Saved games wait for another Kokonoe tab to close.');
+		stubborn.close();
+		expect(await loading).toBeUndefined();
+		warn.mockRestore();
 	});
 });

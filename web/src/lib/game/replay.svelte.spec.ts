@@ -40,6 +40,25 @@ const saved = (record: Partial<SavedGame['record']> = {}): SavedGame => ({
 const store: GameStore = { save: async () => {} };
 
 describe('a replayed game', () => {
+	it('names a Room’s players by Handle, this page’s seat marked only on screen', () => {
+		const room = fromSaved({
+			...saved(),
+			started: new Date(2026, 9, 31, 12).getTime(),
+			opponent: {
+				kind: 'room',
+				room: '6f1c0a9b3e2d4c5a7b8e',
+				you: 'O',
+				players: { X: 'guest-4821', O: 'guest-1066' }
+			}
+		});
+		expect(room.against).toBe('vs guest-4821');
+		expect(room.date).toBe('2026-10-31');
+		expect(room.seats.O).toMatchObject({ name: 'guest-1066', yours: true });
+		const replay = Replay.open(room);
+		expect(replay.file.seats).toEqual({ X: 'guest-4821', O: 'guest-1066' });
+		replay.dispose();
+	});
+
 	it('has a position for every ply, from the empty board to the end', () => {
 		const replay = Replay.open(fromSaved(saved()));
 		expect(replay.last).toBe(55);

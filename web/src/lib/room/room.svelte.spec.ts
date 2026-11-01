@@ -26,8 +26,8 @@ describe('a Room’s game', () => {
 		expect(room.variant.name).toBe('Standard');
 		expect(room.moves.map((move) => move.notation)).toEqual(['1·4', '4·1', '1·5']);
 		expect(room.seats).toEqual({
-			X: { name: 'guest-4821', detail: null },
-			O: { name: 'guest-1066', detail: 'You' }
+			X: { name: 'guest-4821', detail: null, yours: false },
+			O: { name: 'guest-1066', detail: null, yours: true }
 		});
 		expect(room.against).toBe('vs guest-4821');
 		expect(room.toMove).toBe('O');
@@ -134,6 +134,27 @@ describe('a Room’s game', () => {
 			result: null
 		});
 		await expect.poll(() => room.replay).toBe(ROOM);
+	});
+
+	it('keeps each move it plays, and nothing it doesn’t', async () => {
+		const { room, store } = game('X');
+		room.receive({ type: 'Moved', ply: 0, cell: top[0] });
+		room.receive({ type: 'Moved', ply: 1, cell: top[1] });
+		await expect
+			.poll(() => store.saves.map((saved) => saved.record.moves))
+			.toEqual([[top[0]], [top[0], top[1]]]);
+		room.receive({ type: 'Moved', ply: 0, cell: top[0] });
+		room.receive({ type: 'Moved', ply: 5, cell: top[5] });
+		room.welcome(welcome('X', undefined, top.slice(0, 2)));
+		expect(store.saves, 'a resend, a gap and a Welcome changing nothing').toHaveLength(2);
+		room.welcome(welcome('X', undefined, top.slice(0, 3)));
+		await expect.poll(() => store.saves.length).toBe(3);
+	});
+
+	it('names the Handles alone in its game file', () => {
+		const { room } = game('O', undefined, top.slice(0, 2));
+		expect(room.file.seats).toEqual({ X: 'guest-4821', O: 'guest-1066' });
+		expect(room.seats.O).toMatchObject({ name: 'guest-1066', yours: true });
 	});
 
 	it('keeps a finished game with its result, for its Replay', async () => {

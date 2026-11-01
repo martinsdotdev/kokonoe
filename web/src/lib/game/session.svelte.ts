@@ -59,7 +59,7 @@ export interface Options {
  * From its first move, by either side, it saves itself after every change, so `resume` can
  * rebuild it after a reload.
  */
-export class OfflineGame implements GameSession, Controls {
+export class OfflineGame implements GameSession {
 	readonly variant: Variant;
 	readonly opponent: Opponent;
 	readonly seats: Record<Player, Seat>;
@@ -200,9 +200,19 @@ export class OfflineGame implements GameSession, Controls {
 		return this.stored ? this.id : undefined;
 	}
 
+	/** Offers are a Room's. */
+	readonly offer = null;
+	readonly notice = null;
+	readonly rematchRoom = null;
+	answer() {}
+
 	/** Undo and Resign are the game's own. */
 	get controls(): Controls {
-		return this;
+		return {
+			resigner: this.resigner,
+			resign: () => this.resign(),
+			undo: { enabled: this.canUndo, run: () => this.undo() }
+		};
 	}
 
 	/** Who Resign gives up for: the player to move, or the player against the computer. */
@@ -311,7 +321,6 @@ export class OfflineGame implements GameSession, Controls {
 			record: this.#game.record(),
 			variant: this.variant,
 			opponent: this.opponent,
-			resigned: this.resigned,
 			started: this.#started,
 			view: this.view,
 			toMove: this.toMove,

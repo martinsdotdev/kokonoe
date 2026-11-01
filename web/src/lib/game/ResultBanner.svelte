@@ -1,12 +1,15 @@
 <!--
-	The result in words once the game ends, and, when given, the ways on: its Replay, a new game,
-	and the game as a file.
+	The result in words once the game ends, and, when given, the ways on: its Replay, a new game or
+	a Room's rematch, and the game as a file.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import type { Player } from '#lib/engine.js';
 	import type { GameFile } from './gamefile.js';
 	import { replayQuery } from './launch.js';
+	import OfferCard from './OfferCard.svelte';
+	import type { PendingOffer } from './offers.js';
+	import type { Action } from './screen.js';
 
 	interface Props {
 		headline: string;
@@ -18,9 +21,16 @@
 		onrestart?: () => void;
 		/** The game as a file, to export. */
 		file?: GameFile;
+		/** A Room's rematch: offering it, the other player's offer, and the Room it made. */
+		rematch?: {
+			offer: Action;
+			waiting: PendingOffer | null;
+			onanswer: (accept: boolean) => void;
+			room: string | null;
+		};
 	}
 
-	let { headline, detail, winner, game, onrestart, file }: Props = $props();
+	let { headline, detail, winner, game, onrestart, file, rematch }: Props = $props();
 
 	const ink = $derived(
 		winner === 'X' ? 'var(--x)' : winner === 'O' ? 'var(--o-text)' : 'var(--foreground)'
@@ -48,7 +58,7 @@
 			<p class="mt-1 mb-0 text-muted-foreground">{detail}</p>
 		</div>
 	</div>
-	{#if game || onrestart}
+	{#if game || onrestart || rematch}
 		<div class="flex flex-wrap gap-3">
 			{#if game}
 				<a
@@ -67,6 +77,29 @@
 					New game
 				</button>
 			{/if}
+			{#if rematch?.room}
+				<a
+					href={resolve('/r/[room]', { room: rematch.room })}
+					class="inline-flex min-h-12 items-center rounded-md bg-primary px-5 font-semibold text-primary-foreground no-underline"
+				>
+					Play the rematch
+				</a>
+			{:else if rematch}
+				{@const { offer } = rematch}
+				<button
+					type="button"
+					class="min-h-12 rounded-md bg-primary px-5 font-semibold text-primary-foreground aria-disabled:opacity-40"
+					aria-disabled={!offer.enabled}
+					onclick={() => offer.enabled && offer.run()}
+				>
+					Rematch
+				</button>
+			{/if}
+		</div>
+	{/if}
+	{#if rematch?.waiting}
+		<div class="basis-full">
+			<OfferCard offer={rematch.waiting} onanswer={rematch.onanswer} />
 		</div>
 	{/if}
 	{#if file}

@@ -35,3 +35,37 @@ it('offers the game as a file when given one', async () => {
 	await expect.element(screen.getByRole('group', { name: 'Export' })).toBeVisible();
 	await expect.element(screen.getByRole('button', { name: 'Export as JSON' })).toBeVisible();
 });
+
+const rematch = (enabled: boolean) => ({
+	offer: { enabled, run: vi.fn() },
+	waiting: null,
+	onanswer: vi.fn(),
+	room: null
+});
+
+it('offers a Room’s rematch while it can be offered', async () => {
+	const open = rematch(true);
+	const screen = await render(ResultBanner, { ...result, rematch: open });
+	await screen.getByRole('button', { name: 'Rematch' }).click();
+	expect(open.offer.run).toHaveBeenCalledOnce();
+	const shut = rematch(false);
+	await screen.rerender({ ...result, rematch: shut });
+	const button = screen.getByRole('button', { name: 'Rematch' });
+	await expect.element(button).toHaveAttribute('aria-disabled', 'true');
+	await button.click({ force: true });
+	expect(shut.offer.run).not.toHaveBeenCalled();
+});
+
+it('shows the other player’s rematch offer, and the rematch once made', async () => {
+	const waiting = { kind: 'Rematch', mine: false, other: 'guest-1066', lapses: null } as const;
+	const offered = { ...rematch(false), waiting };
+	const screen = await render(ResultBanner, { ...result, rematch: offered });
+	await screen.getByRole('button', { name: 'Accept' }).click();
+	expect(offered.onanswer).toHaveBeenCalledWith(true);
+	const room = 'b'.repeat(20);
+	await screen.rerender({ ...result, rematch: { ...rematch(false), room } });
+	await expect
+		.element(screen.getByRole('link', { name: 'Play the rematch' }))
+		.toHaveAttribute('href', `/r/${room}`);
+	expect(screen.getByRole('button', { name: 'Rematch' }).all()).toHaveLength(0);
+});

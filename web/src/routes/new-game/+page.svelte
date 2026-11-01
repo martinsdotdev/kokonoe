@@ -49,6 +49,8 @@
 	});
 	const seatOf = $derived(kind === 'friend' ? 'friend' : 'computer');
 	const seat = $derived(seats[seatOf]);
+	/** An invite Room lets its players take back a move, off unless chosen (spec §10.2). */
+	let takebacks = $state(false);
 	let chosen = $state(prefill?.name ?? 'Standard');
 	/** An invite Room is being made, or why it couldn't be. */
 	let creating = $state(false);
@@ -70,7 +72,15 @@
 									: 'O, moving second'
 					}
 				]),
-		...(kind === 'friend' ? [{ label: 'Game', value: 'Casual, untimed' }] : []),
+		...(kind === 'friend'
+			? [
+					{ label: 'Game', value: 'Casual, untimed' },
+					{
+						label: 'Takebacks',
+						value: takebacks ? 'Allowed, if the other player agrees' : 'Not allowed'
+					}
+				]
+			: []),
 		...describeRules(preset.ruleset)
 	]);
 
@@ -81,7 +91,7 @@
 		failure = null;
 		const room =
 			(await startSession()) &&
-			(await createRoom({ rules: rulesetCode(preset.ruleset), seat, takebacks: false }));
+			(await createRoom({ rules: rulesetCode(preset.ruleset), seat, takebacks }));
 		// Still creating while the page goes to the Room, so a second press makes no second Room.
 		if (room) return goto(resolve('/r/[room]', { room }));
 		creating = false;
@@ -176,6 +186,12 @@
 								</label>
 							{/each}
 						</fieldset>
+						{#if kind === 'friend'}
+							<label class="flex min-h-11 cursor-pointer items-center gap-3 text-sm font-medium">
+								<input type="checkbox" bind:checked={takebacks} class="size-5 accent-foreground" />
+								Allow takebacks
+							</label>
+						{/if}
 					</div>
 				{/if}
 			</fieldset>

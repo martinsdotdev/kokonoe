@@ -48,7 +48,7 @@ describe('export then import', () => {
 					game.free();
 					for (const text of [writeUtt(file), writeJson(file)]) {
 						const parsed = read(text);
-						expect(openFile(parsed)).toEqual({ resigned: null });
+						expect(openFile(parsed)).toEqual({ stopped: null });
 						expect(parsed.record).toEqual(file.record);
 						expect(variantName(parsed)).toBe(file.variant);
 					}
@@ -58,12 +58,14 @@ describe('export then import', () => {
 		}
 	});
 
-	it('keeps a resignation through the tags', () => {
+	it('keeps a resignation or an agreed draw through the tags', () => {
 		const game = new Game(presets()[0].ruleset, '00000000005eed00');
 		game.play(0, cells('42')[0]);
-		const file: GameFile = { ...fileOf(game), end: { resigned: 'O' } };
+		for (const end of [{ resigned: 'O' }, { agreed: true }] as const) {
+			const text = writeUtt({ ...fileOf(game), end });
+			expect(openFile(read(text))).toEqual({ stopped: end });
+		}
 		game.free();
-		expect(openFile(read(writeUtt(file)))).toEqual({ resigned: 'O' });
 	});
 });
 
@@ -124,11 +126,17 @@ describe('a file the engine refuses', () => {
 		expect(refused(unfinished)).toThrow(new FileProblem('It says 1-0, but the game isn’t over.'));
 	});
 
-	it('refuses a resignation after the game ended, or one that names no winner', () => {
+	it('refuses a resignation or an agreed draw after the game ended, or one that names no winner', () => {
 		const resigned = topRowFile().replace('[Termination "line"]', '[Termination "resign"]');
 		expect(refused(resigned)).toThrow(
 			new FileProblem('It says a player resigned after the game ended.')
 		);
+		const agreed = topRowFile().replace('[Termination "line"]', '[Termination "agreed draw"]');
+		expect(refused(agreed)).toThrow(
+			new FileProblem('It says the players agreed a draw after the game ended.')
+		);
+		const drawn = agreed.replace(/ 2\. .*$/s, ' 1-0\n');
+		expect(refused(drawn), 'an agreed draw wins for no one').toThrow(/It says 1-0, but/);
 		const short = resigned.replace(/ 2\. .*$/s, ' *\n').replace('[Result "1-0"]', '[Result "*"]');
 		expect(refused(short)).toThrow(
 			new FileProblem('It says a player resigned, but its Result names no winner.')

@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import Brand from '#lib/components/Brand.svelte';
 	import GameScreen from '#lib/game/GameScreen.svelte';
@@ -21,7 +22,10 @@
 
 	// The route keys this component by the Room, so neither prop changes under it.
 	// svelte-ignore state_referenced_locally
-	const visit = new RoomVisit(room, options);
+	const visit = new RoomVisit(room, {
+		follow: (next) => goto(resolve('/r/[room]', { room: next })),
+		...options
+	});
 	onDestroy(() => visit.dispose());
 
 	const phase = $derived(visit.phase);

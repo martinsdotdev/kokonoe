@@ -2,18 +2,19 @@
  * Opening a game file with the engine: every move legal, the dealt plies the Seed's, and the
  * Result how the moves end, before the Replay viewer shows it.
  */
-import { Game, type Player, type ReplayError } from '#lib/engine.js';
+import { Game, type ReplayError } from '#lib/engine.js';
 import { FileProblem, type ParsedFile } from './fileparse.js';
 import { playerAt } from './moves.js';
 import { notation } from './notation.js';
-import { result, resultText, type End } from './result.js';
+import { endOf, result, resultText, stoppedFrom, type Stopped } from './result.js';
 
 /**
  * Checks a game file with the engine, and with the tags it has: every move legal, the plies it
- * writes as dealt the ones its Seed deals, and its Result how the moves end. Returns who
- * resigned, which only a `.utt` file's tags can say. Throws a FileProblem.
+ * writes as dealt the ones its Seed deals, and its Result how the moves end. Returns how it
+ * stopped, a resignation or an agreed draw, which only a `.utt` file's tags can say. Throws a
+ * FileProblem.
  */
-export const openFile = (parsed: ParsedFile): { resigned: Player | null } => {
+export const openFile = (parsed: ParsedFile): { stopped: Stopped | null } => {
 	const { record, tags } = parsed;
 	let opened: Game | ReplayError;
 	try {
@@ -37,26 +38,24 @@ export const openFile = (parsed: ParsedFile): { resigned: Player | null } => {
 		}
 		const status = game.status();
 		const said = tags.get('Result');
-		let resigned: Player | null = null;
-		if (tags.get('Termination') === 'resign') {
-			if ('Over' in status)
-				throw new FileProblem('It says a player resigned after the game ended.');
-			if (said !== '1-0' && said !== '0-1') {
-				throw new FileProblem('It says a player resigned, but its Result names no winner.');
-			}
-			resigned = said === '1-0' ? 'O' : 'X';
+		const termination = tags.get('Termination');
+		if (termination === 'resign' && 'Over' in status) {
+			throw new FileProblem('It says a player resigned after the game ended.');
 		}
-		const end: End | null = resigned
-			? { resigned }
-			: 'Over' in status
-				? { outcome: status.Over }
-				: null;
+		if (termination === 'agreed draw' && 'Over' in status) {
+			throw new FileProblem('It says the players agreed a draw after the game ended.');
+		}
+		const stopped = stoppedFrom(said, termination);
+		if (termination === 'resign' && !stopped) {
+			throw new FileProblem('It says a player resigned, but its Result names no winner.');
+		}
+		const end = endOf(stopped, status);
 		if (said !== undefined && said !== result(end)) {
 			const won = { X: game.wonCount('X'), O: game.wonCount('O') };
 			const truth = end ? resultText(end, record.ruleset, won) : 'the game isn’t over';
 			throw new FileProblem(`It says ${said}, but ${truth}.`);
 		}
-		return { resigned };
+		return { stopped };
 	} finally {
 		game.free();
 	}

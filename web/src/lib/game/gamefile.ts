@@ -41,6 +41,7 @@ const TAGS = [
 /** The Termination tag (spec §4.4): how the game ended, or `-` while it goes on. */
 export const termination = (end: End | null, rules: Ruleset): string => {
 	if (end === null) return '-';
+	if ('agreed' in end) return 'agreed draw';
 	if ('resigned' in end) return 'resign';
 	const { outcome } = end;
 	if (outcome === 'Draw') return rules.fallback === 'MostWon' ? 'count' : 'decided';

@@ -7,6 +7,7 @@ import type { Seat } from './moves.js';
 import { parseNotation } from './notation.js';
 import { Problem } from './problem.js';
 import type { ReplaySource } from './replay.svelte.js';
+import type { Stopped } from './result.js';
 import { rulesetCode } from './rules.js';
 import { presetByCode } from './shelf.js';
 
@@ -119,11 +120,11 @@ export const variantName = (parsed: ParsedFile): string => {
 	return preset?.name ?? (name && !name.includes('\n') ? name.slice(0, 40) : 'Custom variant');
 };
 
-/** An imported file, to replay, once `openFile` has checked it and found who resigned. */
+/** An imported file, to replay, once `openFile` has checked it and found how it stopped. */
 export const fromFile = (
 	parsed: ParsedFile,
 	variant: string,
-	resigned: Player | null
+	stopped: Stopped | null
 ): ReplaySource => {
 	const seat = (player: Player, otherwise: string): Seat => ({
 		name: parsed.tags.get(player)?.trim() || otherwise,
@@ -135,7 +136,7 @@ export const fromFile = (
 		variant,
 		seats: { X: seat('X', 'Player 1'), O: seat('O', 'Player 2') },
 		against: 'Imported',
-		resigned,
+		stopped,
 		date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ''
 	};
 };

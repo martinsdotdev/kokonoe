@@ -38,8 +38,8 @@
 		try {
 			await engine.catch(failed(ENGINE));
 			const parsed = parseFile(text, parseRulesetCode);
-			const { resigned } = openFile(parsed);
-			const imported = fromFile(parsed, variantName(parsed), resigned);
+			const { stopped } = openFile(parsed);
+			const imported = fromFile(parsed, variantName(parsed), stopped);
 			await goto(resolve('/replay'), { state: { imported }, persistState: true });
 		} catch (error) {
 			await refuse(error);

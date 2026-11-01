@@ -1,31 +1,41 @@
-<!-- Undo, and Resign behind a confirmation in place, for the player to move. -->
+<!--
+	Resign behind a confirmation in place, and as the game has them, Undo on this device or a Room's
+	draw offer and takeback. A control that can't be used now stays focusable, so focus never drops
+	from under the player.
+-->
 <script lang="ts">
 	import type { Player } from '#lib/engine.js';
+	import type { Action, Controls } from './screen.js';
 
-	interface Props {
-		canUndo: boolean;
-		/**
-		 * Who would resign: the player to move, or the player against the computer. Null once the
-		 * game is over.
-		 */
-		resigner: Player | null;
-		onundo: () => void;
-		onresign: () => void;
-	}
+	let { controls }: { controls: Controls } = $props();
 
-	let { canUndo, resigner, onundo, onresign }: Props = $props();
+	const resigner = $derived(controls.resigner);
+	/**
+	 * Who asked to resign. A change of who would drops the question: a move in pass and play, or a
+	 * Room's dropped connection.
+	 */
+	let asked: Player | null = $derived.by(() => {
+		void resigner;
+		return null;
+	});
 
-	/** Who asked to resign. In pass and play a move changes who would, and drops the question. */
-	let asked: Player | null = $state(null);
-	const confirming = $derived(asked !== null && asked === resigner);
+	const actions = $derived(
+		(
+			[
+				['Undo', controls.undo],
+				['Offer draw', controls.offerDraw],
+				['Ask takeback', controls.askTakeback]
+			] as [string, Action | undefined][]
+		).flatMap(([label, action]) => (action ? [{ label, action }] : []))
+	);
 
 	const button =
-		'min-h-11 flex-1 rounded-md border-[1.5px] bg-card px-4 font-semibold disabled:opacity-40';
+		'min-h-11 flex-1 rounded-md border-[1.5px] bg-card px-4 font-semibold aria-disabled:opacity-40';
 </script>
 
 <div class="flex flex-wrap items-center gap-2.5">
-	{#if confirming}
-		<span class="flex-[1_1_100%] font-semibold">Resign as {resigner}?</span>
+	{#if asked}
+		<span class="flex-[1_1_100%] font-semibold">Resign as {asked}?</span>
 		<button
 			type="button"
 			class={button}
@@ -33,22 +43,29 @@
 			style:color="var(--o-text)"
 			onclick={() => {
 				asked = null;
-				onresign();
+				controls.resign();
 			}}>Yes, resign</button
 		>
 		<button type="button" class="{button} border-foreground" onclick={() => (asked = null)}>
 			No
 		</button>
 	{:else}
-		<button type="button" class="{button} border-foreground" disabled={!canUndo} onclick={onundo}>
-			Undo
-		</button>
+		{#each actions as { label, action } (label)}
+			<button
+				type="button"
+				class="{button} border-foreground"
+				aria-disabled={!action.enabled}
+				onclick={() => action.enabled && action.run()}
+			>
+				{label}
+			</button>
+		{/each}
 		<button
 			type="button"
 			class={button}
 			style:border-color="var(--o-text)"
 			style:color="var(--o-text)"
-			disabled={!resigner}
+			aria-disabled={!resigner}
 			onclick={() => (asked = resigner)}
 		>
 			Resign

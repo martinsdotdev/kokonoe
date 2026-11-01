@@ -5,7 +5,8 @@
 import type { NewRoom, Player, Players, RoomCard } from '#lib/engine.js';
 
 /** A Room's id: 20 lowercase hex digits, as the server writes them. */
-export const isRoomId = (text: string): boolean => /^[0-9a-f]{20}$/.test(text);
+export const isRoomId = (text: unknown): text is string =>
+	typeof text === 'string' && /^[0-9a-f]{20}$/.test(text);
 
 /**
  * Makes a Room for the session's Account and gives its id, or nothing when the server can't make

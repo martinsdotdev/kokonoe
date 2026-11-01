@@ -3,6 +3,7 @@
 //! invite Rooms and the game socket, which plays them.
 
 mod games;
+mod preview;
 mod random;
 mod room;
 mod rooms;
@@ -44,21 +45,12 @@ pub async fn connect(url: &str) -> Result<PgPool, sqlx::Error> {
         .await
 }
 
-/// What a link to an invite Room shows where it's shared: a plain invitation, which names the
-/// game once Rooms exist (KOK-56).
-const PREVIEW: &str = r#"<meta property="og:type" content="website" />
-<meta property="og:site_name" content="Kokonoe" />
-<meta property="og:title" content="Join a game of Kokonoe" />
-<meta property="og:description" content="You’re invited to a game of Ultimate Tic-Tac-Toe." />
-<meta name="twitter:card" content="summary" />
-"#;
-
 #[derive(Clone)]
 struct AppState {
     pool: PgPool,
     rooms: rooms::Rooms,
-    /// The SPA's fallback page with the Room preview in its head.
-    room_page: Bytes,
+    /// The SPA's fallback page, ready for a Room link's preview.
+    room_page: preview::RoomPage,
     /// The site's own origin, such as `https://kokonoe.app`: the one `Origin` that a request
     /// changing something, or opening the socket, may come from.
     origin: HeaderValue,
@@ -73,10 +65,8 @@ pub fn app(pool: PgPool, web_root: &Path, origin: HeaderValue) -> std::io::Resul
         std::io::Error::other(format!("{}: {why}", fallback.display()))
     };
     let index = std::fs::read_to_string(&fallback).map_err(|error| unreadable(&error))?;
-    let Some(head) = index.find("</head>") else {
-        return Err(unreadable(&"it has no </head>"));
-    };
-    let room_page = format!("{}{PREVIEW}{}", &index[..head], &index[head..]).into();
+    let room_page =
+        preview::RoomPage::new(&index).ok_or_else(|| unreadable(&"it has no </head>"))?;
     let page = Bytes::from(index);
     let pages = move |uri: Uri| async move { page_or_missing(&uri, page) };
     let spa = ServeDir::new(web_root)
@@ -91,7 +81,7 @@ pub fn app(pool: PgPool, web_root: &Path, origin: HeaderValue) -> std::io::Resul
     };
     Ok(Router::new()
         .route("/healthz", get(health))
-        .route("/r/{room}", get(room))
+        .route("/r/{room}", get(preview::room))
         .route("/api/session", post(session))
         .route("/api/rooms", post(rooms::create))
         .route("/api/rooms/{room}", get(rooms::card))
@@ -134,11 +124,6 @@ async fn health(State(state): State<AppState>) -> (StatusCode, &'static str) {
             UNREACHABLE
         }
     }
-}
-
-/// An invite Room's link: the SPA, which opens the Room, with the preview for where it's shared.
-async fn room(State(state): State<AppState>) -> Html<Bytes> {
-    Html(state.room_page)
 }
 
 /// What the SPA learns about whoever's playing.

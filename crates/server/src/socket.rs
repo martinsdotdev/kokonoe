@@ -8,10 +8,10 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_
 use axum::http::HeaderMap;
 use axum::response::Response;
 use kokonoe_engine::RULES_VERSION;
-use kokonoe_protocol::{ClientMsg, CloseCode, PROTOCOL};
+use kokonoe_protocol::{ClientMsg, CloseCode, PROTOCOL, ServerMsg};
 use tokio::sync::mpsc;
 
-use crate::room::{Command, RoomId};
+use crate::room::{Command, Conn, RoomId};
 use crate::rooms::{Joined, Refused};
 use crate::session::{self, Session};
 use crate::{AppState, Unavailable, from_here, not_from_here};
@@ -26,8 +26,11 @@ const KEEPALIVE: Duration = Duration::from_secs(30);
 /// How many messages wait for a slow socket before its Room drops it.
 const QUEUE: usize = 32;
 
-/// The largest frame a client may send: a `Hello` or a `Move` is far smaller.
+/// The largest message a client may send: a `Hello` or a `Move` is far smaller.
 const MAX_MESSAGE: usize = 4096;
+
+/// How the server ends a socket: the close code, and the reason sent with it.
+type Ending = (u16, &'static str);
 
 /// One opened from another site, or without saying where it's from, is refused outright. One
 /// without a session is accepted and then closed with 4003, since a page can't read why a refused
@@ -43,24 +46,45 @@ pub async fn socket(
     }
     let found = session::find(&state.pool, &headers).await?;
     let upgrade = upgrade.max_message_size(MAX_MESSAGE);
-    Ok(upgrade.on_upgrade(move |socket| async move {
-        match found {
-            Some(session) => play(socket, state, session).await,
-            None => close(socket, CloseCode::Forbidden.code(), "no session").await,
-        }
+    Ok(upgrade.on_upgrade(move |mut socket| async move {
+        let ending = match found {
+            Some(session) => serve(&mut socket, &state, &session).await,
+            None => (CloseCode::Forbidden.into(), "no session"),
+        };
+        let close = CloseFrame {
+            code: ending.0,
+            reason: ending.1.into(),
+        };
+        // A socket that closed itself takes no Close back, which is no matter.
+        let _ = socket.send(Message::Close(Some(close))).await;
     }))
 }
 
-async fn play(mut socket: WebSocket, state: AppState, session: Session) {
-    let hello = match tokio::time::timeout(HELLO_TIMEOUT, first(&mut socket)).await {
-        Ok(Some(Message::Text(text))) => serde_json::from_str::<ClientMsg>(&text),
-        Ok(Some(Message::Binary(_))) => {
-            return close(socket, close_code::UNSUPPORTED, "text only").await;
-        }
-        Ok(_) => return,
-        Err(_) => return close(socket, close_code::POLICY, "no hello").await,
+async fn serve(socket: &mut WebSocket, state: &AppState, session: &Session) -> Ending {
+    let (out, mut inbox) = mpsc::channel(QUEUE);
+    let Joined { conn, room } = match hello(socket, state, session, out).await {
+        Ok(joined) => joined,
+        Err(ending) => return ending,
     };
-    let room = match hello {
+    let ending = relay(socket, &mut inbox, conn, &room).await;
+    let _ = room.send(Command::Leave { conn }).await;
+    ending
+}
+
+/// Reads the socket's `Hello`, and seats it in the Room it names.
+async fn hello(
+    socket: &mut WebSocket,
+    state: &AppState,
+    session: &Session,
+    out: mpsc::Sender<ServerMsg>,
+) -> Result<Joined, Ending> {
+    let text = match tokio::time::timeout(HELLO_TIMEOUT, next_message(socket)).await {
+        Ok(Some(Message::Text(text))) => text,
+        Ok(Some(Message::Binary(_))) => return Err((close_code::UNSUPPORTED, "text only")),
+        Ok(_) => return Err((close_code::NORMAL, "")),
+        Err(_) => return Err((close_code::POLICY, "no hello")),
+    };
+    let room = match serde_json::from_str(&text) {
         Ok(ClientMsg::Hello {
             protocol,
             rules_version,
@@ -68,91 +92,79 @@ async fn play(mut socket: WebSocket, state: AppState, session: Session) {
             ..
         }) => {
             if protocol != PROTOCOL || rules_version != RULES_VERSION {
-                let code = CloseCode::UpdateRequired.code();
-                return close(socket, code, "another build").await;
+                return Err((CloseCode::UpdateRequired.into(), "another build"));
             }
             room
         }
-        Ok(_) => return close(socket, close_code::POLICY, "hello first").await,
-        Err(_) => return close(socket, close_code::INVALID, "not a message").await,
+        Ok(_) => return Err((close_code::POLICY, "hello first")),
+        Err(_) => return Err((close_code::INVALID, "not a message")),
     };
-    let Some(room) = RoomId::parse(&room) else {
-        return close(socket, CloseCode::NoRoom.code(), "no such Room").await;
-    };
-    let (out, mut inbox) = mpsc::channel(QUEUE);
+    let no_room = (CloseCode::NoRoom.into(), "no such Room");
+    let room = RoomId::parse(&room).ok_or(no_room)?;
     let joined = state
         .rooms
-        .join(&room, session.account, &session.handle, &out)
-        .await;
-    drop(out);
-    let Joined { conn, room } = match joined {
-        Ok(joined) => joined,
-        Err(Refused::NoRoom) => {
-            return close(socket, CloseCode::NoRoom.code(), "no such Room").await;
-        }
-        Err(Refused::Full) => return close(socket, CloseCode::Forbidden.code(), "full").await,
-        Err(Refused::Unavailable) => {
-            return close(socket, close_code::ERROR, "unavailable").await;
-        }
-    };
+        .join(&room, session.account, &session.handle, out);
+    joined.await.map_err(|refused| match refused {
+        Refused::NoRoom => no_room,
+        Refused::Full => (CloseCode::Forbidden.into(), "full"),
+        Refused::Unavailable => (close_code::ERROR, "unavailable"),
+    })
+}
 
-    let mut keepalive =
-        tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE, KEEPALIVE);
+/// Carries the socket's moves to its Room, as `conn`, and the Room's messages from `inbox` back,
+/// until either side ends it.
+async fn relay(
+    socket: &mut WebSocket,
+    inbox: &mut mpsc::Receiver<ServerMsg>,
+    conn: Conn,
+    room: &mpsc::Sender<Command>,
+) -> Ending {
+    let start = tokio::time::Instant::now() + KEEPALIVE;
+    let mut keepalive = tokio::time::interval_at(start, KEEPALIVE);
     loop {
         tokio::select! {
             received = socket.recv() => match received {
                 Some(Ok(Message::Text(text))) => match serde_json::from_str(&text) {
                     Ok(ClientMsg::Move { ply, cell }) => {
                         if room.send(Command::Move { conn, ply, cell }).await.is_err() {
-                            return close(socket, close_code::ERROR, "the Room stopped").await;
+                            return (close_code::ERROR, "the Room stopped");
                         }
                     }
                     Ok(ClientMsg::Hello { .. }) => {
-                        let code = CloseCode::Forbidden.code();
-                        return close(socket, code, "hello again").await;
+                        return (CloseCode::Forbidden.into(), "hello again");
                     }
-                    Err(_) => return close(socket, close_code::INVALID, "not a message").await,
+                    Err(_) => return (close_code::INVALID, "not a message"),
                 },
-                Some(Ok(Message::Binary(_))) => {
-                    return close(socket, close_code::UNSUPPORTED, "text only").await;
-                }
-                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
+                Some(Ok(Message::Binary(_))) => return (close_code::UNSUPPORTED, "text only"),
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(Message::Close(_)) | Err(_)) | None => return (close_code::NORMAL, ""),
             },
             sent = inbox.recv() => match sent {
                 Some(message) => {
                     let text = serde_json::to_string(&message).expect("a message is always JSON");
                     if socket.send(Message::Text(text.into())).await.is_err() {
-                        return;
+                        return (close_code::NORMAL, "");
                     }
                 }
                 // The Room dropped this socket, or stopped: the page reconnects for a fresh
                 // Welcome.
-                None => return close(socket, close_code::ERROR, "reconnect").await,
+                None => return (close_code::ERROR, "reconnect"),
             },
             _ = keepalive.tick() => {
                 if socket.send(Message::Ping(Default::default())).await.is_err() {
-                    return;
+                    return (close_code::NORMAL, "");
                 }
             }
         }
     }
 }
 
-/// The first message that isn't a ping or a pong; nothing once the socket closes.
-async fn first(socket: &mut WebSocket) -> Option<Message> {
+/// The next message that isn't a ping or a pong; nothing once the socket closes.
+async fn next_message(socket: &mut WebSocket) -> Option<Message> {
     loop {
         match socket.recv().await?.ok()? {
             Message::Ping(_) | Message::Pong(_) => {}
             message => return Some(message),
         }
     }
-}
-
-async fn close(mut socket: WebSocket, code: u16, reason: &str) {
-    let close = CloseFrame {
-        code,
-        reason: reason.into(),
-    };
-    let _ = socket.send(Message::Close(Some(close))).await;
 }

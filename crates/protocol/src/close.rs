@@ -30,6 +30,12 @@ impl CloseCode {
     }
 }
 
+impl From<CloseCode> for u16 {
+    fn from(close: CloseCode) -> u16 {
+        close.code()
+    }
+}
+
 impl TryFrom<u16> for CloseCode {
     /// A code this protocol doesn't name, as it was.
     type Error = u16;

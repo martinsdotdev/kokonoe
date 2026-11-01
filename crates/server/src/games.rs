@@ -36,6 +36,17 @@ impl Seats {
         }
     }
 
+    pub fn full(&self) -> bool {
+        self.x.is_some() && self.o.is_some()
+    }
+
+    /// The first seat no one holds, if one is empty.
+    pub fn empty(&self) -> Option<Player> {
+        [Player::X, Player::O]
+            .into_iter()
+            .find(|&player| self.get(player).is_none())
+    }
+
     /// The seat `account` holds, if it holds one.
     pub fn of(&self, account: AccountId) -> Option<Player> {
         [Player::X, Player::O]
@@ -52,27 +63,17 @@ impl Seats {
     }
 }
 
-/// A Room as stored: its game so far, and who sits where.
+/// A Room as stored: its game so far, its host's Handle, and who sits where.
 pub struct Stored {
     pub record: Record,
-    pub seats: Seats,
-}
-
-/// A Room as its link describes it.
-pub struct Summary {
     pub host: String,
-    pub ruleset_code: String,
     pub seats: Seats,
 }
 
-impl Summary {
+impl Stored {
     /// The Variant's name: every Room plays a Preset for now.
     pub fn variant(&self) -> &'static str {
-        self.ruleset_code
-            .parse::<Ruleset>()
-            .ok()
-            .and_then(|ruleset| Preset::of(&ruleset))
-            .map_or("Custom variant", Preset::name)
+        Preset::of(&self.record.ruleset).map_or("Custom variant", Preset::name)
     }
 }
 
@@ -161,43 +162,14 @@ fn result(outcome: Outcome) -> &'static str {
     }
 }
 
-/// Both seats' columns, as `load` and `summary` select them.
 #[derive(sqlx::FromRow)]
-struct SeatColumns {
+struct StoredRow {
+    record: String,
+    host: String,
     x_id: Option<AccountId>,
     x: Option<String>,
     o_id: Option<AccountId>,
     o: Option<String>,
-}
-
-impl From<SeatColumns> for Seats {
-    fn from(columns: SeatColumns) -> Seats {
-        let seat = |account: Option<AccountId>, handle: Option<String>| {
-            Some(Seat {
-                account: account?,
-                handle: handle?,
-            })
-        };
-        Seats {
-            x: seat(columns.x_id, columns.x),
-            o: seat(columns.o_id, columns.o),
-        }
-    }
-}
-
-#[derive(sqlx::FromRow)]
-struct StoredRow {
-    record: String,
-    #[sqlx(flatten)]
-    seats: SeatColumns,
-}
-
-#[derive(sqlx::FromRow)]
-struct SummaryRow {
-    host: String,
-    ruleset_code: String,
-    #[sqlx(flatten)]
-    seats: SeatColumns,
 }
 
 /// The Room `room`, as the server last stored it. Its Record is read through the engine's own
@@ -206,8 +178,9 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
     let found: Option<StoredRow> = sqlx::query_as(
         "SELECT json_build_object('rules_version', g.rules_version, 'ruleset', g.ruleset,
                                   'seed', g.seed, 'moves', g.moves)::text AS record,
-                g.x_id, x.handle::text AS x, g.o_id, o.handle::text AS o
+                h.handle::text AS host, g.x_id, x.handle::text AS x, g.o_id, o.handle::text AS o
          FROM games g
+         JOIN accounts h ON h.id = g.host_id
          LEFT JOIN accounts x ON x.id = g.x_id
          LEFT JOIN accounts o ON o.id = g.o_id
          WHERE g.room = $1",
@@ -220,29 +193,37 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
     };
     let record =
         serde_json::from_str(&found.record).map_err(|error| sqlx::Error::Decode(error.into()))?;
+    let seat = |account: Option<AccountId>, handle: Option<String>| {
+        Some(Seat {
+            account: account?,
+            handle: handle?,
+        })
+    };
     Ok(Some(Stored {
         record,
-        seats: found.seats.into(),
+        host: found.host,
+        seats: Seats {
+            x: seat(found.x_id, found.x),
+            o: seat(found.o_id, found.o),
+        },
     }))
 }
 
-/// What the Room `room`'s link shows.
-pub async fn summary(pool: &PgPool, room: &RoomId) -> Result<Option<Summary>, sqlx::Error> {
-    let found: Option<SummaryRow> = sqlx::query_as(
-        "SELECT h.handle::text AS host, g.ruleset_code,
-                g.x_id, x.handle::text AS x, g.o_id, o.handle::text AS o
-         FROM games g
-         JOIN accounts h ON h.id = g.host_id
-         LEFT JOIN accounts x ON x.id = g.x_id
-         LEFT JOIN accounts o ON o.id = g.o_id
-         WHERE g.room = $1",
-    )
-    .bind(room.as_str())
-    .fetch_optional(pool)
-    .await?;
-    Ok(found.map(|found| Summary {
-        host: found.host,
-        ruleset_code: found.ruleset_code,
-        seats: found.seats.into(),
-    }))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_outcome_has_its_result() {
+        let results = [
+            (Outcome::Objective(Player::X), "1-0"),
+            (Outcome::MostWon(Player::X), "1-0"),
+            (Outcome::Objective(Player::O), "0-1"),
+            (Outcome::MostWon(Player::O), "0-1"),
+            (Outcome::Draw, "1/2-1/2"),
+        ];
+        for (outcome, written) in results {
+            assert_eq!(result(outcome), written, "{outcome:?}");
+        }
+    }
 }

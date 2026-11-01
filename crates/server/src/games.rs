@@ -1,7 +1,7 @@
 //! The `games` table: one row a Room, written through before anything is acknowledged.
 
-use kokonoe_engine::{Outcome, Player, Preset, RULES_VERSION, Record, Ruleset, Seed};
-use kokonoe_protocol::Players;
+use kokonoe_engine::{Player, Preset, RULES_VERSION, Record, Ruleset, Seed};
+use kokonoe_protocol::{Draws, GameEnd, GameResult, Players, Termination};
 use sqlx::PgPool;
 
 use crate::room::RoomId;
@@ -63,11 +63,17 @@ impl Seats {
     }
 }
 
-/// A Room as stored: its game so far, its host's Handle, and who sits where.
+/// A Room as stored: its game so far, its host's Handle, who sits where, the Room's option, the
+/// draws offered, and how the game ended once it has.
 pub struct Stored {
     pub record: Record,
     pub host: String,
     pub seats: Seats,
+    pub takebacks: bool,
+    pub draws: Draws,
+    /// Null for a game that goes on, or one that ended before Terminations were kept, which the
+    /// rules can end again.
+    pub end: Option<GameEnd>,
 }
 
 impl Stored {
@@ -77,19 +83,29 @@ impl Stored {
     }
 }
 
-/// Makes the Room `room`, with the host in `seat`, the other seat empty, and no moves.
-pub async fn insert(
-    pool: &PgPool,
-    room: &RoomId,
-    ruleset: Ruleset,
-    seed: Seed,
-    host: AccountId,
-    seat: Player,
-) -> Result<(), sqlx::Error> {
+/// What a host makes a Room with.
+pub struct NewGame {
+    pub ruleset: Ruleset,
+    pub seed: Seed,
+    pub host: AccountId,
+    pub seat: Player,
+    pub takebacks: bool,
+}
+
+/// Makes the Room `room`, with the host in their seat, the other seat empty, and no moves.
+pub async fn insert(pool: &PgPool, room: &RoomId, game: NewGame) -> Result<(), sqlx::Error> {
+    let NewGame {
+        ruleset,
+        seed,
+        host,
+        seat,
+        takebacks,
+    } = game;
     let json = serde_json::to_string(&ruleset).expect("a Ruleset is always JSON");
     sqlx::query(
-        "INSERT INTO games (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id)
-         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8)",
+        "INSERT INTO games
+             (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id, takebacks)
+         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9)",
     )
     .bind(room.as_str())
     .bind(i64::from(RULES_VERSION))
@@ -99,6 +115,7 @@ pub async fn insert(
     .bind(host)
     .bind((seat == Player::X).then_some(host))
     .bind((seat == Player::O).then_some(host))
+    .bind(takebacks)
     .execute(pool)
     .await?;
     Ok(())
@@ -130,36 +147,121 @@ pub async fn seat(
     Ok(done.rows_affected() == 1)
 }
 
-/// Appends `cell`, the move after the first `before`, and the Result when it ended the game.
-/// False, changing nothing, unless the row holds exactly `before` moves and no Result, so a write
-/// can never land twice or out of order.
+/// A count of moves, as the table compares them.
+fn count(moves: usize) -> i64 {
+    i64::try_from(moves).expect("a game has at most 729 moves")
+}
+
+/// Appends `cell`, the move after the first `before`, and how it ended the game if it did. False,
+/// changing nothing, unless the row holds exactly `before` moves and no Result, so a write can
+/// never land twice or out of order.
 pub async fn append(
     pool: &PgPool,
     room: &RoomId,
     before: usize,
     cell: u16,
-    ended: Option<Outcome>,
+    ended: Option<GameEnd>,
 ) -> Result<bool, sqlx::Error> {
     let done = sqlx::query(
-        "UPDATE games SET moves = array_append(moves, $3), result = $4, updated_at = now()
+        "UPDATE games SET moves = array_append(moves, $3), result = $4, termination = $5,
+                          updated_at = now()
          WHERE room = $1 AND cardinality(moves) = $2 AND result IS NULL",
     )
     .bind(room.as_str())
-    .bind(i64::try_from(before).expect("a game has at most 729 moves"))
+    .bind(count(before))
     .bind(i32::from(cell))
-    .bind(ended.map(result))
+    .bind(ended.map(|end| end.result.as_str()))
+    .bind(ended.map(|end| end.termination.as_str()))
     .execute(pool)
     .await?;
     Ok(done.rows_affected() == 1)
 }
 
-/// Spec §4.4's Result for an ended game.
-fn result(outcome: Outcome) -> &'static str {
-    match outcome.winner() {
-        Some(Player::X) => "1-0",
-        Some(Player::O) => "0-1",
-        None => "1/2-1/2",
-    }
+/// Ends the game after its first `moves` moves without another: a resignation or an agreed draw.
+pub async fn end(
+    pool: &PgPool,
+    room: &RoomId,
+    moves: usize,
+    end: GameEnd,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE games SET result = $3, termination = $4, updated_at = now()
+         WHERE room = $1 AND cardinality(moves) = $2 AND result IS NULL",
+    )
+    .bind(room.as_str())
+    .bind(count(moves))
+    .bind(end.result.as_str())
+    .bind(end.termination.as_str())
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Takes the game back from `before` moves to its first `to`: an accepted takeback.
+pub async fn take_back(
+    pool: &PgPool,
+    room: &RoomId,
+    before: usize,
+    to: usize,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE games SET moves = moves[1:$3], updated_at = now()
+         WHERE room = $1 AND cardinality(moves) = $2 AND result IS NULL",
+    )
+    .bind(room.as_str())
+    .bind(count(before))
+    .bind(i32::try_from(to).expect("a game has at most 729 moves"))
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Counts one more draw offered by `player`, who had offered `made`.
+pub async fn offer_draw(
+    pool: &PgPool,
+    room: &RoomId,
+    player: Player,
+    made: u8,
+) -> Result<bool, sqlx::Error> {
+    let query = match player {
+        Player::X => {
+            "UPDATE games SET x_draw_offers = x_draw_offers + 1
+             WHERE room = $1 AND x_draw_offers = $2 AND result IS NULL"
+        }
+        Player::O => {
+            "UPDATE games SET o_draw_offers = o_draw_offers + 1
+             WHERE room = $1 AND o_draw_offers = $2 AND result IS NULL"
+        }
+    };
+    let done = sqlx::query(query)
+        .bind(room.as_str())
+        .bind(i16::from(made))
+        .execute(pool)
+        .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Makes `rematch` the next game of the finished Room `room`: the same rules and option, a new
+/// Seed, and its players in each other's seats.
+pub async fn rematch(
+    pool: &PgPool,
+    room: &RoomId,
+    rematch: &RoomId,
+    seed: Seed,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "INSERT INTO games
+             (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id, takebacks)
+         SELECT $2, $3, ruleset, ruleset_code, $4, host_id, o_id, x_id, takebacks
+         FROM games WHERE room = $1 AND result IS NOT NULL",
+    )
+    .bind(room.as_str())
+    .bind(rematch.as_str())
+    .bind(i64::from(RULES_VERSION))
+    .bind(seed.to_string())
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected() == 1)
 }
 
 #[derive(sqlx::FromRow)]
@@ -170,6 +272,11 @@ struct StoredRow {
     x: Option<String>,
     o_id: Option<AccountId>,
     o: Option<String>,
+    takebacks: bool,
+    x_draw_offers: i16,
+    o_draw_offers: i16,
+    result: Option<String>,
+    termination: Option<String>,
 }
 
 /// The Room `room`, as the server last stored it. Its Record is read through the engine's own
@@ -178,7 +285,8 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
     let found: Option<StoredRow> = sqlx::query_as(
         "SELECT json_build_object('rules_version', g.rules_version, 'ruleset', g.ruleset,
                                   'seed', g.seed, 'moves', g.moves)::text AS record,
-                h.handle::text AS host, g.x_id, x.handle::text AS x, g.o_id, o.handle::text AS o
+                h.handle::text AS host, g.x_id, x.handle::text AS x, g.o_id, o.handle::text AS o,
+                g.takebacks, g.x_draw_offers, g.o_draw_offers, g.result, g.termination
          FROM games g
          JOIN accounts h ON h.id = g.host_id
          LEFT JOIN accounts x ON x.id = g.x_id
@@ -199,6 +307,15 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
             handle: handle?,
         })
     };
+    let draws = |made: i16| u8::try_from(made).unwrap_or(Draws::MAX);
+    let end = match (found.result.as_deref(), found.termination.as_deref()) {
+        (Some(result), Some(termination)) => Some(GameEnd {
+            result: GameResult::parse(result).ok_or_else(|| unreadable("a Result"))?,
+            termination: Termination::parse(termination)
+                .ok_or_else(|| unreadable("a Termination"))?,
+        }),
+        _ => None,
+    };
     Ok(Some(Stored {
         record,
         host: found.host,
@@ -206,24 +323,16 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
             x: seat(found.x_id, found.x),
             o: seat(found.o_id, found.o),
         },
+        takebacks: found.takebacks,
+        draws: Draws {
+            x: draws(found.x_draw_offers),
+            o: draws(found.o_draw_offers),
+        },
+        end,
     }))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_outcome_has_its_result() {
-        let results = [
-            (Outcome::Objective(Player::X), "1-0"),
-            (Outcome::MostWon(Player::X), "1-0"),
-            (Outcome::Objective(Player::O), "0-1"),
-            (Outcome::MostWon(Player::O), "0-1"),
-            (Outcome::Draw, "1/2-1/2"),
-        ];
-        for (outcome, written) in results {
-            assert_eq!(result(outcome), written, "{outcome:?}");
-        }
-    }
+/// A column the table's own CHECKs should have kept from holding what it holds.
+fn unreadable(what: &str) -> sqlx::Error {
+    sqlx::Error::Decode(format!("the games table holds {what} this build can't read").into())
 }

@@ -30,7 +30,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let pool = kokonoe_server::connect(&url).await?;
     kokonoe_server::MIGRATOR.run(&pool).await?;
     tracing::info!("serving {web_root} for {origin:?} on port {port}");
-    let app = kokonoe_server::app(pool, Path::new(&web_root), origin)?;
+    let timing = kokonoe_server::Timing::default();
+    let app = kokonoe_server::app(pool, Path::new(&web_root), origin, timing)?;
     // Every interface, as a container's port mapping needs.
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     axum::serve(listener, app).await?;

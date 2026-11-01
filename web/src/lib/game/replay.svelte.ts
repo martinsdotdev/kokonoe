@@ -10,9 +10,9 @@ import { againstLabel } from './launch.js';
 import { dayOf } from './listing.js';
 import { dealtMoves, gameFile, playedMove, seats, written, type Move, type Seat } from './moves.js';
 import { openRecord } from './record.js';
-import type { End } from './result.js';
+import { endOf, type End, type Stopped } from './result.js';
 import type { Variant } from './rules.js';
-import type { SavedGame } from './saved.js';
+import { stoppedOf, type SavedGame } from './saved.js';
 import { positionView, range, type BoardView } from './view.js';
 
 /** How long autoplay shows each ply. */
@@ -32,7 +32,8 @@ export interface ReplaySource {
 	seats: Record<Player, Seat>;
 	/** Who the game was against, or where it came from: "Pass and play", "Imported". */
 	against: string;
-	resigned: Player | null;
+	/** How the game stopped before its rules ended it, if it did. */
+	stopped: Stopped | null;
 	/** The day it began, `2026-10-28`, or '' when no one knows. */
 	date: string;
 }
@@ -43,7 +44,7 @@ export const fromSaved = (saved: SavedGame): ReplaySource => ({
 	variant: saved.variant.name,
 	seats: seats(saved.opponent),
 	against: againstLabel(saved.opponent),
-	resigned: saved.resigned,
+	stopped: stoppedOf(saved),
 	date: dayOf(saved.started)
 });
 
@@ -106,11 +107,7 @@ export class Replay {
 			})
 		];
 		const last = this.moments[plies.length].status;
-		this.end = source.resigned
-			? { resigned: source.resigned }
-			: 'Over' in last
-				? { outcome: last.Over }
-				: null;
+		this.end = endOf(source.stopped, last);
 	}
 
 	/** Who the game was against, or where it came from. */

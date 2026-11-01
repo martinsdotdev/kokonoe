@@ -35,6 +35,8 @@ export interface VisitOptions {
 	store?: ReadingStore;
 	/** Installs the newer build and reloads into it. */
 	update?: () => Promise<void>;
+	/** Goes to the Room a rematch made. */
+	follow?: (room: string) => void;
 	window?: Window;
 }
 
@@ -129,7 +131,12 @@ export class RoomVisit {
 		try {
 			if (this.#game) this.#game.welcome(message);
 			else {
-				const options = { room: this.room, store: this.#options.store, saved: this.#kept };
+				const options = {
+					room: this.room,
+					store: this.#options.store,
+					saved: this.#kept,
+					onrematch: this.#options.follow
+				};
 				this.#game = new RoomGame(message, link, options);
 			}
 		} catch (error) {

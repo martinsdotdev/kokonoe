@@ -7,7 +7,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { BoardStatus, Cell, Player, Record } from '#lib/engine.js';
 import type { SavedOpponent } from './launch.js';
-import { resultText, type End } from './result.js';
+import { resultText, type End, type Stopped } from './result.js';
 import { rulesetCode, type Variant } from './rules.js';
 import type { BoardView } from './view.js';
 
@@ -23,6 +23,8 @@ export interface SavedGame {
 	opponent: SavedOpponent;
 	/** Who resigned, which a Record can't hold. */
 	resigned: Player | null;
+	/** The players agreed a draw, which a Record can't hold either. Absent from older games. */
+	agreed?: true;
 	/** When the game began and was last played, in epoch milliseconds. */
 	started: number;
 	updated: number;
@@ -50,7 +52,6 @@ export const savedGame = (game: {
 	record: Record;
 	variant: Variant;
 	opponent: SavedOpponent;
-	resigned: Player | null;
 	started: number;
 	view: BoardView;
 	toMove: Player | null;
@@ -61,13 +62,18 @@ export const savedGame = (game: {
 	record: game.record,
 	variant: { name: game.variant.name, code: rulesetCode(game.variant.ruleset) },
 	opponent: game.opponent,
-	resigned: game.resigned,
+	resigned: game.end && 'resigned' in game.end ? game.end.resigned : null,
+	...(game.end && 'agreed' in game.end ? { agreed: true as const } : {}),
 	started: game.started,
 	updated: Date.now(),
 	view: game.view,
 	toMove: game.end ? null : game.toMove,
 	result: game.end ? resultText(game.end, game.variant.ruleset, game.won) : null
 });
+
+/** How a saved game stopped, if it did before its rules ended it. */
+export const stoppedOf = (saved: SavedGame): Stopped | null =>
+	saved.resigned ? { resigned: saved.resigned } : saved.agreed ? { agreed: true } : null;
 
 interface Schema extends DBSchema {
 	games: { key: string; value: SavedGame; indexes: { updated: number } };

@@ -5,6 +5,7 @@
 import type { Cell, Player, Status } from '#lib/engine.js';
 import type { GameFile } from './gamefile.js';
 import type { Move, Seat } from './moves.js';
+import type { PendingOffer } from './offers.js';
 import type { Flash, Refusal } from './refusal.svelte.js';
 import type { End } from './result.js';
 import type { Variant } from './rules.js';
@@ -41,16 +42,35 @@ export interface GameSession {
 	readonly file: GameFile;
 	/** Plays `cell` for this side, or flashes the Board the refusal names. */
 	play(cell: Cell): void;
-	/** Undo and Resign, when the game has them. */
+	/** Undo, Resign and the offers, when the game has them. */
 	readonly controls: Controls | null;
 	/** A new game of the same kind, when the game can start one. */
 	restart?(): void;
+	/** The offer waiting for an answer, in a Room. */
+	readonly offer: PendingOffer | null;
+	/** Answers the other player's offer. */
+	answer(accept: boolean): void;
+	/** What came of this page's offer, when nothing else says. */
+	readonly notice: string | null;
+	/** Offers a Room's rematch, once its game is over. */
+	readonly rematch?: Action;
+	/** The Room this game's rematch made, to follow. */
+	readonly rematchRoom: string | null;
 }
 
+/** Something a player can do, now or not. */
+export interface Action {
+	readonly enabled: boolean;
+	run(): void;
+}
+
+/** What the controls can do. Undo is offline; the offers are a Room's. */
 export interface Controls {
-	readonly canUndo: boolean;
-	/** Who would resign: the player to move, or the player against the computer. */
+	/** Who would resign: the player to move, or this page's player. Null once the game is over. */
 	readonly resigner: Player | null;
-	undo(): void;
 	resign(): void;
+	readonly undo?: Action;
+	readonly offerDraw?: Action;
+	/** Only in a Room that allows takebacks. */
+	readonly askTakeback?: Action;
 }

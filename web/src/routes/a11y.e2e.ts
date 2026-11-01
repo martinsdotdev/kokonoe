@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { INTO_A_WON_BOARD, TOP_ROW } from '../lib/game/games.fixtures.js';
+import { INTO_A_WON_BOARD, TOP_ROW, cells } from '../lib/game/games.fixtures.js';
 import { HOST, JOINER, ROOM, fakeRoom } from './room.fixtures.js';
 import { focusBoard, play, typeMoves } from './steps.js';
 
@@ -97,6 +97,46 @@ for (const colorScheme of ['light', 'dark'] as const) {
 			await page.goto(`/r/${ROOM}`);
 			await expect(page.getByRole('button', { name: 'Copy link' })).toBeVisible();
 			await scan(page, 'the host’s wait');
+		});
+
+		test('a Room’s offers, and its rematch', async ({ page }) => {
+			const top = cells(TOP_ROW);
+			const players = { X: HOST, O: JOINER };
+			const snapshot = { takebacks: true };
+			let room = await fakeRoom(page, { you: 'X', players, moves: top.slice(0, 2), snapshot });
+			await page.goto(`/r/${ROOM}`);
+			await expect(page.getByRole('button', { name: 'Ask takeback' })).toBeVisible();
+			room.say({ type: 'Offer', kind: 'Takeback', by: 'O' });
+			await expect(page.locator('[data-left]')).toBeVisible();
+			await scan(page, 'a takeback asked');
+			room.say({ type: 'OfferAnswered', kind: 'Takeback', accepted: false });
+			await page.getByRole('button', { name: 'Offer draw' }).click();
+			await expect(page.getByText(/^You offered a draw/)).toBeVisible();
+			await scan(page, 'a draw offered, waiting');
+			room.say({ type: 'OfferAnswered', kind: 'Draw', accepted: false });
+			await expect(page.locator('[data-notice]')).toBeVisible();
+			await page.getByRole('button', { name: 'Resign' }).click();
+			await expect(page.getByRole('button', { name: 'Yes, resign' })).toBeVisible();
+			await scan(page, 'the notice, and resigning');
+
+			await page.unrouteAll();
+			room = await fakeRoom(page, { you: 'X', players, moves: top });
+			await page.goto(`/r/${ROOM}`);
+			await expect(page.getByRole('button', { name: 'Rematch' })).toBeVisible();
+			room.say({ type: 'Offer', kind: 'Rematch', by: 'O' });
+			await expect(page.getByRole('button', { name: 'Accept' })).toBeVisible();
+			await scan(page, 'a rematch offered');
+
+			await page.unrouteAll();
+			await fakeRoom(page, {
+				you: 'X',
+				players,
+				moves: top,
+				snapshot: { rematch: 'b'.repeat(20) }
+			});
+			await page.goto(`/r/${ROOM}`);
+			await expect(page.getByRole('link', { name: 'Play the rematch' })).toBeVisible();
+			await scan(page, 'the rematch made');
 		});
 
 		test('the game screen in Deep', async ({ page }) => {

@@ -1,12 +1,15 @@
 /**
  * A Room's server, faked for the e2e tests: the session, the Room's routes, and its socket, which
- * answers each `Hello` with a `Welcome` and keeps every `Move` the page sends.
+ * answers each `Hello` with a `Welcome` and keeps everything the page sends. Every Room id gets
+ * the same card and `Welcome`, so a test changes the `FakeRoom` before the page follows a rematch.
  */
 import type { Page, WebSocketRoute } from '@playwright/test';
-import type { ClientMsg, Players, RoomCard, ServerMsg } from '../lib/engine.js';
+import type { ClientMsg, NewRoom, Players, RoomCard, ServerMsg, Snapshot } from '../lib/engine.js';
 import { SHELF } from '../lib/game/shelf.js';
 
 export const ROOM = '6f1c0a9b3e2d4c5a7b8e';
+/** The Room a rematch makes. */
+export const NEXT = 'b'.repeat(20);
 
 export const HOST = 'guest-4821';
 export const JOINER = 'guest-1066';
@@ -18,11 +21,14 @@ export interface FakeRoom {
 	moves: number[];
 	/** What `GET /api/rooms/<id>` answers. */
 	card?: RoomCard;
+	/** The rest of what a Welcome says of the Room: its option, an offer waiting, how it ended. */
+	snapshot?: Partial<Omit<Snapshot, 'record' | 'players'>>;
 }
 
 export const fakeRoom = async (page: Page, room: FakeRoom) => {
 	const sockets: WebSocketRoute[] = [];
 	const said: ClientMsg[] = [];
+	const created: NewRoom[] = [];
 	const card = () =>
 		room.card ?? {
 			host: HOST,
@@ -47,12 +53,16 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 			offer: null,
 			draws: { X: 0, O: 0 },
 			end: null,
-			rematch: null
+			rematch: null,
+			...room.snapshot
 		}
 	});
 	await page.route('/api/session', (route) => route.fulfill({ json: { handle: JOINER } }));
-	await page.route(`/api/rooms/${ROOM}`, (route) => route.fulfill({ json: card() }));
-	await page.route('/api/rooms', (route) => route.fulfill({ status: 201, json: { room: ROOM } }));
+	await page.route('/api/rooms/*', (route) => route.fulfill({ json: card() }));
+	await page.route('/api/rooms', (route) => {
+		created.push(route.request().postDataJSON());
+		return route.fulfill({ status: 201, json: { room: ROOM } });
+	});
 	await page.routeWebSocket('**/api/socket', (socket) => {
 		sockets.push(socket);
 		socket.onMessage((data) => {
@@ -64,6 +74,8 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 	const last = () => sockets[sockets.length - 1];
 	return {
 		said,
+		/** The bodies of the Rooms the page asked for. */
+		created,
 		/** The moves the page sent. */
 		moves: () => said.filter((message) => message.type === 'Move'),
 		hellos: () => said.filter((message) => message.type === 'Hello').length,

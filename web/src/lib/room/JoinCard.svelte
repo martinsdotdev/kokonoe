@@ -32,6 +32,9 @@
 		<li class={chip}>{preset ? 'Preset' : 'Custom variant'}</li>
 		<li class={chip}>Casual</li>
 		<li class={chip}>Untimed</li>
+		<li class={chip} data-takebacks={card.takebacks}>
+			{card.takebacks ? 'Takebacks allowed' : 'No takebacks'}
+		</li>
 	</ul>
 	{#if preset}
 		<RulesCard variant={{ name: preset.name, ruleset: preset.ruleset }} />

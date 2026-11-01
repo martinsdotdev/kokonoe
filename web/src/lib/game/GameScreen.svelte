@@ -10,6 +10,7 @@
 	live line, mounted for the whole game, says each move, where the next goes, and the result.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import type { Attachment } from 'svelte/attachments';
 	import { on } from 'svelte/events';
 	import { MediaQuery } from 'svelte/reactivity';
@@ -17,6 +18,8 @@
 	import Board from './Board.svelte';
 	import GameControls from './GameControls.svelte';
 	import MoveList from './MoveList.svelte';
+	import OfferCard from './OfferCard.svelte';
+	import { offerText, type PendingOffer } from './offers.js';
 	import PlayerBar from './PlayerBar.svelte';
 	import ResultBanner from './ResultBanner.svelte';
 	import RulesCard from './RulesCard.svelte';
@@ -61,16 +64,42 @@
 		);
 	});
 
+	/** The offer waiting, which shows by the controls, or a rematch's in the result banner. */
+	const offer = $derived(session.offer);
+	const answer = (accept: boolean) => session.answer(accept);
+
 	/**
 	 * The game's one live line: what keeps the game from going on, or the last move, then the
-	 * result or where to play.
+	 * result or where to play, then an offer waiting or what came of this page's.
 	 */
 	const spoken = $derived.by(() => {
 		if (session.trouble) return session.trouble.message;
+		const after = offer ? offerText(offer) : session.notice;
+		return after ? `${said} ${after}`.trim() : said;
+	});
+
+	let heading: HTMLElement | undefined = $state();
+	/**
+	 * An offer's card goes once it's answered, lapses or is withdrawn, and takes focus with it if
+	 * it held it: focus goes to the game, as when the page swaps one view for another.
+	 */
+	let shown: PendingOffer | null = null;
+	$effect(() => {
+		const now = offer;
+		if (shown && !now) {
+			tick().then(() => {
+				if (document.activeElement === document.body) heading?.focus();
+			});
+		}
+		shown = now;
+	});
+
+	/** The last move, then the result or where to play. */
+	const said = $derived.by(() => {
 		const last = session.moves.at(-1);
 		if (session.end) {
-			// A resignation is no move, and the last move was said when it was made.
-			const made = 'resigned' in session.end ? undefined : last;
+			// A game that stopped ended on no move, and the last move was said when it was made.
+			const made = 'outcome' in session.end ? last : undefined;
 			return announcement(made, resultText(session.end, variant.ruleset, session.won));
 		}
 		if (!now) return '';
@@ -112,7 +141,7 @@
 
 	<main class="mx-auto flex max-w-[1320px] flex-col gap-4 p-4 sm:gap-6 sm:p-7">
 		<!-- Focusable, so a page that swaps a game in can move focus to it. -->
-		<h1 class="sr-only" tabindex="-1">{variant.name}, {against}</h1>
+		<h1 class="sr-only" tabindex="-1" bind:this={heading}>{variant.name}, {against}</h1>
 		<p class="sr-only" aria-live="polite" data-spoken>{spoken}</p>
 		{#if session.end}
 			<ResultBanner
@@ -122,6 +151,12 @@
 				game={session.replay}
 				file={session.file}
 				onrestart={session.restart && (() => session.restart?.())}
+				rematch={session.rematch && {
+					offer: session.rematch,
+					waiting: offer?.kind === 'Rematch' ? offer : null,
+					onanswer: answer,
+					room: session.rematchRoom
+				}}
 			/>
 		{/if}
 		{#if phone.current}
@@ -129,6 +164,8 @@
 				{@render board()}
 			</section>
 			{@render turnCard()}
+			<!-- Before the players, so an offer, which may lapse in seconds, isn't off the screen. -->
+			{@render offers()}
 			<aside aria-label="Players" class="flex flex-col gap-3.5">{@render players()}</aside>
 			<aside aria-label="Moves and controls" class="flex flex-col gap-3.5">
 				{@render controls()}
@@ -156,6 +193,7 @@
 					class="flex min-w-0 flex-[1_1_260px] flex-col gap-3.5 lg:max-w-80"
 				>
 					<MoveList moves={session.moves} depth={variant.ruleset.depth} />
+					{@render offers()}
 					{@render controls()}
 					<RulesCard {variant} />
 				</aside>
@@ -223,14 +261,17 @@
 	{/if}
 {/snippet}
 
+{#snippet offers()}
+	{#if offer && offer.kind !== 'Rematch'}
+		<OfferCard {offer} onanswer={answer} />
+	{/if}
+	{#if session.notice}
+		<p class="m-0 text-sm" data-notice>{session.notice}</p>
+	{/if}
+{/snippet}
+
 {#snippet controls()}
 	{#if session.controls}
-		{@const controls = session.controls}
-		<GameControls
-			canUndo={controls.canUndo}
-			resigner={controls.resigner}
-			onundo={() => controls.undo()}
-			onresign={() => controls.resign()}
-		/>
+		<GameControls controls={session.controls} />
 	{/if}
 {/snippet}

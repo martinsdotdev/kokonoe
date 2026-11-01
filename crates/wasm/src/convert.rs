@@ -332,12 +332,147 @@ impl From<protocol::CloseCode> for crate::CloseCode {
             protocol::CloseCode::Restarting => crate::CloseCode::Restarting,
             protocol::CloseCode::UpdateRequired => crate::CloseCode::UpdateRequired,
             protocol::CloseCode::Forbidden => crate::CloseCode::Forbidden,
+            protocol::CloseCode::NoRoom => crate::CloseCode::NoRoom,
+        }
+    }
+}
+
+/// The Room's messages and routes as their mirrors, for the tests that hold the two to the same
+/// JSON. Exhaustive like the rest, so a message the protocol adds doesn't compile until
+/// `wire.rs` declares it.
+#[cfg(test)]
+mod wire {
+    use super::*;
+    use crate::wire::{
+        ClientMsg, CreatedRoom, NewRoom, Players, Rejection, Role, RoomCard, SeatChoice, ServerMsg,
+        Snapshot,
+    };
+
+    impl From<protocol::ClientMsg> for ClientMsg {
+        fn from(message: protocol::ClientMsg) -> ClientMsg {
+            match message {
+                protocol::ClientMsg::Hello {
+                    protocol,
+                    rules_version,
+                    room,
+                    role,
+                } => ClientMsg::Hello {
+                    protocol,
+                    rules_version,
+                    room,
+                    role: role.into(),
+                },
+                protocol::ClientMsg::Move { ply, cell } => ClientMsg::Move {
+                    ply: Ply(ply.into()),
+                    cell: Cell(cell),
+                },
+            }
+        }
+    }
+
+    impl From<protocol::Role> for Role {
+        fn from(role: protocol::Role) -> Role {
+            match role {
+                protocol::Role::Player => Role::Player,
+            }
+        }
+    }
+
+    impl From<protocol::ServerMsg> for ServerMsg {
+        fn from(message: protocol::ServerMsg) -> ServerMsg {
+            match message {
+                protocol::ServerMsg::Welcome { you, snapshot } => ServerMsg::Welcome {
+                    you: you.into(),
+                    snapshot: snapshot.into(),
+                },
+                protocol::ServerMsg::Moved { ply, cell } => ServerMsg::Moved {
+                    ply: Ply(ply.into()),
+                    cell: Cell(cell),
+                },
+                protocol::ServerMsg::Rejected { reason } => ServerMsg::Rejected {
+                    reason: reason.into(),
+                },
+                protocol::ServerMsg::Ended { outcome } => ServerMsg::Ended {
+                    outcome: outcome.into(),
+                },
+            }
+        }
+    }
+
+    impl From<protocol::Snapshot> for Snapshot {
+        fn from(snapshot: protocol::Snapshot) -> Snapshot {
+            Snapshot {
+                record: snapshot.record.into(),
+                players: snapshot.players.into(),
+            }
+        }
+    }
+
+    impl From<protocol::Players> for Players {
+        fn from(players: protocol::Players) -> Players {
+            Players {
+                x: players.x,
+                o: players.o,
+            }
+        }
+    }
+
+    impl From<protocol::Rejection> for Rejection {
+        fn from(reason: protocol::Rejection) -> Rejection {
+            match reason {
+                protocol::Rejection::IllegalMove => Rejection::IllegalMove,
+                protocol::Rejection::OutOfOrder { want } => Rejection::OutOfOrder {
+                    want: Ply(want.into()),
+                },
+                protocol::Rejection::NotAllowed => Rejection::NotAllowed,
+            }
+        }
+    }
+
+    impl From<protocol::NewRoom> for NewRoom {
+        fn from(asked: protocol::NewRoom) -> NewRoom {
+            NewRoom {
+                rules: asked.rules,
+                seat: asked.seat.into(),
+            }
+        }
+    }
+
+    impl From<protocol::SeatChoice> for SeatChoice {
+        fn from(seat: protocol::SeatChoice) -> SeatChoice {
+            match seat {
+                protocol::SeatChoice::X => SeatChoice::X,
+                protocol::SeatChoice::O => SeatChoice::O,
+                protocol::SeatChoice::Random => SeatChoice::Random,
+            }
+        }
+    }
+
+    impl From<protocol::CreatedRoom> for CreatedRoom {
+        fn from(created: protocol::CreatedRoom) -> CreatedRoom {
+            CreatedRoom { room: created.room }
+        }
+    }
+
+    impl From<protocol::RoomCard> for RoomCard {
+        fn from(card: protocol::RoomCard) -> RoomCard {
+            RoomCard {
+                host: card.host,
+                variant: card.variant,
+                rules: card.rules,
+                players: card.players.into(),
+                you: card.you.map(Player::from),
+            }
         }
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -492,5 +627,125 @@ mod tests {
             engine::Game::open(&read).err(),
             Some(engine::OpenError::RulesVersion(engine::RULES_VERSION + 1))
         );
+    }
+
+    mod wire {
+        use std::collections::BTreeSet;
+
+        use serde::Serialize;
+        use serde::de::DeserializeOwned;
+        use tsify::Tsify;
+
+        use super::*;
+        use crate::wire::{ClientMsg, CreatedRoom, NewRoom, RoomCard, ServerMsg};
+
+        /// The protocol's JSON for `sample` reads into its mirror as the conversion says, and the
+        /// mirror writes it back byte for byte, so the `.d.ts` declares what the server sends and
+        /// reads what the page sends.
+        fn holds<P, M>(sample: P) -> serde_json::Value
+        where
+            P: Serialize + Clone,
+            M: From<P> + Serialize + DeserializeOwned + PartialEq + std::fmt::Debug,
+        {
+            let json = serde_json::to_string(&sample).unwrap();
+            let mirror: M = serde_json::from_str(&json).unwrap();
+            assert_eq!(mirror, M::from(sample), "{json}");
+            assert_eq!(serde_json::to_string(&mirror).unwrap(), json);
+            serde_json::from_str(&json).unwrap()
+        }
+
+        /// Every `type` a declaration lists, so each message has a sample.
+        fn declared<T: Tsify>() -> BTreeSet<String> {
+            T::DECL
+                .split("type: \"")
+                .skip(1)
+                .map(|rest| rest.split('"').next().unwrap().to_owned())
+                .collect()
+        }
+
+        fn every<P, M>(samples: Vec<P>) -> BTreeSet<String>
+        where
+            P: Serialize + Clone,
+            M: From<P> + Serialize + DeserializeOwned + PartialEq + std::fmt::Debug,
+        {
+            samples
+                .into_iter()
+                .map(|sample| holds::<P, M>(sample)["type"].as_str().unwrap().to_owned())
+                .collect()
+        }
+
+        fn players(x: Option<&str>, o: Option<&str>) -> protocol::Players {
+            protocol::Players {
+                x: x.map(str::to_owned),
+                o: o.map(str::to_owned),
+            }
+        }
+
+        #[test]
+        fn the_messages_are_the_protocols() {
+            let client = vec![
+                protocol::ClientMsg::Hello {
+                    protocol: protocol::PROTOCOL,
+                    rules_version: engine::RULES_VERSION,
+                    room: "6f1c0a9b3e2d4c5a7b8e".into(),
+                    role: protocol::Role::Player,
+                },
+                protocol::ClientMsg::Move { ply: 7, cell: 40 },
+            ];
+            assert_eq!(every::<_, ClientMsg>(client), declared::<ClientMsg>());
+
+            let mut game =
+                engine::Game::new(engine::Preset::Deep.ruleset(), engine::Seed(0x5eed00));
+            let cell = engine::Cell::from_index(engine::Depth::Three, 364).unwrap();
+            game.play(game.state().ply(), cell).unwrap();
+            let rejected = |reason| protocol::ServerMsg::Rejected { reason };
+            let server = vec![
+                protocol::ServerMsg::Welcome {
+                    you: engine::Player::O,
+                    snapshot: protocol::Snapshot {
+                        record: game.record(),
+                        players: players(Some("guest-4821"), None),
+                    },
+                },
+                protocol::ServerMsg::Moved { ply: 3, cell: 728 },
+                rejected(protocol::Rejection::IllegalMove),
+                rejected(protocol::Rejection::OutOfOrder { want: 5 }),
+                rejected(protocol::Rejection::NotAllowed),
+                protocol::ServerMsg::Ended {
+                    outcome: engine::Outcome::MostWon(engine::Player::X),
+                },
+                protocol::ServerMsg::Ended {
+                    outcome: engine::Outcome::Draw,
+                },
+            ];
+            assert_eq!(every::<_, ServerMsg>(server), declared::<ServerMsg>());
+        }
+
+        #[test]
+        fn the_room_routes_are_the_protocols() {
+            for seat in [
+                protocol::SeatChoice::X,
+                protocol::SeatChoice::O,
+                protocol::SeatChoice::Random,
+            ] {
+                let asked = protocol::NewRoom {
+                    rules: "cont+first5+most".into(),
+                    seat,
+                };
+                holds::<_, NewRoom>(asked);
+            }
+            holds::<_, CreatedRoom>(protocol::CreatedRoom {
+                room: "6f1c0a9b3e2d4c5a7b8e".into(),
+            });
+            for you in [None, Some(engine::Player::X)] {
+                holds::<_, RoomCard>(protocol::RoomCard {
+                    host: "guest-4821".into(),
+                    variant: "Standard".into(),
+                    rules: "std".into(),
+                    players: players(Some("guest-4821"), Some("guest-1066")),
+                    you,
+                });
+            }
+        }
     }
 }

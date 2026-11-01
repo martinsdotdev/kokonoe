@@ -5,12 +5,13 @@
  * `CloseEvent`'s `code` with these. 4001 asks for the newer build, which `updateNow` activates.
  * Unlike the tsify types, it's a runtime enum, so the page names a code and its number stays in
  * Rust.
- * @enum {1012 | 4001 | 4003}
+ * @enum {1012 | 4001 | 4003 | 4004}
  */
 export const CloseCode = Object.freeze({
     Restarting: 1012, "1012": "Restarting",
     UpdateRequired: 4001, "4001": "UpdateRequired",
     Forbidden: 4003, "4003": "Forbidden",
+    NoRoom: 4004, "4004": "NoRoom",
 });
 
 /**
@@ -326,6 +327,24 @@ export function presets() {
     var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v1;
+}
+
+/**
+ * The version of the Room's messages this build speaks, which its `Hello` names.
+ * @returns {number}
+ */
+export function protocolVersion() {
+    const ret = wasm.protocolVersion();
+    return ret >>> 0;
+}
+
+/**
+ * The rules version this build plays, which a Room's `Hello` names.
+ * @returns {number}
+ */
+export function rulesVersion() {
+    const ret = wasm.rulesVersion();
+    return ret >>> 0;
 }
 
 /**

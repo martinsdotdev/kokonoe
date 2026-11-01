@@ -8,7 +8,7 @@ import {
 	type Status
 } from '#lib/engine.js';
 import { WorkerComputer, type Computer } from './computer.js';
-import type { Level, Opponent } from './launch.js';
+import { againstLabel, type Level, type Opponent } from './launch.js';
 import type { GameFile } from './gamefile.js';
 import { dayOf } from './listing.js';
 import {
@@ -24,6 +24,7 @@ import { illegalMove, openRecord } from './record.js';
 import { resultText, type End } from './result.js';
 import { rulesetCode, type Variant } from './rules.js';
 import { browserStore, savedVariant, type GameStore, type SavedGame } from './saved.js';
+import type { Controls, GameSession } from './screen.js';
 import { boardView, type BoardView } from './view.js';
 
 /** How long an illegal tap flashes the Board it names. */
@@ -76,7 +77,7 @@ export interface Options {
  * From its first move, by either side, it saves itself after every change, so `resume` can
  * rebuild it after a reload.
  */
-export class OfflineGame {
+export class OfflineGame implements GameSession, Controls {
 	readonly variant: Variant;
 	readonly opponent: Opponent;
 	readonly seats: Record<Player, Seat>;
@@ -156,6 +157,10 @@ export class OfflineGame {
 		this.#ask();
 	}
 
+	get against(): string {
+		return againstLabel(this.opponent);
+	}
+
 	/** The game as a file holds it, to export. */
 	get file(): GameFile {
 		return gameFile({
@@ -190,6 +195,30 @@ export class OfflineGame {
 	/** It's the computer's turn, so the Board takes no taps. */
 	get computerToMove(): boolean {
 		return this.human !== null && this.toMove !== null && this.toMove !== this.human;
+	}
+
+	get frozen(): boolean {
+		return this.end !== null || this.computerToMove;
+	}
+
+	/** The computer thinking on its move, or stuck. */
+	doing(player: Player): string | null {
+		if (!this.computerToMove || this.toMove !== player) return null;
+		return this.stuck ? 'Couldn’t move' : 'Thinking…';
+	}
+
+	get trouble() {
+		if (!this.stuck || this.end) return null;
+		return { message: 'The computer couldn’t find its move.', retry: () => this.retry() };
+	}
+
+	get replay(): string | undefined {
+		return this.stored ? this.id : undefined;
+	}
+
+	/** Undo and Resign are the game's own. */
+	get controls(): Controls {
+		return this;
 	}
 
 	/** Who Resign gives up for: the player to move, or the player against the computer. */

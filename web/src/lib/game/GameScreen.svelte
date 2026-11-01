@@ -13,7 +13,6 @@
 	import type { Attachment } from 'svelte/attachments';
 	import { on } from 'svelte/events';
 	import { MediaQuery } from 'svelte/reactivity';
-	import type { Player } from '#lib/engine.js';
 	import { announcement, turn } from './announce.js';
 	import Board from './Board.svelte';
 	import GameControls from './GameControls.svelte';
@@ -25,27 +24,24 @@
 	import ScreenHeader from './ScreenHeader.svelte';
 	import SteppedBoard from './SteppedBoard.svelte';
 	import { shortcut, typed, typedSoFar } from './keys.js';
-	import { againstLabel } from './launch.js';
 	import { moves } from './listing.js';
 	import { playedCount } from './moves.js';
 	import { notation } from './notation.js';
 	import { resultText, winner } from './result.js';
 	import { counted } from './rules.js';
-	import type { OfflineGame } from './session.svelte.js';
+	import type { GameSession } from './screen.js';
 	import TurnCard from './TurnCard.svelte';
 	import { decidedAbove } from './view.js';
 
-	let { session }: { session: OfflineGame } = $props();
+	let { session }: { session: GameSession } = $props();
 
 	/** Narrower than 40rem, Tailwind's `max-sm`: a phone. */
 	const phone = new MediaQuery('(width < 40rem)');
 
 	const played = $derived(playedCount(session.moves));
-	const opponent = $derived(session.opponent);
 	const variant = $derived(session.variant);
-	const against = $derived(againstLabel(opponent));
-	/** The board takes no moves: the game is over, or the computer is to move. */
-	const frozen = $derived(session.end !== null || session.computerToMove);
+	const against = $derived(session.against);
+	const frozen = $derived(session.frozen);
 	/** One Board at a time: on a phone, and at depth 3 everywhere. */
 	const stepped = $derived(phone.current || variant.ruleset.depth === 3);
 
@@ -101,14 +97,6 @@
 	 * on the page would be single-key shortcuts, which WCAG 2.1.4 rules out.
 	 */
 	const typing: Attachment<HTMLElement> = (board) => on(board, 'keydown', onkeydown);
-
-	/** What the computer is doing on its move, for its player bar. */
-	const doing = (player: Player) =>
-		session.computerToMove && session.toMove === player
-			? session.stuck
-				? 'Couldn’t move'
-				: 'Thinking…'
-			: null;
 </script>
 
 <svelte:head>
@@ -126,9 +114,9 @@
 				headline={resultText(session.end, variant.ruleset, session.won)}
 				detail={`After ${moves(played)}.`}
 				winner={winner(session.end)}
-				game={session.stored ? session.id : undefined}
+				game={session.replay}
 				file={session.file}
-				onrestart={() => session.restart()}
+				onrestart={session.restart && (() => session.restart?.())}
 			/>
 		{/if}
 		{#if phone.current}
@@ -197,19 +185,22 @@
 			{player}
 			seat={session.seats[player]}
 			toMove={session.toMove === player}
-			doing={doing(player)}
+			doing={session.doing(player)}
 		/>
 	{/each}
-	{#if session.stuck && !session.end}
+	{#if session.trouble}
+		{@const { message, retry } = session.trouble}
 		<p class="m-0 flex flex-wrap items-center gap-3 text-sm" role="alert">
-			The computer couldn’t find its move.
-			<button
-				type="button"
-				class="min-h-11 rounded-md border-[1.5px] border-foreground bg-card px-4 font-semibold"
-				onclick={() => session.retry()}
-			>
-				Try again
-			</button>
+			{message}
+			{#if retry}
+				<button
+					type="button"
+					class="min-h-11 rounded-md border-[1.5px] border-foreground bg-card px-4 font-semibold"
+					onclick={retry}
+				>
+					Try again
+				</button>
+			{/if}
 		</p>
 	{/if}
 	{#if counted(variant.ruleset)}
@@ -228,10 +219,13 @@
 {/snippet}
 
 {#snippet controls()}
-	<GameControls
-		canUndo={session.canUndo}
-		resigner={session.resigner}
-		onundo={() => session.undo()}
-		onresign={() => session.resign()}
-	/>
+	{#if session.controls}
+		{@const controls = session.controls}
+		<GameControls
+			canUndo={controls.canUndo}
+			resigner={controls.resigner}
+			onundo={() => controls.undo()}
+			onresign={() => controls.resign()}
+		/>
+	{/if}
 {/snippet}

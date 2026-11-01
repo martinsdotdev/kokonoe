@@ -32,6 +32,12 @@ const MAX_MESSAGE: usize = 4096;
 /// How the server ends a socket: the close code, and the reason sent with it.
 type Ending = (u16, &'static str);
 
+/// A frame the server couldn't read, such as one past [`MAX_MESSAGE`].
+const UNREADABLE: Ending = (close_code::PROTOCOL, "unreadable");
+
+/// The socket closed itself, or its connection went.
+const GONE: Ending = (close_code::NORMAL, "");
+
 /// One opened from another site, or without saying where it's from, is refused outright. One
 /// without a session is accepted and then closed with 4003, since a page can't read why a refused
 /// upgrade failed but can read a close code. It doesn't move the session's expiry: a socket has
@@ -79,9 +85,10 @@ async fn hello(
     out: mpsc::Sender<ServerMsg>,
 ) -> Result<Joined, Ending> {
     let text = match tokio::time::timeout(HELLO_TIMEOUT, next_message(socket)).await {
-        Ok(Some(Message::Text(text))) => text,
-        Ok(Some(Message::Binary(_))) => return Err((close_code::UNSUPPORTED, "text only")),
-        Ok(_) => return Err((close_code::NORMAL, "")),
+        Ok(Some(Ok(Message::Text(text)))) => text,
+        Ok(Some(Ok(Message::Binary(_)))) => return Err((close_code::UNSUPPORTED, "text only")),
+        Ok(Some(Err(_))) => return Err(UNREADABLE),
+        Ok(_) => return Err(GONE),
         Err(_) => return Err((close_code::POLICY, "no hello")),
     };
     let room = match serde_json::from_str(&text) {
@@ -137,13 +144,14 @@ async fn relay(
                 },
                 Some(Ok(Message::Binary(_))) => return (close_code::UNSUPPORTED, "text only"),
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
-                Some(Ok(Message::Close(_)) | Err(_)) | None => return (close_code::NORMAL, ""),
+                Some(Err(_)) => return UNREADABLE,
+                Some(Ok(Message::Close(_))) | None => return GONE,
             },
             sent = inbox.recv() => match sent {
                 Some(message) => {
                     let text = serde_json::to_string(&message).expect("a message is always JSON");
                     if socket.send(Message::Text(text.into())).await.is_err() {
-                        return (close_code::NORMAL, "");
+                        return GONE;
                     }
                 }
                 // The Room dropped this socket, or stopped: the page reconnects for a fresh
@@ -152,19 +160,20 @@ async fn relay(
             },
             _ = keepalive.tick() => {
                 if socket.send(Message::Ping(Default::default())).await.is_err() {
-                    return (close_code::NORMAL, "");
+                    return GONE;
                 }
             }
         }
     }
 }
 
-/// The next message that isn't a ping or a pong; nothing once the socket closes.
-async fn next_message(socket: &mut WebSocket) -> Option<Message> {
+/// The next message that isn't a ping or a pong, or what kept it from being read; nothing once
+/// the socket closes.
+async fn next_message(socket: &mut WebSocket) -> Option<Result<Message, axum::Error>> {
     loop {
-        match socket.recv().await?.ok()? {
-            Message::Ping(_) | Message::Pong(_) => {}
-            message => return Some(message),
+        match socket.recv().await? {
+            Ok(Message::Ping(_) | Message::Pong(_)) => {}
+            read => return Some(read),
         }
     }
 }

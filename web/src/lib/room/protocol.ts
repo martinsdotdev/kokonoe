@@ -40,7 +40,10 @@ export const readServerMsg = (data: unknown): ServerMsg | null => {
 			case 'Rejected':
 				return field(body, 'reason') !== undefined;
 			case 'Ended':
-				return field(body, 'outcome') !== undefined;
+				return (
+					typeof field(body, 'result') === 'string' &&
+					typeof field(body, 'termination') === 'string'
+				);
 			default:
 				return false;
 		}

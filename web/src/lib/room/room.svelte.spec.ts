@@ -98,9 +98,9 @@ describe('a Room’s game', () => {
 	it('checks the server’s end against its own', () => {
 		const { room, link } = game('X', undefined, top);
 		expect(room.end).toEqual({ outcome: { Objective: 'X' } });
-		room.receive({ type: 'Ended', outcome: { Objective: 'X' } });
+		room.receive({ type: 'Ended', result: '1-0', termination: 'line' });
 		expect(link.resync).not.toHaveBeenCalled();
-		room.receive({ type: 'Ended', outcome: 'Draw' });
+		room.receive({ type: 'Ended', result: '1/2-1/2', termination: 'agreed draw' });
 		expect(link.resync).toHaveBeenCalledOnce();
 	});
 

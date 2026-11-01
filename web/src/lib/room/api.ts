@@ -50,9 +50,11 @@ export const readCard = (body: unknown): RoomCard | undefined => {
 	const [host, variant, rules] = ['host', 'variant', 'rules'].map((key) => field(body, key));
 	const players = readPlayers(field(body, 'players'));
 	const you = field(body, 'you');
+	const takebacks = field(body, 'takebacks');
 	const strings = [host, variant, rules].every((value) => typeof value === 'string');
 	if (!strings || !players || !(you === null || isPlayer(you))) return undefined;
-	return { host, variant, rules, players, you } as RoomCard;
+	if (typeof takebacks !== 'boolean') return undefined;
+	return { host, variant, rules, players, you, takebacks } as RoomCard;
 };
 
 export const readPlayers = (body: unknown): Players | undefined => {

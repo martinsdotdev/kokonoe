@@ -2,7 +2,6 @@ import {
 	Game,
 	type Cell,
 	type ClientMsg,
-	type Outcome,
 	type Player,
 	type Players,
 	type Record as GameRecord,
@@ -15,7 +14,7 @@ import { againstLabel, type RoomOpponent } from '#lib/game/launch.js';
 import { dealtMoves, gameFile, playedMove, seats, type Move, type Seat } from '#lib/game/moves.js';
 import { openRecord } from '#lib/game/record.js';
 import { Refusals } from '#lib/game/refusal.svelte.js';
-import type { End } from '#lib/game/result.js';
+import { result, type End } from '#lib/game/result.js';
 import { rulesetCode, type Variant } from '#lib/game/rules.js';
 import { browserStore, savedGame, type GameStore, type SavedGame } from '#lib/game/saved.js';
 import type { GameSession } from '#lib/game/screen.js';
@@ -45,9 +44,6 @@ type Welcome = Extract<ServerMsg, { type: 'Welcome' }>;
 /** What a save holds that a `Welcome` can change: the moves made, and who sits where. */
 const kept = (moves: number, opponent: SavedGame['opponent']) =>
 	opponent.kind === 'room' ? `${moves} ${opponent.players.X} ${opponent.players.O}` : `${moves}`;
-
-/** An Outcome has one key, so its JSON is one spelling. */
-const sameOutcome = (a: Outcome, b: Outcome) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
  * The game a Record leads to, replayed move by move so the move list has its notes. Throws an
@@ -154,9 +150,8 @@ export class RoomGame implements GameSession {
 				// The page's engine allowed what the server's refused: they disagree.
 				return this.#resync();
 			case 'Ended':
-				if (!('Over' in this.status && sameOutcome(this.status.Over, message.outcome))) {
-					this.#resync();
-				}
+				// The rules' end, which the engine reached too; any other is the next PR's to show.
+				if (result(this.end) !== message.result) this.#resync();
 		}
 	}
 

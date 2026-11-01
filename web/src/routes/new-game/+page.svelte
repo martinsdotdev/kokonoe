@@ -80,7 +80,8 @@
 		creating = true;
 		failure = null;
 		const room =
-			(await startSession()) && (await createRoom({ rules: rulesetCode(preset.ruleset), seat }));
+			(await startSession()) &&
+			(await createRoom({ rules: rulesetCode(preset.ruleset), seat, takebacks: false }));
 		// Still creating while the page goes to the Room, so a second press makes no second Room.
 		if (room) return goto(resolve('/r/[room]', { room }));
 		creating = false;

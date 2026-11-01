@@ -20,7 +20,8 @@ const seated = async (url: string | URL | Request) =>
 				variant: 'Standard',
 				rules: 'std',
 				players: { X: 'guest-4821', O: null },
-				you: 'X'
+				you: 'X',
+				takebacks: false
 			});
 
 const offline = async (): Promise<Response> => {

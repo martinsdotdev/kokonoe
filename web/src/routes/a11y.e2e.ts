@@ -78,7 +78,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
 					variant: 'Standard',
 					rules: 'std',
 					players: { X: HOST, O: null },
-					you: null
+					you: null,
+					takebacks: false
 				}
 			});
 			await page.goto(`/r/${ROOM}`);

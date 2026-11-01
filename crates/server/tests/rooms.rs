@@ -309,6 +309,43 @@ async fn the_card_tells_a_joiner_what_they_join() {
     }
 }
 
+/// The page at `path`.
+async fn page(app: &Router, path: &str) -> String {
+    let request = Request::get(path).body(Body::empty()).unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    String::from_utf8(body.to_vec()).unwrap()
+}
+
+#[tokio::test]
+async fn a_room_link_names_its_game_escaped() {
+    let world = world().await;
+    let host = guest(&world.app).await;
+    let room = room(&world.app, &host, "X").await;
+    let (id, _) = host.split_once('.').unwrap();
+    sqlx::query(
+        "UPDATE accounts SET handle = $2
+         WHERE id = (SELECT account_id FROM sessions WHERE id = $1)",
+    )
+    .bind(id)
+    .bind(r#"<b>&"x'"#)
+    .execute(&world.pool)
+    .await
+    .unwrap();
+
+    let named = page(&world.app, &format!("/r/{room}")).await;
+    let title = r#"<meta property="og:title" content="&lt;b&gt;&amp;&quot;x&#39; invites you to a game of Standard" />"#;
+    assert!(named.contains(title), "{named}");
+    assert!(named.find(title).unwrap() < named.find("</head>").unwrap());
+
+    let plain = page(&world.app, "/r/00000000000000000000").await;
+    assert!(
+        plain.contains(r#"content="Join a game of Kokonoe""#),
+        "{plain}"
+    );
+}
+
 #[tokio::test]
 async fn two_players_play_a_whole_game() {
     let world = world().await;

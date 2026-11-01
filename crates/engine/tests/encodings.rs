@@ -235,7 +235,7 @@ mod seeds_and_boards {
 
 mod json {
     use super::*;
-    use kokonoe_engine::{Game, OpenError, RULES_VERSION, Record, RecordFile};
+    use kokonoe_engine::{Game, OpenError, Outcome, Player, RULES_VERSION, Record, RecordFile};
 
     #[test]
     fn every_ruleset_round_trips_through_json() {
@@ -348,5 +348,19 @@ mod json {
             Game::open(&future).err(),
             Some(OpenError::RulesVersion(RULES_VERSION + 1))
         );
+    }
+
+    #[test]
+    fn players_and_outcomes_are_written_as_the_browser_reads_them() {
+        let outcomes = [
+            (Outcome::Objective(Player::X), r#"{"Objective":"X"}"#),
+            (Outcome::MostWon(Player::O), r#"{"MostWon":"O"}"#),
+            (Outcome::Draw, r#""Draw""#),
+        ];
+        for (outcome, json) in outcomes {
+            assert_eq!(serde_json::to_string(&outcome).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Outcome>(json).unwrap(), outcome);
+        }
+        assert_eq!(serde_json::to_string(&Player::O).unwrap(), r#""O""#);
     }
 }

@@ -73,7 +73,7 @@ test('Home loads no engine, with a saved game to continue', async ({ context, pa
 		scripts.push(response.text());
 	});
 	await home.goto('/');
-	await expect(home.getByRole('link', { name: 'Resume', exact: true })).toBeVisible();
+	await expect(home.getByRole('link', { name: /^Resume/ })).toBeVisible();
 	await home.waitForLoadState('networkidle');
 	expect(loaded.filter((path) => path.endsWith('.wasm'))).toEqual([]);
 	// The engine's glue names its module, so no script Home loads may carry the name.

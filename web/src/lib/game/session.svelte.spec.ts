@@ -2,26 +2,14 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadEngine, type Cell, type Record } from '#lib/engine.js';
 import type { Computer } from './computer.js';
 import type { Opponent } from './launch.js';
-import type { GameStore, SavedGame } from './saved.js';
+import type { GameStore } from './saved.js';
+import { FakeStore } from './store.fixtures.js';
 import { UnplayableGame } from './record.js';
 import { OfflineGame } from './session.svelte.js';
 import { INTO_A_WON_BOARD, LINE_OF_MIDDLE_BOARDS, TOP_ROW, cells } from './games.fixtures.js';
 import { SHELF } from './shelf.js';
 
 beforeAll(() => loadEngine());
-
-/** Keeps every save, cloned the way IndexedDB clones it. */
-class FakeStore implements GameStore {
-	saves: SavedGame[] = [];
-
-	get last(): SavedGame {
-		return this.saves.at(-1)!;
-	}
-
-	async save(game: SavedGame) {
-		this.saves.push(structuredClone(game));
-	}
-}
 
 const hotseat = (store: GameStore = new FakeStore()) =>
 	new OfflineGame(SHELF[0], { kind: 'hotseat' }, { store });

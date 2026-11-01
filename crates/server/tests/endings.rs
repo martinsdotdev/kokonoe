@@ -1,10 +1,13 @@
 //! A Room's policies (spec §10.2) over two sockets, against a real Postgres in Docker: resigning,
-//! draw offers, takebacks and rematch. The test server's offers lapse in 600 ms (`common::TIMING`).
+//! draw offers, takebacks and rematch. The test server's offers lapse sooner than a real one's
+//! (`common::TIMING`).
 
 mod common;
 
+use std::time::Duration;
+
 use common::table::*;
-use common::{Server, hear, say};
+use common::{Server, Socket, TIMING, closed, guest, hear, say};
 use kokonoe_engine::Player;
 use kokonoe_protocol::{
     ClientMsg, Draws, GameEnd, GameResult, Offer, OfferKind, Rejection, ServerMsg, Termination,
@@ -14,11 +17,13 @@ use sqlx::PgPool;
 /// The opening of `TOP_ROW`: X in Local board 0, O sent there and sending X to board 3.
 const MOVES: &str = "03 30 04 40";
 
-/// A Room allowing takebacks, both seats filled, the host as X.
-async fn takebacks(world: &World) -> Table {
-    world
-        .table_with(r#"{"rules":"std","seat":"X","takebacks":true}"#)
-        .await
+/// X takes Local boards 0, 1 and 2, each with a row: `common::table`'s `TOP_ROW`.
+const TOP_ROW: &str = "03 30 04 40 05 51 13 31 14 41 15 52 26 62 27 72 28";
+
+/// A Room of `rules` allowing takebacks, both seats filled, the host as X.
+async fn takebacks(world: &World, rules: &str) -> Table {
+    let body = format!(r#"{{"rules":"{rules}","seat":"X","takebacks":true}}"#);
+    world.table_with(&body).await
 }
 
 fn offer(kind: OfferKind, by: Player) -> ServerMsg {
@@ -36,14 +41,6 @@ fn ended(result: GameResult, termination: Termination) -> ServerMsg {
     })
 }
 
-/// The socket of `player` at `table`.
-fn socket(table: &mut Table, player: Player) -> &mut common::Socket {
-    match player {
-        Player::X => &mut table.x,
-        Player::O => &mut table.o,
-    }
-}
-
 /// `player` says `message`, and both sockets hear `heard`, in order.
 async fn both_hear(
     table: &mut Table,
@@ -51,16 +48,15 @@ async fn both_hear(
     message: ClientMsg,
     heard: impl IntoIterator<Item = ServerMsg>,
 ) {
-    say(socket(table, player), &message).await;
+    say(table.socket(player), &message).await;
     for expected in heard {
         assert_eq!(hear(&mut table.x).await, expected, "X, after {message:?}");
         assert_eq!(hear(&mut table.o).await, expected, "O, after {message:?}");
     }
 }
 
-/// `player` says `message`, and is told it isn't allowed.
-async fn not_allowed(table: &mut Table, player: Player, message: ClientMsg) {
-    let socket = socket(table, player);
+/// `socket` says `message`, and is told it isn't allowed.
+async fn not_allowed(socket: &mut Socket, message: ClientMsg) {
     say(socket, &message).await;
     let reason = Rejection::NotAllowed;
     assert_eq!(
@@ -81,6 +77,32 @@ async fn ending(pool: &PgPool, room: &str) -> (Option<String>, Option<String>, i
     .unwrap()
 }
 
+/// How many Rooms the table holds.
+async fn rooms(pool: &PgPool) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM games")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// `by` offers a rematch and the other player accepts: the new Room, as both sockets heard it.
+async fn rematched(table: &mut Table, by: Player) -> String {
+    let asked = offer(OfferKind::Rematch, by);
+    both_hear(table, by, ClientMsg::OfferRematch, [asked]).await;
+    let accept = ClientMsg::AnswerRematch { accept: true };
+    say(table.socket(by.opponent()), &accept).await;
+    let mut rooms = Vec::new();
+    for socket in [&mut table.x, &mut table.o] {
+        assert_eq!(hear(socket).await, answered(OfferKind::Rematch, true));
+        match hear(socket).await {
+            ServerMsg::RematchRoom { room } => rooms.push(room),
+            other => panic!("not the rematch: {other:?}"),
+        }
+    }
+    assert_eq!(rooms[0], rooms[1]);
+    rooms.swap_remove(0)
+}
+
 #[tokio::test]
 async fn resigning_ends_the_game_for_the_other_player() {
     let world = world().await;
@@ -94,15 +116,12 @@ async fn resigning_ends_the_game_for_the_other_player() {
         (stored.0.as_deref(), stored.1.as_deref()),
         (Some("1-0"), Some("resign"))
     );
-    not_allowed(&mut table, Player::X, ClientMsg::Resign).await;
+    not_allowed(&mut table.x, ClientMsg::Resign).await;
     step(&mut table.x, 4, cells("33")[0]).await;
     assert_eq!(hear(&mut table.x).await, resigned, "a move after the end");
 
     let mut again = world.enter(&table.joiner, &table.room).await;
-    let snapshot = match hear(&mut again).await {
-        ServerMsg::Welcome { snapshot, .. } => snapshot,
-        other => panic!("not a Welcome: {other:?}"),
-    };
+    let (_, snapshot) = welcome(&mut again).await;
     assert_eq!(
         snapshot.end,
         Some(GameEnd {
@@ -111,6 +130,17 @@ async fn resigning_ends_the_game_for_the_other_player() {
         }),
         "a reconnect is told how it ended"
     );
+}
+
+#[tokio::test]
+async fn nothing_ends_before_the_second_seat_fills() {
+    let world = world().await;
+    let host = guest(&world.app).await;
+    let room = room(&world.app, &host, "std", "X").await;
+    let mut x = world.enter(&host, &room).await;
+    welcome(&mut x).await;
+    not_allowed(&mut x, ClientMsg::Resign).await;
+    not_allowed(&mut x, ClientMsg::OfferDraw).await;
 }
 
 #[tokio::test]
@@ -127,19 +157,14 @@ async fn a_draw_is_offered_declined_and_agreed() {
         [offered.clone()],
     )
     .await;
-    not_allowed(&mut table, Player::X, ClientMsg::OfferDraw).await;
-    not_allowed(
-        &mut table,
-        Player::X,
-        ClientMsg::AnswerDraw { accept: true },
-    )
-    .await;
-    let declined = answered(OfferKind::Draw, false);
+    not_allowed(&mut table.x, ClientMsg::OfferDraw).await;
+    not_allowed(&mut table.x, ClientMsg::AnswerDraw { accept: true }).await;
+    let no = ClientMsg::AnswerDraw { accept: false };
     both_hear(
         &mut table,
         Player::O,
-        ClientMsg::AnswerDraw { accept: false },
-        [declined],
+        no,
+        [answered(OfferKind::Draw, false)],
     )
     .await;
 
@@ -150,13 +175,8 @@ async fn a_draw_is_offered_declined_and_agreed() {
         answered(OfferKind::Draw, true),
         ended(GameResult::Draw, Termination::AgreedDraw),
     ];
-    both_hear(
-        &mut table,
-        Player::O,
-        ClientMsg::AnswerDraw { accept: true },
-        agreed,
-    )
-    .await;
+    let yes = ClientMsg::AnswerDraw { accept: true };
+    both_hear(&mut table, Player::O, yes, agreed).await;
     let stored = ending(&world.pool, &table.room).await;
     assert_eq!(
         stored,
@@ -165,31 +185,48 @@ async fn a_draw_is_offered_declined_and_agreed() {
 }
 
 #[tokio::test]
+async fn a_draw_the_table_refuses_is_never_announced() {
+    let world = world().await;
+    let mut table = world.table("std").await;
+    let offered = offer(OfferKind::Draw, Player::X);
+    both_hear(&mut table, Player::X, ClientMsg::OfferDraw, [offered]).await;
+    sqlx::query("ALTER TABLE games ADD CONSTRAINT no_draws CHECK (termination <> 'agreed draw')")
+        .execute(&world.pool)
+        .await
+        .unwrap();
+    say(&mut table.o, &ClientMsg::AnswerDraw { accept: true }).await;
+    assert_eq!(closed(&mut table.x).await, 1011, "not told it was accepted");
+    assert_eq!(closed(&mut table.o).await, 1011);
+    let stored = ending(&world.pool, &table.room).await;
+    assert_eq!((stored.0, stored.1), (None, None));
+}
+
+#[tokio::test]
 async fn a_fourth_draw_offer_is_refused_even_after_a_restart() {
     let mut world = world().await;
     let mut table = world.table("std").await;
     play(&mut table, 0, &cells(MOVES)[..1]).await;
-    let declined = answered(OfferKind::Draw, false);
-    for _ in 0..3 {
+    for _ in 0..Draws::MAX {
         let offered = offer(OfferKind::Draw, Player::X);
         both_hear(&mut table, Player::X, ClientMsg::OfferDraw, [offered]).await;
         let no = ClientMsg::AnswerDraw { accept: false };
-        both_hear(&mut table, Player::O, no, [declined.clone()]).await;
+        both_hear(
+            &mut table,
+            Player::O,
+            no,
+            [answered(OfferKind::Draw, false)],
+        )
+        .await;
     }
-    not_allowed(&mut table, Player::X, ClientMsg::OfferDraw).await;
+    not_allowed(&mut table.x, ClientMsg::OfferDraw).await;
 
     // A new server loads the Room again from the table.
     world.server.kill();
     world.server = Server::start(&world.url).await;
     let mut x = world.enter(&table.host, &table.room).await;
-    let draws = match hear(&mut x).await {
-        ServerMsg::Welcome { snapshot, .. } => snapshot.draws,
-        other => panic!("not a Welcome: {other:?}"),
-    };
-    assert_eq!(draws, Draws { x: 3, o: 0 });
-    say(&mut x, &ClientMsg::OfferDraw).await;
-    let reason = Rejection::NotAllowed;
-    assert_eq!(hear(&mut x).await, ServerMsg::Rejected { reason });
+    let (_, snapshot) = welcome(&mut x).await;
+    assert_eq!(snapshot.draws, Draws { x: 3, o: 0 });
+    not_allowed(&mut x, ClientMsg::OfferDraw).await;
 }
 
 #[tokio::test]
@@ -211,12 +248,51 @@ async fn a_draw_offer_stands_until_its_player_moves() {
         assert_eq!(hear(socket).await, moved(0, first));
         assert_eq!(hear(socket).await, answered(OfferKind::Draw, false));
     }
-    not_allowed(
+    not_allowed(&mut table.o, ClientMsg::AnswerDraw { accept: true }).await;
+}
+
+#[tokio::test]
+async fn an_ending_takes_a_waiting_offer_with_it() {
+    let world = world().await;
+    let mut table = world.table("std").await;
+    play(&mut table, 0, &cells(MOVES)[..1]).await;
+    let offered = offer(OfferKind::Draw, Player::X);
+    both_hear(&mut table, Player::X, ClientMsg::OfferDraw, [offered]).await;
+    let resigned = ended(GameResult::XWins, Termination::Resign);
+    both_hear(&mut table, Player::O, ClientMsg::Resign, [resigned]).await;
+    not_allowed(&mut table.o, ClientMsg::AnswerDraw { accept: true }).await;
+    let mut again = world.enter(&table.joiner, &table.room).await;
+    let (_, snapshot) = welcome(&mut again).await;
+    assert_eq!(snapshot.offer, None);
+}
+
+#[tokio::test]
+async fn only_the_other_player_answers_and_every_socket_hears() {
+    let world = world().await;
+    let mut table = world.table("std").await;
+    let mut second_x = world.enter(&table.host, &table.room).await;
+    welcome(&mut second_x).await;
+    let mut second_o = world.enter(&table.joiner, &table.room).await;
+    welcome(&mut second_o).await;
+
+    let offered = offer(OfferKind::Draw, Player::X);
+    both_hear(
         &mut table,
-        Player::O,
-        ClientMsg::AnswerDraw { accept: true },
+        Player::X,
+        ClientMsg::OfferDraw,
+        [offered.clone()],
     )
     .await;
+    assert_eq!(hear(&mut second_x).await, offered);
+    assert_eq!(hear(&mut second_o).await, offered);
+    not_allowed(&mut second_x, ClientMsg::AnswerDraw { accept: true }).await;
+
+    let no = ClientMsg::AnswerDraw { accept: false };
+    say(&mut second_o, &no).await;
+    let declined = answered(OfferKind::Draw, false);
+    for socket in [&mut table.x, &mut table.o, &mut second_x, &mut second_o] {
+        assert_eq!(hear(socket).await, declined);
+    }
 }
 
 #[tokio::test]
@@ -224,7 +300,7 @@ async fn a_takeback_is_refused_where_the_room_doesnt_allow_it() {
     let world = world().await;
     let mut table = world.table("std").await;
     play(&mut table, 0, &cells(MOVES)[..1]).await;
-    not_allowed(&mut table, Player::X, ClientMsg::AskTakeback).await;
+    not_allowed(&mut table.x, ClientMsg::AskTakeback).await;
     let card = card(&world.app, None, &table.room).await;
     assert_eq!(card.json["takebacks"], false);
 }
@@ -232,19 +308,22 @@ async fn a_takeback_is_refused_where_the_room_doesnt_allow_it() {
 #[tokio::test]
 async fn a_takeback_undoes_back_to_the_askers_last_move() {
     let world = world().await;
-    let mut table = takebacks(&world).await;
+    let mut table = takebacks(&world, "std").await;
     let moves = cells(MOVES);
-    play(&mut table, 0, &moves[..2]).await;
-    not_allowed(
-        &mut table,
-        Player::X,
-        ClientMsg::AnswerTakeback { accept: true },
-    )
-    .await;
+    play(&mut table, 0, &moves[..1]).await;
+    not_allowed(&mut table.o, ClientMsg::AskTakeback).await;
+    play(&mut table, 1, &moves[1..2]).await;
+    not_allowed(&mut table.x, ClientMsg::AnswerTakeback { accept: true }).await;
 
     // X's last move was two plies ago: both come back.
     let asked = offer(OfferKind::Takeback, Player::X);
-    both_hear(&mut table, Player::X, ClientMsg::AskTakeback, [asked]).await;
+    both_hear(
+        &mut table,
+        Player::X,
+        ClientMsg::AskTakeback,
+        [asked.clone()],
+    )
+    .await;
     let taken = [
         answered(OfferKind::Takeback, true),
         ServerMsg::TookBack { to_ply: 0 },
@@ -252,11 +331,9 @@ async fn a_takeback_undoes_back_to_the_askers_last_move() {
     let yes = ClientMsg::AnswerTakeback { accept: true };
     both_hear(&mut table, Player::O, yes.clone(), taken.clone()).await;
     assert_eq!(stored(&world.pool, &table.room).await, Vec::<i32>::new());
-    not_allowed(&mut table, Player::O, ClientMsg::AskTakeback).await;
 
     // Asked straight after X's own move: only that comes back.
     play(&mut table, 0, &moves[..1]).await;
-    let asked = offer(OfferKind::Takeback, Player::X);
     both_hear(&mut table, Player::X, ClientMsg::AskTakeback, [asked]).await;
     both_hear(&mut table, Player::O, yes, taken).await;
     let mut again = world.enter(&table.host, &table.room).await;
@@ -268,7 +345,7 @@ async fn a_takeback_undoes_back_to_the_askers_last_move() {
 #[tokio::test]
 async fn a_takeback_lapses_is_declined_or_is_withdrawn_by_a_move() {
     let world = world().await;
-    let mut table = takebacks(&world).await;
+    let mut table = takebacks(&world, "std").await;
     let moves = cells(MOVES);
     play(&mut table, 0, &moves[..1]).await;
     let asked = offer(OfferKind::Takeback, Player::X);
@@ -281,9 +358,17 @@ async fn a_takeback_lapses_is_declined_or_is_withdrawn_by_a_move() {
         [asked.clone()],
     )
     .await;
+    let started = tokio::time::Instant::now();
     for socket in [&mut table.x, &mut table.o] {
         assert_eq!(hear(socket).await, refused, "it lapsed");
     }
+    let waited = started.elapsed();
+    assert!(
+        waited >= TIMING.takeback - Duration::from_millis(50) && waited < TIMING.rematch,
+        "it lapsed as a takeback does, after {waited:?}"
+    );
+    not_allowed(&mut table.o, ClientMsg::AnswerTakeback { accept: true }).await;
+
     both_hear(
         &mut table,
         Player::X,
@@ -310,41 +395,70 @@ async fn a_takeback_lapses_is_declined_or_is_withdrawn_by_a_move() {
 }
 
 #[tokio::test]
-async fn a_rematch_swaps_the_seats_in_a_new_room() {
+async fn a_rematch_swaps_the_seats_in_a_new_room_once() {
     let world = world().await;
-    let mut table = takebacks(&world).await;
+    let mut table = takebacks(&world, "d3").await;
+    let draw = offer(OfferKind::Draw, Player::X);
+    both_hear(&mut table, Player::X, ClientMsg::OfferDraw, [draw]).await;
+    let no = ClientMsg::AnswerDraw { accept: false };
+    both_hear(
+        &mut table,
+        Player::O,
+        no,
+        [answered(OfferKind::Draw, false)],
+    )
+    .await;
     let resigned = ended(GameResult::XWins, Termination::Resign);
     both_hear(&mut table, Player::O, ClientMsg::Resign, [resigned]).await;
 
-    let asked = offer(OfferKind::Rematch, Player::X);
-    both_hear(&mut table, Player::X, ClientMsg::OfferRematch, [asked]).await;
-    say(&mut table.o, &ClientMsg::AnswerRematch { accept: true }).await;
-    let mut rooms = Vec::new();
-    for socket in [&mut table.x, &mut table.o] {
-        assert_eq!(hear(socket).await, answered(OfferKind::Rematch, true));
-        match hear(socket).await {
-            ServerMsg::RematchRoom { room } => rooms.push(room),
-            other => panic!("not the rematch: {other:?}"),
-        }
-    }
-    assert_eq!(rooms[0], rooms[1]);
-    let rematch = &rooms[0];
-
-    let swapped: (bool, bool, bool, bool) = sqlx::query_as(
-        "SELECT n.x_id = o.o_id, n.o_id = o.x_id, n.takebacks, n.result IS NULL
+    // The player who resigned asks for the rematch.
+    let rematch = rematched(&mut table, Player::O).await;
+    let copied: (bool, bool, bool, bool, bool, bool, i32, i16, i16) = sqlx::query_as(
+        "SELECT n.x_id = o.o_id, n.o_id = o.x_id, n.ruleset = o.ruleset,
+                n.ruleset_code = 'd3', n.takebacks, n.seed <> o.seed, n.rules_version,
+                n.x_draw_offers, n.o_draw_offers
          FROM games n JOIN games o ON o.room = $2 WHERE n.room = $1",
     )
-    .bind(rematch)
+    .bind(&rematch)
     .bind(&table.room)
     .fetch_one(&world.pool)
     .await
     .unwrap();
-    assert_eq!(swapped, (true, true, true, true));
-    let mut x = world.enter(&table.joiner, rematch).await;
+    assert_eq!(copied, (true, true, true, true, true, true, 1, 0, 0));
+
+    not_allowed(&mut table.x, ClientMsg::OfferRematch).await;
+    assert_eq!(rooms(&world.pool).await, 2, "one rematch a game");
+    let mut again = world.enter(&table.host, &table.room).await;
+    let (_, snapshot) = welcome(&mut again).await;
+    assert_eq!(
+        snapshot.rematch.as_deref(),
+        Some(&*rematch),
+        "a reconnect finds it"
+    );
+
+    let mut x = world.enter(&table.joiner, &rematch).await;
     let (you, record, players) = welcomed(&mut x).await;
     assert_eq!(you, Player::X, "the joiner plays X now");
     assert!(record.moves.is_empty());
     assert_eq!(players.get(Player::O), table.players.get(Player::X));
+}
+
+#[tokio::test]
+async fn a_game_the_rules_ended_can_be_rematched() {
+    let world = world().await;
+    let mut table = world.table("std").await;
+    let cells = cells(TOP_ROW);
+    let (last, rest) = cells.split_last().unwrap();
+    play(&mut table, 0, rest).await;
+    let ply = rest.len() as u16;
+    let won = [
+        moved(ply, *last),
+        ended(GameResult::XWins, Termination::Line),
+    ];
+    let last = ClientMsg::Move { ply, cell: *last };
+    both_hear(&mut table, Player::X, last, won).await;
+    let rematch = rematched(&mut table, Player::X).await;
+    assert_eq!(rematch.len(), 20);
 }
 
 #[tokio::test]
@@ -363,61 +477,42 @@ async fn a_rematch_lapses_or_is_declined() {
         [asked.clone()],
     )
     .await;
+    let started = tokio::time::Instant::now();
     for socket in [&mut table.x, &mut table.o] {
         assert_eq!(hear(socket).await, refused, "it lapsed");
     }
+    assert!(
+        started.elapsed() >= TIMING.rematch - Duration::from_millis(50),
+        "it lapsed as a rematch does"
+    );
+    not_allowed(&mut table.x, ClientMsg::AnswerRematch { accept: true }).await;
     both_hear(&mut table, Player::O, ClientMsg::OfferRematch, [asked]).await;
     let no = ClientMsg::AnswerRematch { accept: false };
     both_hear(&mut table, Player::X, no, [refused]).await;
-    let rooms: i64 = sqlx::query_scalar("SELECT count(*) FROM games")
-        .fetch_one(&world.pool)
-        .await
-        .unwrap();
-    assert_eq!(rooms, 1, "no rematch was made");
+    assert_eq!(rooms(&world.pool).await, 1, "no rematch was made");
 }
 
 #[tokio::test]
 async fn offers_wait_their_turn() {
     let world = world().await;
-    let mut table = takebacks(&world).await;
-    not_allowed(&mut table, Player::X, ClientMsg::OfferRematch).await;
-    not_allowed(&mut table, Player::X, ClientMsg::AskTakeback).await;
-    not_allowed(
-        &mut table,
-        Player::O,
-        ClientMsg::AnswerDraw { accept: true },
-    )
-    .await;
+    let mut table = takebacks(&world, "std").await;
+    not_allowed(&mut table.x, ClientMsg::OfferRematch).await;
+    not_allowed(&mut table.x, ClientMsg::AskTakeback).await;
+    not_allowed(&mut table.o, ClientMsg::AnswerDraw { accept: true }).await;
 
     let offered = offer(OfferKind::Draw, Player::X);
-    both_hear(
-        &mut table,
-        Player::X,
-        ClientMsg::OfferDraw,
-        [offered.clone()],
-    )
-    .await;
-    not_allowed(&mut table, Player::O, ClientMsg::OfferDraw).await;
-    not_allowed(
-        &mut table,
-        Player::O,
-        ClientMsg::AnswerTakeback { accept: true },
-    )
-    .await;
+    both_hear(&mut table, Player::X, ClientMsg::OfferDraw, [offered]).await;
+    not_allowed(&mut table.o, ClientMsg::OfferDraw).await;
+    not_allowed(&mut table.o, ClientMsg::AnswerTakeback { accept: true }).await;
     let mut late = world.enter(&table.joiner, &table.room).await;
-    let snapshot = match hear(&mut late).await {
-        ServerMsg::Welcome { snapshot, .. } => snapshot,
-        other => panic!("not a Welcome: {other:?}"),
+    let (_, snapshot) = welcome(&mut late).await;
+    let waiting = Offer {
+        kind: OfferKind::Draw,
+        by: Player::X,
     };
     assert_eq!(
         (snapshot.offer, snapshot.takebacks),
-        (
-            Some(Offer {
-                kind: OfferKind::Draw,
-                by: Player::X
-            }),
-            true
-        ),
+        (Some(waiting), true),
         "a reconnect sees the offer waiting"
     );
 
@@ -428,6 +523,6 @@ async fn offers_wait_their_turn() {
         ClientMsg::AskTakeback,
         ClientMsg::Resign,
     ] {
-        not_allowed(&mut table, Player::O, message).await;
+        not_allowed(&mut table.o, message).await;
     }
 }

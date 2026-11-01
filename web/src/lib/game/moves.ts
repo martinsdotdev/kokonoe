@@ -4,7 +4,7 @@
  */
 import type { Cell, Player } from '#lib/engine.js';
 import type { GameFile } from './gamefile.js';
-import type { SavedOpponent } from './saved.js';
+import type { SavedOpponent } from './launch.js';
 import { boardLabel, notation } from './notation.js';
 import { at, lineage, localOf, type BoardView } from './view.js';
 
@@ -66,6 +66,8 @@ export interface Seat {
 	name: string;
 	/** "Level 3" for the computer. */
 	detail: string | null;
+	/** This page's seat in a Room, which its bar marks "You" and a game file doesn't. */
+	yours?: boolean;
 }
 
 /** A seat in one line, as a game file names it: "Player 1", "Computer, Level 3". */
@@ -77,11 +79,13 @@ export const gameFile = (
 	game: Omit<GameFile, 'seats'> & { seats: Record<Player, Seat> }
 ): GameFile => ({ ...game, seats: { X: seatLabel(game.seats.X), O: seatLabel(game.seats.O) } });
 
+/** Each seat as the player bars and a game file name it. */
 export const seats = (opponent: SavedOpponent): Record<Player, Seat> => {
 	if (opponent.kind === 'room') {
 		const seat = (player: Player): Seat => ({
 			name: opponent.players[player],
-			detail: player === opponent.you ? 'You' : null
+			detail: null,
+			yours: player === opponent.you
 		});
 		return { X: seat('X'), O: seat('O') };
 	}

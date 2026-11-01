@@ -14,9 +14,9 @@ import {
 } from './moves.js';
 import { illegalMove, openRecord, UnplayableGame } from './record.js';
 import { Refusals } from './refusal.svelte.js';
-import { resultText, type End } from './result.js';
-import { rulesetCode, type Variant } from './rules.js';
-import { browserStore, isOffline, savedVariant, type GameStore, type SavedGame } from './saved.js';
+import type { End } from './result.js';
+import type { Variant } from './rules.js';
+import { browserStore, savedGame, savedVariant, type GameStore, type SavedGame } from './saved.js';
 import type { Controls, GameSession } from './screen.js';
 import { boardView, type BoardView } from './view.js';
 
@@ -96,7 +96,7 @@ export class OfflineGame implements GameSession, Controls {
 	 */
 	static resume(saved: SavedGame, options: Options = {}): OfflineGame {
 		// `/play` sends a Room's game to its Room first.
-		if (!isOffline(saved)) throw new UnplayableGame('It’s played in an invite Room.');
+		if (saved.opponent.kind === 'room') throw new UnplayableGame('It’s played in an invite Room.');
 		// Only `open` checks the Record's rules version, so check with it before replaying.
 		openRecord(saved.record).free();
 		return new OfflineGame(savedVariant(saved), saved.opponent, options, saved);
@@ -305,21 +305,19 @@ export class OfflineGame implements GameSession, Controls {
 	 */
 	#save() {
 		if (this.#started === null && this.moves.every((move) => move.dealt)) return;
-		const updated = Date.now();
-		this.#started ??= updated;
-		const end = this.end;
-		const saved: SavedGame = {
+		this.#started ??= Date.now();
+		const saved = savedGame({
 			id: this.id,
 			record: this.#game.record(),
-			variant: { name: this.variant.name, code: rulesetCode(this.variant.ruleset) },
+			variant: this.variant,
 			opponent: this.opponent,
 			resigned: this.resigned,
 			started: this.#started,
-			updated,
 			view: this.view,
-			toMove: end ? null : this.toMove,
-			result: end ? resultText(end, this.variant.ruleset, this.won) : null
-		};
+			toMove: this.toMove,
+			end: this.end,
+			won: this.won
+		});
 		this.#store.save(saved).then(
 			() => {
 				if (this.id === saved.id) this.stored = true;

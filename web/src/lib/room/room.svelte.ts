@@ -11,18 +11,13 @@ import {
 } from '#lib/engine.js';
 import type { GameFile } from '#lib/game/gamefile.js';
 import { dayOf } from '#lib/game/listing.js';
-import { againstLabel } from '#lib/game/launch.js';
+import { againstLabel, type RoomOpponent } from '#lib/game/launch.js';
 import { dealtMoves, gameFile, playedMove, seats, type Move, type Seat } from '#lib/game/moves.js';
 import { openRecord } from '#lib/game/record.js';
 import { Refusals } from '#lib/game/refusal.svelte.js';
-import { resultText, type End } from '#lib/game/result.js';
+import type { End } from '#lib/game/result.js';
 import { rulesetCode, type Variant } from '#lib/game/rules.js';
-import {
-	browserStore,
-	type GameStore,
-	type RoomOpponent,
-	type SavedGame
-} from '#lib/game/saved.js';
+import { browserStore, savedGame, type GameStore, type SavedGame } from '#lib/game/saved.js';
 import type { GameSession } from '#lib/game/screen.js';
 import { presetByCode } from '#lib/game/shelf.js';
 import { boardView, type BoardView } from '#lib/game/view.js';
@@ -33,8 +28,8 @@ export interface RoomOptions {
 	room: string;
 	/** Where the game keeps itself: IndexedDB unless a test brings its own. */
 	store?: GameStore;
-	/** When the game began, if this page saved it before. */
-	started?: number;
+	/** The game as this page last saved it, if it played here before. */
+	saved?: SavedGame;
 }
 
 /** What a Room's game needs of its socket. */
@@ -46,6 +41,10 @@ export interface RoomLink {
 }
 
 type Welcome = Extract<ServerMsg, { type: 'Welcome' }>;
+
+/** What a save holds that a `Welcome` can change: the moves made, and who sits where. */
+const kept = (moves: number, opponent: SavedGame['opponent']) =>
+	opponent.kind === 'room' ? `${moves} ${opponent.players.X} ${opponent.players.O}` : `${moves}`;
 
 /** An Outcome has one key, so its JSON is one spelling. */
 const sameOutcome = (a: Outcome, b: Outcome) => JSON.stringify(a) === JSON.stringify(b);
@@ -96,6 +95,8 @@ export class RoomGame implements GameSession {
 	#room: string;
 	#store: GameStore;
 	#started: number;
+	/** What the last save held, so a `Welcome` that changes nothing isn't saved again. */
+	#kept: string | null;
 	/** A save has succeeded, so the Replay can open it. */
 	#stored = $state.raw(false);
 
@@ -106,7 +107,11 @@ export class RoomGame implements GameSession {
 		this.#link = link;
 		this.#room = options.room;
 		this.#store = options.store ?? browserStore;
-		this.#started = options.started ?? Date.now();
+		this.#started = options.saved?.started ?? Date.now();
+		this.#kept = options.saved
+			? kept(options.saved.record.moves.length, options.saved.opponent)
+			: null;
+		this.#stored = options.saved !== undefined;
 		this.#game = game;
 		this.variant = {
 			name: presetByCode(rulesetCode(record.ruleset))?.name ?? 'Custom variant',
@@ -271,22 +276,29 @@ export class RoomGame implements GameSession {
 		};
 	}
 
-	/** Keeps the game, once both seats are filled and someone has moved. A failed save costs play nothing. */
+	/**
+	 * Keeps the game once both seats are filled and someone has moved, unless what's kept already
+	 * holds it. A failed save costs play nothing.
+	 */
 	#save() {
 		if (!this.seated || this.moves.every((move) => move.dealt)) return;
-		const end = this.end;
-		const saved: SavedGame = {
+		const record = this.#game.record();
+		const opponent = this.#opponent('');
+		const holds = kept(record.moves.length, opponent);
+		if (holds === this.#kept) return;
+		this.#kept = holds;
+		const saved = savedGame({
 			id: this.#room,
-			record: this.#game.record(),
-			variant: { name: this.variant.name, code: rulesetCode(this.variant.ruleset) },
-			opponent: this.#opponent(''),
+			record,
+			variant: this.variant,
+			opponent,
 			resigned: null,
 			started: this.#started,
-			updated: Date.now(),
 			view: this.view,
-			toMove: end ? null : this.toMove,
-			result: end ? resultText(end, this.variant.ruleset, this.won) : null
-		};
+			toMove: this.toMove,
+			end: this.end,
+			won: this.won
+		});
 		this.#store.save(saved).then(
 			() => (this.#stored = true),
 			(error: unknown) => console.error('The game couldn’t be saved.', error)

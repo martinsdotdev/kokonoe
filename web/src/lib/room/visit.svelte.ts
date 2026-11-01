@@ -2,12 +2,15 @@ import { CloseCode, loadEngine, type Players, type RoomCard, type ServerMsg } fr
 import { startSession } from '#lib/account.js';
 import { ENGINE } from '#lib/game/problem.js';
 import { UnplayableGame } from '#lib/game/record.js';
-import { loadGame, type GameStore, type SavedGame } from '#lib/game/saved.js';
+import { browserStore, type ReadingStore, type SavedGame } from '#lib/game/saved.js';
 import { updateNow } from '#lib/update.js';
 import { full, isRoomId, roomCard } from './api.js';
 import { Link, type LinkOptions } from './link.js';
 import { hello } from './protocol.js';
 import { RoomGame } from './room.svelte.js';
+
+/** How long the page waits to read its saved copy of the game before it goes on without. */
+const SAVED_MS = 1500;
 
 /** Where a visit to a Room's link stands. */
 export type Phase =
@@ -29,7 +32,7 @@ export interface VisitOptions {
 	fetch?: typeof globalThis.fetch;
 	open?: LinkOptions['open'];
 	/** Where the game keeps itself, and was read back from: IndexedDB unless a test brings its own. */
-	store?: GameStore & { load(id: string): Promise<SavedGame | undefined> };
+	store?: ReadingStore;
 	/** Installs the newer build and reloads into it. */
 	update?: () => Promise<void>;
 	window?: Window;
@@ -48,8 +51,8 @@ export class RoomVisit {
 	#game: RoomGame | null = null;
 	/** The game as this page last saved it, if it played here before. */
 	#saved: Promise<SavedGame | undefined>;
-	/** When the game began, if this page saved it before. */
-	#started: number | undefined;
+	/** The game as this page last saved it, read before the socket opens. */
+	#kept: SavedGame | undefined;
 	#disposed = false;
 
 	constructor(room: string, options: VisitOptions = {}) {
@@ -57,8 +60,10 @@ export class RoomVisit {
 		this.#options = options;
 		this.#window = options.window ?? window;
 		this.#window.addEventListener('online', this.#online);
-		const saved = options.store ? options.store.load(room) : loadGame(room);
-		this.#saved = saved.catch(() => undefined);
+		// A store that never answers, such as one waiting on an older tab, mustn't keep the Room shut.
+		const unread = new Promise<undefined>((resolve) => setTimeout(resolve, SAVED_MS));
+		const saved = (options.store ?? browserStore).load(room).catch(() => undefined);
+		this.#saved = Promise.race([saved, unread]);
 		this.#start();
 	}
 
@@ -107,7 +112,7 @@ export class RoomVisit {
 			return;
 		}
 		// Read before the socket opens, so every message finds the game it's for.
-		this.#started = (await this.#saved)?.started;
+		this.#kept = await this.#saved;
 		if (this.#disposed) return;
 		const events = {
 			message: (message: ServerMsg) => this.#heard(message),
@@ -124,7 +129,7 @@ export class RoomVisit {
 		try {
 			if (this.#game) this.#game.welcome(message);
 			else {
-				const options = { room: this.room, store: this.#options.store, started: this.#started };
+				const options = { room: this.room, store: this.#options.store, saved: this.#kept };
 				this.#game = new RoomGame(message, link, options);
 			}
 		} catch (error) {

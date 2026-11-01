@@ -9,12 +9,14 @@ repository.workspace = true
 [dependencies]
 axum = { version = "0.8.9", features = ["ws"] }
 getrandom = "0.4.3"
-kokonoe-protocol.workspace = true
+kokonoe-engine = { workspace = true, features = ["serde"] }
+kokonoe-protocol = { workspace = true, features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 sha2 = "0.11.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "macros"] }
 subtle = "2.6.1"
-tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "time"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 tower-http = { version = "0.7.1", features = ["fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
@@ -22,7 +24,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 [dev-dependencies]
 futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
 http-body-util = "0.1.5"
-serde_json = "1.0.154"
 tempfile = "3.27.0"
 testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
 tokio-tungstenite = "0.29.0"

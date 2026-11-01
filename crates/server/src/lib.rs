@@ -1,14 +1,18 @@
 //! The Kokonoe server (spec §8). It serves the built SPA, so the app and its API share one origin
-//! and need no CORS: every page, a link preview for invite Rooms, a health check, Guest sessions
-//! and the game socket.
+//! and need no CORS: every page, a link preview for invite Rooms, a health check, Guest sessions,
+//! invite Rooms and the game socket, which plays them.
 
+mod games;
+mod random;
+mod room;
+mod rooms;
 mod session;
+mod socket;
 
 use std::path::Path;
 use std::time::Duration;
 
 use axum::body::Bytes;
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Request, State};
 use axum::handler::HandlerWithoutStateExt;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
@@ -16,7 +20,6 @@ use axum::middleware::{self, Next};
 use axum::response::{AppendHeaders, Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use kokonoe_protocol::CloseCode;
 use serde::Serialize;
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
@@ -53,6 +56,7 @@ const PREVIEW: &str = r#"<meta property="og:type" content="website" />
 #[derive(Clone)]
 struct AppState {
     pool: PgPool,
+    rooms: rooms::Rooms,
     /// The SPA's fallback page with the Room preview in its head.
     room_page: Bytes,
     /// The site's own origin, such as `https://kokonoe.app`: the one `Origin` that a request
@@ -80,6 +84,7 @@ pub fn app(pool: PgPool, web_root: &Path, origin: HeaderValue) -> std::io::Resul
         .precompressed_gzip()
         .fallback(pages.into_service());
     let state = AppState {
+        rooms: rooms::Rooms::new(pool.clone()),
         pool,
         room_page,
         origin,
@@ -88,7 +93,9 @@ pub fn app(pool: PgPool, web_root: &Path, origin: HeaderValue) -> std::io::Resul
         .route("/healthz", get(health))
         .route("/r/{room}", get(room))
         .route("/api/session", post(session))
-        .route("/api/socket", get(socket))
+        .route("/api/rooms", post(rooms::create))
+        .route("/api/rooms/{room}", get(rooms::card))
+        .route("/api/socket", get(socket::socket))
         .fallback_service(spa)
         .layer(middleware::from_fn_with_state(state.clone(), same_origin))
         .layer(middleware::from_fn(cache))
@@ -162,40 +169,6 @@ async fn session(
             handle: current.handle,
         }),
     ))
-}
-
-/// The game socket. One opened from another site, or without saying where it's from, is refused
-/// outright. One without a session is accepted and then closed with 4003, since a page can't read
-/// why a refused upgrade failed but can read a close code. One with a session stays open,
-/// answering pings, until Rooms give it something to say (KOK-56). It doesn't move the session's
-/// expiry: a socket has no cookie to send back.
-async fn socket(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    upgrade: WebSocketUpgrade,
-) -> Result<Response, Unavailable> {
-    if !from_here(&headers, &state.origin) {
-        return Ok(not_from_here());
-    }
-    let found = session::find(&state.pool, &headers).await?;
-    Ok(upgrade.on_upgrade(move |socket| async move {
-        match found {
-            Some(_) => hold(socket).await,
-            None => forbid(socket).await,
-        }
-    }))
-}
-
-async fn hold(mut socket: WebSocket) {
-    while let Some(Ok(_)) = socket.recv().await {}
-}
-
-async fn forbid(mut socket: WebSocket) {
-    let close = CloseFrame {
-        code: CloseCode::Forbidden.code(),
-        reason: "no session".into(),
-    };
-    let _ = socket.send(Message::Close(Some(close))).await;
 }
 
 /// Refuses a request that could change something unless it comes from the site's own pages.

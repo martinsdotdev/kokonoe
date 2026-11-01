@@ -20,8 +20,7 @@ use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
 use tokio::runtime::Runtime;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::{self, Message, client::IntoClientRequest};
 use tower::ServiceExt;
 
 /// The fallback page every stand-in build has.
@@ -54,22 +53,27 @@ pub fn app(pool: PgPool) -> (axum::Router, TempDir) {
     (app, root)
 }
 
-/// A pool that connects only if something queries it.
+/// A pool that connects only if something queries it, to a port nothing listens on, so a query
+/// fails within half a second.
 pub fn lazy_pool() -> PgPool {
     PgPoolOptions::new()
-        .connect_lazy("postgres://nobody@localhost/nothing")
+        .acquire_timeout(Duration::from_millis(500))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/nothing")
         .unwrap()
 }
 
+/// A Postgres in Docker, gone when dropped.
+pub type Container = ContainerAsync<Postgres>;
+
 /// A fresh Postgres in Docker, the one Fly runs, migrated as the server migrates at startup. It
 /// goes when the container is dropped, so `cargo test` needs Docker running.
-pub async fn postgres() -> (ContainerAsync<Postgres>, PgPool) {
+pub async fn postgres() -> (Container, PgPool) {
     let (container, url) = database().await;
     (container, kokonoe_server::connect(&url).await.unwrap())
 }
 
 /// [`postgres`], as the URL a server started on its own connects to.
-pub async fn database() -> (ContainerAsync<Postgres>, String) {
+pub async fn database() -> (Container, String) {
     let container = Postgres::default()
         .with_tag("18-alpine")
         .start()
@@ -131,11 +135,7 @@ impl Server {
     }
 
     /// Stops every task the server runs, its Rooms and sockets included, without a goodbye.
-    pub fn kill(mut self) {
-        self.stop();
-    }
-
-    fn stop(&mut self) {
+    pub fn kill(&mut self) {
         if let Some(runtime) = self.runtime.take() {
             runtime.shutdown_background();
         }
@@ -144,23 +144,45 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        self.stop();
+        self.kill();
     }
 }
 
 pub type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-/// A socket to `address` from the site's own page, holding the session `token`.
-pub async fn open(address: SocketAddr, token: &str) -> Socket {
+/// The `Cookie` header holding the session `token`.
+pub fn cookie(token: &str) -> String {
+    format!("__Host-session={token}")
+}
+
+/// The id of the session `token` holds, as `sessions` keeps it.
+pub fn session_id(token: &str) -> &str {
+    token.split_once('.').unwrap().0
+}
+
+/// A socket to `address`, from `origin` and holding the session `token`, if they're given.
+pub async fn try_open(
+    address: SocketAddr,
+    origin: Option<&str>,
+    token: Option<&str>,
+) -> Result<Socket, tungstenite::Error> {
     let mut request = format!("ws://{address}/api/socket")
         .into_client_request()
         .unwrap();
     let headers = request.headers_mut();
-    headers.insert(header::ORIGIN, ORIGIN.parse().unwrap());
-    let cookie = format!("__Host-session={token}").parse().unwrap();
-    headers.insert(header::COOKIE, cookie);
-    tokio_tungstenite::connect_async(request).await.unwrap().0
+    if let Some(origin) = origin {
+        headers.insert(header::ORIGIN, origin.parse().unwrap());
+    }
+    if let Some(token) = token {
+        headers.insert(header::COOKIE, cookie(token).parse().unwrap());
+    }
+    Ok(tokio_tungstenite::connect_async(request).await?.0)
+}
+
+/// A socket to `address` from the site's own page, holding the session `token`.
+pub async fn open(address: SocketAddr, token: &str) -> Socket {
+    try_open(address, Some(ORIGIN), Some(token)).await.unwrap()
 }
 
 /// Sends `message` as the page would.
@@ -169,13 +191,18 @@ pub async fn say(socket: &mut Socket, message: &ClientMsg) {
     socket.send(Message::Text(text.into())).await.unwrap();
 }
 
-/// The next frame that isn't a ping or a pong, within 5 s.
+/// The next frame, within 5 s.
+pub async fn next(socket: &mut Socket) -> Message {
+    let next = tokio::time::timeout(Duration::from_secs(5), socket.next())
+        .await
+        .expect("the server answers in time");
+    next.unwrap().unwrap()
+}
+
+/// The next frame that isn't a ping or a pong.
 pub async fn frame(socket: &mut Socket) -> Message {
     loop {
-        let next = tokio::time::timeout(Duration::from_secs(5), socket.next())
-            .await
-            .expect("the server answers in time");
-        match next.unwrap().unwrap() {
+        match next(socket).await {
             Message::Ping(_) | Message::Pong(_) => {}
             frame => return frame,
         }

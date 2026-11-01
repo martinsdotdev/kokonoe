@@ -712,6 +712,9 @@ mod tests {
                 rejected(protocol::Rejection::OutOfOrder { want: 5 }),
                 rejected(protocol::Rejection::NotAllowed),
                 protocol::ServerMsg::Ended {
+                    outcome: engine::Outcome::Objective(engine::Player::O),
+                },
+                protocol::ServerMsg::Ended {
                     outcome: engine::Outcome::MostWon(engine::Player::X),
                 },
                 protocol::ServerMsg::Ended {

@@ -1,5 +1,6 @@
-//! What the server serves, on a stand-in for the built SPA. Nothing here reaches a database: the
-//! pool is lazy, and connects only if something queries it, which these tests never let happen.
+//! What the server serves, on a stand-in for the built SPA, over a pool with no database behind
+//! it: it connects only if something queries it, and then fails, which only the Room preview's
+//! fallback lets happen.
 
 mod common;
 
@@ -120,6 +121,14 @@ async fn a_room_link_has_a_preview_for_where_it_is_shared() {
     );
     assert_eq!(answer.cache.as_deref(), Some("no-cache"));
 
+    let unknown = get(&app, "/r/6f1c0a9b3e2d4c5a7b8e").await;
+    assert_eq!(unknown.status, StatusCode::OK, "with the database down");
+    assert!(
+        unknown
+            .text()
+            .contains(r#"content="Join a game of Kokonoe""#)
+    );
+
     let plain = get(&app, "/play").await;
     assert!(
         !plain.text().contains("og:title"),
@@ -175,13 +184,19 @@ async fn the_engine_goes_out_as_wasm() {
 async fn a_post_from_another_site_is_refused_before_it_runs() {
     let (app, _root) = app();
     // The pool never connects, so getting this far proves nothing reached the database.
-    for origin in [Some("https://evil.test"), Some("null"), None] {
-        let mut request = Request::post("/api/session");
-        if let Some(origin) = origin {
-            request = request.header(header::ORIGIN, origin);
+    for path in ["/api/session", "/api/rooms"] {
+        for origin in [Some("https://evil.test"), Some("null"), None] {
+            let mut request = Request::post(path);
+            if let Some(origin) = origin {
+                request = request.header(header::ORIGIN, origin);
+            }
+            let answer = fetch(&app, request.body(Body::empty()).unwrap()).await;
+            assert_eq!(
+                answer.status,
+                StatusCode::FORBIDDEN,
+                "{path} from {origin:?}"
+            );
         }
-        let answer = fetch(&app, request.body(Body::empty()).unwrap()).await;
-        assert_eq!(answer.status, StatusCode::FORBIDDEN, "{origin:?}");
     }
 }
 

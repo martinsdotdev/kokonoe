@@ -241,3 +241,58 @@ test('a whole game ends in the banner, with no new game to start', async ({ page
 	await expect(page.getByRole('button', { name: 'New game' })).toHaveCount(0);
 	expect(room.hellos(), 'the end agreed with the engine').toBe(1);
 });
+
+test.describe('a Room’s game kept on this device', () => {
+	test('a finished one shows in Recent games, and opens its Replay', async ({ page }) => {
+		const room = await fakeRoom(page, {
+			you: 'O',
+			players: { X: HOST, O: JOINER },
+			moves: top.slice(0, -1)
+		});
+		await page.goto(`/r/${ROOM}`);
+		await expect(marked(page)).toHaveCount(top.length - 1);
+		room.moved(top.length - 1, top[top.length - 1]);
+		await expect(page.getByRole('link', { name: 'Replay' })).toBeVisible();
+
+		await page.goto('/');
+		const recent = page.locator('[data-recent="finished"]');
+		await expect(recent).toContainText(`vs ${HOST}`);
+		await expect(recent).toContainText('X wins on a line · Replay');
+		await recent.click();
+		await expect(page).toHaveURL(`/replay?game=${ROOM}`);
+		await expect(page.locator('[data-caption]')).toBeVisible();
+	});
+
+	test('an unfinished one continues at its Room, from Home or from /play', async ({ page }) => {
+		const room = await fakeRoom(page, { you: 'X', players: { X: HOST, O: JOINER }, moves: [] });
+		await page.goto(`/r/${ROOM}`);
+		await expect(board(page)).toBeVisible();
+		room.moved(0, top[0]);
+		await expect(marked(page)).toHaveCount(1);
+
+		await page.goto('/');
+		await expect(page.getByText(`${JOINER}’s move`)).toBeVisible();
+		await expect(page.getByText(`Standard · with ${JOINER} · 1 move`)).toBeVisible();
+		await page.getByRole('link', { name: 'Resume', exact: true }).click();
+		await expect(page).toHaveURL(`/r/${ROOM}`);
+		await expect(marked(page)).toHaveCount(1);
+
+		await page.goto(`/play?game=${ROOM}`);
+		await expect(page).toHaveURL(`/r/${ROOM}`);
+		await expect(board(page)).toBeVisible();
+	});
+
+	test('offline, its link shows the game as it was last seen', async ({ page }) => {
+		const room = await fakeRoom(page, { you: 'X', players: { X: HOST, O: JOINER }, moves: [] });
+		await page.goto(`/r/${ROOM}`);
+		await expect(board(page)).toBeVisible();
+		room.moved(0, top[0]);
+		await expect(marked(page)).toHaveCount(1);
+
+		await page.unrouteAll();
+		await page.goto(`/r/${ROOM}`);
+		await expect(page.getByRole('heading', { name: 'You’re offline' })).toBeVisible();
+		await expect(page.locator('[data-saved]')).toContainText(`${JOINER}’s move`);
+		await expect(page.getByRole('img', { name: 'The board after 1 move' })).toBeVisible();
+	});
+});

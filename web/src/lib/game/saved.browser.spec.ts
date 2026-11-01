@@ -108,4 +108,29 @@ describe('saved games in IndexedDB', () => {
 		old.close();
 		expect(await loadGame('a', db)).toEqual(game('a', 1));
 	});
+
+	it('reads a game version 3 saved, and keeps a Room’s game beside it', async () => {
+		const db = fresh();
+		const old = await openDB(db, 3, {
+			upgrade(raw) {
+				raw.createObjectStore('games', { keyPath: 'id' }).createIndex('updated', 'updated');
+			}
+		});
+		await old.put('games', game('a', 1));
+		old.close();
+		expect(await loadGame('a', db)).toEqual(game('a', 1));
+
+		const room: SavedGame = {
+			...game('6f1c0a9b3e2d4c5a7b8e', 2),
+			opponent: {
+				kind: 'room',
+				room: '6f1c0a9b3e2d4c5a7b8e',
+				you: 'X',
+				players: { X: 'guest-4821', O: 'guest-1066' }
+			}
+		};
+		await saveGame(room, db);
+		expect(await latestUnfinished(db)).toEqual(room);
+		expect((await recentGames(5, db)).map((saved) => saved.id)).toEqual([room.id, 'a']);
+	});
 });

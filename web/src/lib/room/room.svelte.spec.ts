@@ -3,7 +3,7 @@ import { loadEngine, type ClientMsg } from '#lib/engine.js';
 import { TOP_ROW, cells } from '#lib/game/games.fixtures.js';
 import { UnplayableGame } from '#lib/game/record.js';
 import { RoomGame } from './room.svelte.js';
-import { record, welcome } from './room.fixtures.js';
+import { FakeStore, ROOM, record, welcome } from './room.fixtures.js';
 
 beforeAll(() => loadEngine());
 
@@ -16,7 +16,8 @@ const game = (...args: Parameters<typeof welcome>) => {
 		send: vi.fn((message: ClientMsg) => (sent.push(message), true)),
 		resync: vi.fn()
 	};
-	return { room: new RoomGame(welcome(...args), link), sent, link };
+	const store = new FakeStore();
+	return { room: new RoomGame(welcome(...args), link, { room: ROOM, store }), sent, link, store };
 };
 
 describe('a Room’s game', () => {
@@ -111,12 +112,44 @@ describe('a Room’s game', () => {
 		expect(sent).toEqual([]);
 	});
 
+	it('keeps itself after every move once both seats are filled', async () => {
+		const waiting = game('X', { X: 'guest-4821', O: null });
+		expect(waiting.store.saves, 'nothing to keep while waiting').toEqual([]);
+
+		const { room, store } = game('X');
+		expect(store.saves, 'nor before a move').toEqual([]);
+		room.receive({ type: 'Moved', ply: 0, cell: top[0] });
+		await expect.poll(() => store.saves.length).toBe(1);
+		expect(store.last).toMatchObject({
+			id: ROOM,
+			record: { moves: [top[0]] },
+			variant: { name: 'Standard', code: 'std' },
+			opponent: {
+				kind: 'room',
+				room: ROOM,
+				you: 'X',
+				players: { X: 'guest-4821', O: 'guest-1066' }
+			},
+			toMove: 'O',
+			result: null
+		});
+		await expect.poll(() => room.replay).toBe(ROOM);
+	});
+
+	it('keeps a finished game with its result, for its Replay', async () => {
+		const { store } = game('O', undefined, top);
+		await expect.poll(() => store.saves.length).toBe(1);
+		expect(store.last).toMatchObject({ toMove: null, result: 'X wins on a line' });
+	});
+
 	it('refuses a Record from another rules version', () => {
 		const future = {
 			...welcome('X'),
 			snapshot: { ...welcome('X').snapshot, record: { ...record(), rules_version: 2 } }
 		};
 		const link = { send: () => true, resync: () => {} };
-		expect(() => new RoomGame(future, link)).toThrow(UnplayableGame);
+		expect(() => new RoomGame(future, link, { room: ROOM, store: new FakeStore() })).toThrow(
+			UnplayableGame
+		);
 	});
 });

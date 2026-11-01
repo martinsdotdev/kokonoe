@@ -26,6 +26,15 @@ describe('a saved game in words', () => {
 		expect(turnLine(game(computer, 'O'))).toBe('Your move against the computer');
 		expect(turnLine(game(computer, 'X'))).toBe('The computer’s move');
 		expect(turnLine(game({ kind: 'hotseat' }, 'X'))).toBe('X to move · pass and play');
+		const room = {
+			kind: 'room',
+			room: '6f1c0a9b3e2d4c5a7b8e',
+			you: 'O',
+			players: { X: 'guest-4821', O: 'guest-1066' }
+		} as const;
+		expect(turnLine(game(room, 'O'))).toBe('Your move against guest-4821');
+		expect(turnLine(game(room, 'X'))).toBe('guest-4821’s move');
+		expect(detailLine(game(room, 'X'))).toBe('Tic-Tac-Ku · with guest-4821 · 12 moves');
 	});
 
 	it('names the variant, the Level and the move', () => {

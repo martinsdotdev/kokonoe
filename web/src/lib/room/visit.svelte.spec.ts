@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { CloseCode, loadEngine, type RoomCard } from '#lib/engine.js';
-import { ROOM, sockets, welcome } from './room.fixtures.js';
+import { FakeStore, ROOM, sockets, welcome } from './room.fixtures.js';
 import { RoomVisit } from './visit.svelte.js';
 
 beforeAll(() => loadEngine());
@@ -24,11 +24,15 @@ const server = (...cards: (RoomCard | number)[]) =>
 		return typeof next === 'number' ? new Response('', { status: next }) : json(next);
 	});
 
-const visit = (fetch: typeof globalThis.fetch, update = vi.fn(async () => {})) => {
+const visit = (
+	fetch: typeof globalThis.fetch,
+	update = vi.fn(async () => {}),
+	store = new FakeStore()
+) => {
 	const fake = sockets();
 	const window = new EventTarget() as Window;
-	const made = new RoomVisit(ROOM, { fetch, open: fake.open, update, window });
-	return { visit: made, fake, window, update };
+	const made = new RoomVisit(ROOM, { fetch, open: fake.open, update, window, store });
+	return { visit: made, fake, window, update, store };
 };
 
 const phase = (made: RoomVisit) => expect.poll(() => made.phase.kind);
@@ -74,6 +78,29 @@ describe('following a Room’s link', () => {
 		offline.mockImplementation(server(card({ X: 'guest-4821', O: null })));
 		window.dispatchEvent(new Event('online'));
 		await phase(made).toBe('join');
+	});
+
+	it('shows the game as it was last saved while offline, and keeps when it began', async () => {
+		const store = new FakeStore();
+		const offline = vi.fn<typeof globalThis.fetch>(async () => {
+			throw new TypeError('Failed to fetch');
+		});
+		const first = visit(server(card({ X: 'a', O: 'b' }, 'X')), undefined, store);
+		await expect.poll(() => first.fake.opened.length).toBe(1);
+		first.fake.last().say(welcome('X', { X: 'a', O: 'b' }, [3]));
+		await expect.poll(() => store.saves.length).toBe(1);
+		first.visit.dispose();
+
+		const later = visit(offline, undefined, store);
+		await phase(later.visit).toBe('offline');
+		if (later.visit.phase.kind !== 'offline') return;
+		expect(later.visit.phase.saved?.record.moves).toEqual([3]);
+
+		const back = visit(server(card({ X: 'a', O: 'b' }, 'X')), undefined, store);
+		await expect.poll(() => back.fake.opened.length).toBe(1);
+		back.fake.last().say(welcome('X', { X: 'a', O: 'b' }, [3, 30]));
+		await expect.poll(() => store.saves.length).toBe(2);
+		expect(store.last?.started).toBe(store.saves[0].started);
 	});
 
 	it('marks the game reconnecting while the socket is down', async () => {

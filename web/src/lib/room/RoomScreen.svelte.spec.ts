@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { CloseCode, loadEngine } from '#lib/engine.js';
-import { ROOM, sockets, welcome } from './room.fixtures.js';
+import { FakeStore, ROOM, sockets, welcome } from './room.fixtures.js';
 import RoomScreen from './RoomScreen.svelte';
 
 beforeAll(() => loadEngine());
@@ -26,7 +26,10 @@ describe('a Room’s page', () => {
 		const offline = vi.fn(async () => {
 			throw new TypeError('Failed to fetch');
 		});
-		const screen = render(RoomScreen, { room: ROOM, options: { fetch: offline } });
+		const screen = render(RoomScreen, {
+			room: ROOM,
+			options: { fetch: offline, store: new FakeStore() }
+		});
 		await expect.element(screen.getByRole('heading', { name: 'You’re offline' })).toBeVisible();
 		await screen.getByRole('button', { name: 'Try again' }).click();
 		await expect.poll(() => offline.mock.calls.length).toBe(2);
@@ -39,7 +42,7 @@ describe('a Room’s page', () => {
 		});
 		const screen = render(RoomScreen, {
 			room: ROOM,
-			options: { fetch: seated, open: fake.open, update }
+			options: { fetch: seated, open: fake.open, update, store: new FakeStore() }
 		});
 		await expect.poll(() => fake.opened.length).toBe(1);
 		fake.last().say(welcome('X', { X: 'guest-4821', O: null }));

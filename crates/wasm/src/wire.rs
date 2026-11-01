@@ -6,7 +6,7 @@
 
 use tsify::Tsify;
 
-use crate::types::{Cell, Outcome, Player, Ply, Record};
+use crate::types::{Cell, Player, Ply, Record};
 
 /// What a client says on a Room's socket.
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
@@ -22,6 +22,19 @@ pub enum ClientMsg {
     Move {
         ply: Ply,
         cell: Cell,
+    },
+    Resign,
+    OfferDraw,
+    AnswerDraw {
+        accept: bool,
+    },
+    AskTakeback,
+    AnswerTakeback {
+        accept: bool,
+    },
+    OfferRematch,
+    AnswerRematch {
+        accept: bool,
     },
 }
 
@@ -40,14 +53,85 @@ pub enum ServerMsg {
     Welcome { you: Player, snapshot: Snapshot },
     Moved { ply: Ply, cell: Cell },
     Rejected { reason: Rejection },
-    Ended { outcome: Outcome },
+    Ended(GameEnd),
+    Offer(Offer),
+    OfferAnswered { kind: OfferKind, accepted: bool },
+    TookBack { to_ply: Ply },
+    RematchRoom { room: String },
 }
 
+/// A Room as it stands. `end` says how a finished game ended, which a Record can't for a
+/// resignation; `offer` is the one waiting for an answer.
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub struct Snapshot {
     pub record: Record,
     pub players: Players,
+    pub takebacks: bool,
+    #[tsify(type = "Offer | null")]
+    pub offer: Option<Offer>,
+    pub draws: Draws,
+    #[tsify(type = "GameEnd | null")]
+    pub end: Option<GameEnd>,
+}
+
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub struct Offer {
+    pub kind: OfferKind,
+    pub by: Player,
+}
+
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub enum OfferKind {
+    Draw,
+    Takeback,
+    Rematch,
+}
+
+/// How many draws each player has offered, of the 3 a game allows.
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub struct Draws {
+    #[serde(rename = "X")]
+    pub x: u8,
+    #[serde(rename = "O")]
+    pub o: u8,
+}
+
+/// Spec §4.4's Result and Termination.
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub struct GameEnd {
+    pub result: GameResult,
+    pub termination: Termination,
+}
+
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub enum GameResult {
+    #[serde(rename = "1-0")]
+    XWins,
+    #[serde(rename = "0-1")]
+    OWins,
+    #[serde(rename = "1/2-1/2")]
+    Draw,
+}
+
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub enum Termination {
+    #[serde(rename = "line")]
+    Line,
+    #[serde(rename = "count")]
+    Count,
+    #[serde(rename = "decided")]
+    Decided,
+    #[serde(rename = "resign")]
+    Resign,
+    #[serde(rename = "agreed draw")]
+    AgreedDraw,
 }
 
 /// Who holds each seat, by Handle: `null` while it waits for someone.
@@ -77,6 +161,7 @@ pub enum Rejection {
 pub struct NewRoom {
     pub rules: String,
     pub seat: SeatChoice,
+    pub takebacks: bool,
 }
 
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,4 +190,5 @@ pub struct RoomCard {
     pub players: Players,
     #[tsify(type = "Player | null")]
     pub you: Option<Player>,
+    pub takebacks: bool,
 }

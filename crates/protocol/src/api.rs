@@ -7,12 +7,14 @@ use kokonoe_engine::Player;
 
 use crate::Players;
 
-/// What the host chose: a Preset, by its Ruleset code, and a seat.
+/// What the host chose: a Preset, by its Ruleset code, a seat, and whether takebacks are allowed.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewRoom {
     pub rules: String,
     pub seat: SeatChoice,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub takebacks: bool,
 }
 
 /// The seat the host takes. `Random` is drawn when the Room is made.
@@ -45,6 +47,8 @@ pub struct RoomCard {
     pub players: Players,
     /// The seat the asker already holds, if they hold one.
     pub you: Option<Player>,
+    /// Whether the Room allows takebacks.
+    pub takebacks: bool,
 }
 
 #[cfg(test)]
@@ -60,8 +64,10 @@ mod tests {
             asked,
             NewRoom {
                 rules: "std".to_string(),
-                seat: SeatChoice::Random
-            }
+                seat: SeatChoice::Random,
+                takebacks: false
+            },
+            "takebacks are off unless asked for"
         );
         let card = RoomCard {
             host: "guest-4821".to_string(),
@@ -72,10 +78,11 @@ mod tests {
                 o: None,
             },
             you: None,
+            takebacks: true,
         };
         assert_eq!(
             serde_json::to_string(&card).unwrap(),
-            r#"{"host":"guest-4821","variant":"Standard","rules":"std","players":{"X":"guest-4821","O":null},"you":null}"#
+            r#"{"host":"guest-4821","variant":"Standard","rules":"std","players":{"X":"guest-4821","O":null},"you":null,"takebacks":true}"#
         );
     }
 }

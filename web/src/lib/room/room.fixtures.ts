@@ -19,7 +19,14 @@ export const welcome = (
 ): Extract<ServerMsg, { type: 'Welcome' }> => ({
 	type: 'Welcome',
 	you,
-	snapshot: { record: record(moves), players }
+	snapshot: {
+		record: record(moves),
+		players,
+		takebacks: false,
+		offer: null,
+		draws: { X: 0, O: 0 },
+		end: null
+	}
 });
 
 /** A socket whose server is the test: it accepts, says things and closes on the test's word. */

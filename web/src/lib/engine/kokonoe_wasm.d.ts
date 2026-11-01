@@ -18,6 +18,19 @@ export type Cell = number;
 export type IllegalMove = "GameOver" | "WrongDepth" | "Occupied" | { BeneathDecided: { board: Board } } | { OutsideActiveBoards: { within: Board } };
 
 /**
+ * A Room as it stands. `end` says how a finished game ended, which a Record can't for a
+ * resignation; `offer` is the one waiting for an answer.
+ */
+export interface Snapshot {
+    record: Record;
+    players: Players;
+    takebacks: boolean;
+    offer: Offer | null;
+    draws: Draws;
+    end: GameEnd | null;
+}
+
+/**
  * A Seed as 16 lowercase hex digits, since a JSON number can't hold a u64 exactly in
  * JavaScript.
  */
@@ -35,6 +48,14 @@ export interface Record {
 }
 
 /**
+ * How many draws each player has offered, of the 3 a game allows.
+ */
+export interface Draws {
+    X: number;
+    O: number;
+}
+
+/**
  * How many marks are on the board, the dealt opening included.
  */
 export type Ply = number;
@@ -45,6 +66,14 @@ export type Ply = number;
 export interface Visit {
     cell: Cell;
     count: number;
+}
+
+/**
+ * Spec §4.4's Result and Termination.
+ */
+export interface GameEnd {
+    result: GameResult;
+    termination: Termination;
 }
 
 /**
@@ -90,6 +119,7 @@ export interface RoomCard {
     rules: string;
     players: Players;
     you: Player | null;
+    takebacks: boolean;
 }
 
 /**
@@ -108,7 +138,7 @@ export type PlayResult = { Now: Status } | "Already" | { Illegal: IllegalMove } 
 /**
  * What a client says on a Room's socket.
  */
-export type ClientMsg = { type: "Hello"; protocol: number; rules_version: number; room: string; role: Role } | { type: "Move"; ply: Ply; cell: Cell };
+export type ClientMsg = { type: "Hello"; protocol: number; rules_version: number; room: string; role: Role } | { type: "Move"; ply: Ply; cell: Cell } | { type: "Resign" } | { type: "OfferDraw" } | { type: "AnswerDraw"; accept: boolean } | { type: "AskTakeback" } | { type: "AnswerTakeback"; accept: boolean } | { type: "OfferRematch" } | { type: "AnswerRematch"; accept: boolean };
 
 /**
  * What one search from a root found: a move the tactics force, or the visits of every root move
@@ -120,7 +150,7 @@ export type Searched = { Forced: Cell } | { Visits: Visit[] };
  * What the server says on a Room's socket. A `Welcome` comes after `Hello`, and again to every
  * socket when a seat fills; it replaces everything the page knew.
  */
-export type ServerMsg = { type: "Welcome"; you: Player; snapshot: Snapshot } | { type: "Moved"; ply: Ply; cell: Cell } | { type: "Rejected"; reason: Rejection } | { type: "Ended"; outcome: Outcome };
+export type ServerMsg = { type: "Welcome"; you: Player; snapshot: Snapshot } | { type: "Moved"; ply: Ply; cell: Cell } | { type: "Rejected"; reason: Rejection } | ({ type: "Ended" } & GameEnd) | ({ type: "Offer" } & Offer) | { type: "OfferAnswered"; kind: OfferKind; accepted: boolean } | { type: "TookBack"; to_ply: Ply } | { type: "RematchRoom"; room: string };
 
 /**
  * Who holds each seat, by Handle: `null` while it waits for someone.
@@ -146,6 +176,7 @@ export type Objective = "Line" | { FirstTo: number };
 export interface NewRoom {
     rules: string;
     seat: SeatChoice;
+    takebacks: boolean;
 }
 
 /**
@@ -153,14 +184,14 @@ export interface NewRoom {
  */
 export type Opening = "Free" | { Random: number };
 
+export interface Offer {
+    kind: OfferKind;
+    by: Player;
+}
+
 export interface Preset {
     name: string;
     ruleset: Ruleset;
-}
-
-export interface Snapshot {
-    record: Record;
-    players: Players;
 }
 
 export type BoardStatus = "Open" | { Won: Player } | "Drawn";
@@ -171,6 +202,10 @@ export type DrawnOwner = "Neither" | "Both";
 
 export type Fallback = "Draw" | "MostWon";
 
+export type GameResult = "1-0" | "0-1" | "1/2-1/2";
+
+export type OfferKind = "Draw" | "Takeback" | "Rematch";
+
 export type Outcome = { Objective: Player } | { MostWon: Player } | "Draw";
 
 export type Player = "X" | "O";
@@ -178,6 +213,8 @@ export type Player = "X" | "O";
 export type Role = "Player";
 
 export type SeatChoice = "X" | "O" | "Random";
+
+export type Termination = "line" | "count" | "decided" | "resign" | "agreed draw";
 
 
 /**

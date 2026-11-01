@@ -12,8 +12,11 @@ mod socket;
 
 pub use api::{CreatedRoom, NewRoom, RoomCard, SeatChoice};
 pub use close::CloseCode;
-pub use socket::{ClientMsg, Players, Rejection, Role, ServerMsg, Snapshot};
+pub use socket::{
+    ClientMsg, Draws, GameEnd, GameResult, Offer, OfferKind, Players, Rejection, Role, ServerMsg,
+    Snapshot, Termination,
+};
 
 /// The version of the socket's messages, sent in every `Hello`. Bumped whenever a message changes
 /// shape, so a client on another version is closed with 4001 and reloads rather than misreading.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;

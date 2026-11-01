@@ -4,7 +4,7 @@
 
 use alloc::string::String;
 
-use kokonoe_engine::{Outcome, Player, Record};
+use kokonoe_engine::{Fallback, Objective, Outcome, Player, Record, Ruleset};
 
 /// What a client says.
 #[cfg_attr(
@@ -24,7 +24,28 @@ pub enum ClientMsg {
     },
     /// A move at `ply`, which counts the dealt opening. Idempotent by ply, so a resend after a
     /// reconnect changes nothing.
-    Move { ply: u16, cell: u16 },
+    Move {
+        ply: u16,
+        cell: u16,
+    },
+    /// Gives the game up: the other player wins.
+    Resign,
+    /// Offers a draw, at most 3 times a game. It stands until it's answered or the offerer moves.
+    OfferDraw,
+    AnswerDraw {
+        accept: bool,
+    },
+    /// Asks to undo back to before this player's last move, in a Room that allows takebacks. The
+    /// other player has 15 s to answer, and any move withdraws it.
+    AskTakeback,
+    AnswerTakeback {
+        accept: bool,
+    },
+    /// Offers another game, X and O swapped, once this one is over. It lapses after 60 s.
+    OfferRematch,
+    AnswerRematch {
+        accept: bool,
+    },
 }
 
 /// What a socket comes to a Room as. Spectators join it with KOK-61.
@@ -48,10 +69,19 @@ pub enum ServerMsg {
     Welcome { you: Player, snapshot: Snapshot },
     /// A move was played and stored.
     Moved { ply: u16, cell: u16 },
-    /// The sender's move changed nothing.
+    /// The sender's move, offer or answer changed nothing.
     Rejected { reason: Rejection },
-    /// The game is over: after the move that ended it, or to a move sent after.
-    Ended { outcome: Outcome },
+    /// The game is over: after the move, resignation or agreed draw that ended it, or to a move
+    /// sent after.
+    Ended(GameEnd),
+    /// A player offered a draw, a takeback or a rematch, which the other answers.
+    Offer(Offer),
+    /// The offer stands no more: answered, lapsed, or withdrawn by a move.
+    OfferAnswered { kind: OfferKind, accepted: bool },
+    /// An accepted takeback: the game is as it was after `to_ply` plies.
+    TookBack { to_ply: u16 },
+    /// An accepted rematch: the new Room, where both players already have their seats.
+    RematchRoom { room: String },
 }
 
 /// A Room as it stands.
@@ -61,6 +91,162 @@ pub struct Snapshot {
     /// Spec §4.3's Record, every move so far included.
     pub record: Record,
     pub players: Players,
+    /// Whether the Room was made allowing takebacks.
+    pub takebacks: bool,
+    /// The offer waiting for an answer, if one is.
+    pub offer: Option<Offer>,
+    /// How many draws each player has offered, of the 3 a game allows.
+    pub draws: Draws,
+    /// How the game ended, once it has: a resignation or an agreed draw can't be read from the
+    /// Record.
+    pub end: Option<GameEnd>,
+}
+
+/// What a player offered.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Offer {
+    pub kind: OfferKind,
+    pub by: Player,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OfferKind {
+    Draw,
+    Takeback,
+    Rematch,
+}
+
+/// How many draws each player has offered.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Draws {
+    #[cfg_attr(feature = "serde", serde(rename = "X"))]
+    pub x: u8,
+    #[cfg_attr(feature = "serde", serde(rename = "O"))]
+    pub o: u8,
+}
+
+impl Draws {
+    /// How many draws a player may offer in one game.
+    pub const MAX: u8 = 3;
+
+    pub fn get(&self, player: Player) -> u8 {
+        match player {
+            Player::X => self.x,
+            Player::O => self.o,
+        }
+    }
+}
+
+/// How a game ended: spec §4.4's Result and Termination.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GameEnd {
+    pub result: GameResult,
+    pub termination: Termination,
+}
+
+impl GameEnd {
+    /// The end the rules gave the game.
+    pub fn of(outcome: Outcome, ruleset: &Ruleset) -> GameEnd {
+        GameEnd {
+            result: GameResult::won_by(outcome.winner()),
+            termination: Termination::of(outcome, ruleset),
+        }
+    }
+}
+
+/// Spec §4.4's Result, as a game file and the `games` table write it.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameResult {
+    #[cfg_attr(feature = "serde", serde(rename = "1-0"))]
+    XWins,
+    #[cfg_attr(feature = "serde", serde(rename = "0-1"))]
+    OWins,
+    #[cfg_attr(feature = "serde", serde(rename = "1/2-1/2"))]
+    Draw,
+}
+
+impl GameResult {
+    pub const fn won_by(winner: Option<Player>) -> GameResult {
+        match winner {
+            Some(Player::X) => GameResult::XWins,
+            Some(Player::O) => GameResult::OWins,
+            None => GameResult::Draw,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            GameResult::XWins => "1-0",
+            GameResult::OWins => "0-1",
+            GameResult::Draw => "1/2-1/2",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<GameResult> {
+        [GameResult::XWins, GameResult::OWins, GameResult::Draw]
+            .into_iter()
+            .find(|result| result.as_str() == text)
+    }
+}
+
+/// Spec §4.4's Termination: how a game came to its end. Timeouts, Claims and abandonment arrive
+/// with clocks and presence.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Termination {
+    #[cfg_attr(feature = "serde", serde(rename = "line"))]
+    Line,
+    #[cfg_attr(feature = "serde", serde(rename = "count"))]
+    Count,
+    #[cfg_attr(feature = "serde", serde(rename = "decided"))]
+    Decided,
+    #[cfg_attr(feature = "serde", serde(rename = "resign"))]
+    Resign,
+    #[cfg_attr(feature = "serde", serde(rename = "agreed draw"))]
+    AgreedDraw,
+}
+
+impl Termination {
+    pub const ALL: [Termination; 5] = [
+        Termination::Line,
+        Termination::Count,
+        Termination::Decided,
+        Termination::Resign,
+        Termination::AgreedDraw,
+    ];
+
+    /// How the rules ended a game (spec §4.4's table).
+    pub fn of(outcome: Outcome, ruleset: &Ruleset) -> Termination {
+        match outcome {
+            Outcome::Objective(_) if matches!(ruleset.objective, Objective::Line) => {
+                Termination::Line
+            }
+            Outcome::Objective(_) | Outcome::MostWon(_) => Termination::Count,
+            Outcome::Draw if matches!(ruleset.fallback, Fallback::MostWon) => Termination::Count,
+            Outcome::Draw => Termination::Decided,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Termination::Line => "line",
+            Termination::Count => "count",
+            Termination::Decided => "decided",
+            Termination::Resign => "resign",
+            Termination::AgreedDraw => "agreed draw",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Termination> {
+        Termination::ALL
+            .into_iter()
+            .find(|termination| termination.as_str() == text)
+    }
 }
 
 /// Who holds each seat, by Handle: `null` while it waits for someone.
@@ -146,6 +332,13 @@ mod tests {
                     x: Some("guest-4821".to_string()),
                     o: None,
                 },
+                takebacks: true,
+                offer: Some(Offer {
+                    kind: OfferKind::Draw,
+                    by: Player::X,
+                }),
+                draws: Draws { x: 1, o: 0 },
+                end: None,
             },
         };
         pinned(
@@ -155,7 +348,8 @@ mod tests {
                 r#""ruleset":{"depth":2,"continuation":"Off","drawn_owner":"Neither","#,
                 r#""objective":"Line","fallback":"Draw","opening":"Free"},"#,
                 r#""seed":"00000000005eed00","moves":[38]},"#,
-                r#""players":{"X":"guest-4821","O":null}}}"#
+                r#""players":{"X":"guest-4821","O":null},"takebacks":true,"#,
+                r#""offer":{"kind":"Draw","by":"X"},"draws":{"X":1,"O":0},"end":null}}"#
             ),
         );
         pinned(
@@ -176,18 +370,97 @@ mod tests {
                 &alloc::format!(r#"{{"type":"Rejected","reason":{json}}}"#),
             );
         }
+        let ended = GameEnd {
+            result: GameResult::OWins,
+            termination: Termination::Resign,
+        };
         pinned(
-            &ServerMsg::Ended {
-                outcome: Outcome::Objective(Player::X),
-            },
-            r#"{"type":"Ended","outcome":{"Objective":"X"}}"#,
+            &ServerMsg::Ended(ended),
+            r#"{"type":"Ended","result":"0-1","termination":"resign"}"#,
         );
+        pinned(
+            &ServerMsg::Offer(Offer {
+                kind: OfferKind::Takeback,
+                by: Player::O,
+            }),
+            r#"{"type":"Offer","kind":"Takeback","by":"O"}"#,
+        );
+        pinned(
+            &ServerMsg::OfferAnswered {
+                kind: OfferKind::Rematch,
+                accepted: false,
+            },
+            r#"{"type":"OfferAnswered","kind":"Rematch","accepted":false}"#,
+        );
+        pinned(
+            &ServerMsg::TookBack { to_ply: 4 },
+            r#"{"type":"TookBack","to_ply":4}"#,
+        );
+        pinned(
+            &ServerMsg::RematchRoom {
+                room: "6f1c0a9b3e2d4c5a7b8e".to_string(),
+            },
+            r#"{"type":"RematchRoom","room":"6f1c0a9b3e2d4c5a7b8e"}"#,
+        );
+    }
+
+    #[test]
+    fn a_client_offers_and_answers() {
+        let intents = [
+            (ClientMsg::Resign, r#"{"type":"Resign"}"#),
+            (ClientMsg::OfferDraw, r#"{"type":"OfferDraw"}"#),
+            (
+                ClientMsg::AnswerDraw { accept: true },
+                r#"{"type":"AnswerDraw","accept":true}"#,
+            ),
+            (ClientMsg::AskTakeback, r#"{"type":"AskTakeback"}"#),
+            (
+                ClientMsg::AnswerTakeback { accept: false },
+                r#"{"type":"AnswerTakeback","accept":false}"#,
+            ),
+            (ClientMsg::OfferRematch, r#"{"type":"OfferRematch"}"#),
+            (
+                ClientMsg::AnswerRematch { accept: true },
+                r#"{"type":"AnswerRematch","accept":true}"#,
+            ),
+        ];
+        for (intent, json) in intents {
+            pinned(&intent, json);
+        }
+    }
+
+    #[test]
+    fn the_rules_end_name_their_termination() {
+        let standard = Preset::Standard.ruleset();
+        let counting = Preset::TicTacKu.ruleset();
+        let most = Preset::CountTiebreak.ruleset();
+        let cases = [
+            (Outcome::Objective(Player::X), &standard, "1-0", "line"),
+            (Outcome::MostWon(Player::O), &standard, "0-1", "count"),
+            (Outcome::Draw, &standard, "1/2-1/2", "decided"),
+            (Outcome::Objective(Player::O), &counting, "0-1", "count"),
+            (Outcome::Draw, &most, "1/2-1/2", "count"),
+        ];
+        for (outcome, ruleset, result, termination) in cases {
+            let end = GameEnd::of(outcome, ruleset);
+            assert_eq!(end.result.as_str(), result, "{outcome:?}");
+            assert_eq!(end.termination.as_str(), termination, "{outcome:?}");
+            assert_eq!(GameResult::parse(result), Some(end.result));
+            assert_eq!(Termination::parse(termination), Some(end.termination));
+        }
+        for termination in Termination::ALL {
+            assert_eq!(
+                serde_json::to_value(termination).unwrap(),
+                termination.as_str(),
+                "the wire and the table spell it alike"
+            );
+        }
     }
 
     #[test]
     fn an_unknown_message_is_refused() {
         for json in [
-            r#"{"type":"Resign"}"#,
+            r#"{"type":"Resigned"}"#,
             r#"{"ply":0,"cell":40}"#,
             r#"{"type":"Move","ply":-1,"cell":40}"#,
         ] {

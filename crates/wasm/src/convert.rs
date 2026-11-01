@@ -344,8 +344,8 @@ impl From<protocol::CloseCode> for crate::CloseCode {
 mod wire {
     use super::*;
     use crate::wire::{
-        ClientMsg, CreatedRoom, NewRoom, Players, Rejection, Role, RoomCard, SeatChoice, ServerMsg,
-        Snapshot,
+        ClientMsg, CreatedRoom, Draws, GameEnd, GameResult, NewRoom, Offer, OfferKind, Players,
+        Rejection, Role, RoomCard, SeatChoice, ServerMsg, Snapshot, Termination,
     };
 
     impl From<protocol::ClientMsg> for ClientMsg {
@@ -366,6 +366,17 @@ mod wire {
                     ply: Ply(ply.into()),
                     cell: Cell(cell),
                 },
+                protocol::ClientMsg::Resign => ClientMsg::Resign,
+                protocol::ClientMsg::OfferDraw => ClientMsg::OfferDraw,
+                protocol::ClientMsg::AnswerDraw { accept } => ClientMsg::AnswerDraw { accept },
+                protocol::ClientMsg::AskTakeback => ClientMsg::AskTakeback,
+                protocol::ClientMsg::AnswerTakeback { accept } => {
+                    ClientMsg::AnswerTakeback { accept }
+                }
+                protocol::ClientMsg::OfferRematch => ClientMsg::OfferRematch,
+                protocol::ClientMsg::AnswerRematch { accept } => {
+                    ClientMsg::AnswerRematch { accept }
+                }
             }
         }
     }
@@ -392,9 +403,16 @@ mod wire {
                 protocol::ServerMsg::Rejected { reason } => ServerMsg::Rejected {
                     reason: reason.into(),
                 },
-                protocol::ServerMsg::Ended { outcome } => ServerMsg::Ended {
-                    outcome: outcome.into(),
+                protocol::ServerMsg::Ended(end) => ServerMsg::Ended(end.into()),
+                protocol::ServerMsg::Offer(offer) => ServerMsg::Offer(offer.into()),
+                protocol::ServerMsg::OfferAnswered { kind, accepted } => ServerMsg::OfferAnswered {
+                    kind: kind.into(),
+                    accepted,
                 },
+                protocol::ServerMsg::TookBack { to_ply } => ServerMsg::TookBack {
+                    to_ply: Ply(to_ply.into()),
+                },
+                protocol::ServerMsg::RematchRoom { room } => ServerMsg::RematchRoom { room },
             }
         }
     }
@@ -404,6 +422,69 @@ mod wire {
             Snapshot {
                 record: snapshot.record.into(),
                 players: snapshot.players.into(),
+                takebacks: snapshot.takebacks,
+                offer: snapshot.offer.map(Offer::from),
+                draws: snapshot.draws.into(),
+                end: snapshot.end.map(GameEnd::from),
+            }
+        }
+    }
+
+    impl From<protocol::Offer> for Offer {
+        fn from(offer: protocol::Offer) -> Offer {
+            Offer {
+                kind: offer.kind.into(),
+                by: offer.by.into(),
+            }
+        }
+    }
+
+    impl From<protocol::OfferKind> for OfferKind {
+        fn from(kind: protocol::OfferKind) -> OfferKind {
+            match kind {
+                protocol::OfferKind::Draw => OfferKind::Draw,
+                protocol::OfferKind::Takeback => OfferKind::Takeback,
+                protocol::OfferKind::Rematch => OfferKind::Rematch,
+            }
+        }
+    }
+
+    impl From<protocol::Draws> for Draws {
+        fn from(draws: protocol::Draws) -> Draws {
+            Draws {
+                x: draws.x,
+                o: draws.o,
+            }
+        }
+    }
+
+    impl From<protocol::GameEnd> for GameEnd {
+        fn from(end: protocol::GameEnd) -> GameEnd {
+            GameEnd {
+                result: end.result.into(),
+                termination: end.termination.into(),
+            }
+        }
+    }
+
+    impl From<protocol::GameResult> for GameResult {
+        fn from(result: protocol::GameResult) -> GameResult {
+            match result {
+                protocol::GameResult::XWins => GameResult::XWins,
+                protocol::GameResult::OWins => GameResult::OWins,
+                protocol::GameResult::Draw => GameResult::Draw,
+            }
+        }
+    }
+
+    impl From<protocol::Termination> for Termination {
+        fn from(termination: protocol::Termination) -> Termination {
+            match termination {
+                protocol::Termination::Line => Termination::Line,
+                protocol::Termination::Count => Termination::Count,
+                protocol::Termination::Decided => Termination::Decided,
+                protocol::Termination::Resign => Termination::Resign,
+                protocol::Termination::AgreedDraw => Termination::AgreedDraw,
             }
         }
     }
@@ -434,6 +515,7 @@ mod wire {
             NewRoom {
                 rules: asked.rules,
                 seat: asked.seat.into(),
+                takebacks: asked.takebacks,
             }
         }
     }
@@ -462,6 +544,7 @@ mod wire {
                 rules: card.rules,
                 players: card.players.into(),
                 you: card.you.map(Player::from),
+                takebacks: card.takebacks,
             }
         }
     }
@@ -691,6 +774,13 @@ mod tests {
                     role: protocol::Role::Player,
                 },
                 protocol::ClientMsg::Move { ply: 7, cell: 40 },
+                protocol::ClientMsg::Resign,
+                protocol::ClientMsg::OfferDraw,
+                protocol::ClientMsg::AnswerDraw { accept: true },
+                protocol::ClientMsg::AskTakeback,
+                protocol::ClientMsg::AnswerTakeback { accept: false },
+                protocol::ClientMsg::OfferRematch,
+                protocol::ClientMsg::AnswerRematch { accept: true },
             ];
             assert_eq!(every::<_, ClientMsg>(client), declared::<ClientMsg>());
 
@@ -699,26 +789,60 @@ mod tests {
             let cell = engine::Cell::from_index(engine::Depth::Three, 364).unwrap();
             game.play(game.state().ply(), cell).unwrap();
             let rejected = |reason| protocol::ServerMsg::Rejected { reason };
+            let ended = |result, termination| {
+                protocol::ServerMsg::Ended(protocol::GameEnd {
+                    result,
+                    termination,
+                })
+            };
+            let offer = |kind, by| protocol::Offer { kind, by };
             let server = vec![
                 protocol::ServerMsg::Welcome {
                     you: engine::Player::O,
                     snapshot: protocol::Snapshot {
                         record: game.record(),
                         players: players(Some("guest-4821"), None),
+                        takebacks: false,
+                        offer: None,
+                        draws: protocol::Draws::default(),
+                        end: None,
+                    },
+                },
+                protocol::ServerMsg::Welcome {
+                    you: engine::Player::X,
+                    snapshot: protocol::Snapshot {
+                        record: game.record(),
+                        players: players(Some("guest-4821"), Some("guest-1066")),
+                        takebacks: true,
+                        offer: Some(offer(protocol::OfferKind::Rematch, engine::Player::O)),
+                        draws: protocol::Draws { x: 3, o: 1 },
+                        end: Some(protocol::GameEnd {
+                            result: protocol::GameResult::Draw,
+                            termination: protocol::Termination::AgreedDraw,
+                        }),
                     },
                 },
                 protocol::ServerMsg::Moved { ply: 3, cell: 728 },
                 rejected(protocol::Rejection::IllegalMove),
                 rejected(protocol::Rejection::OutOfOrder { want: 5 }),
                 rejected(protocol::Rejection::NotAllowed),
-                protocol::ServerMsg::Ended {
-                    outcome: engine::Outcome::Objective(engine::Player::O),
+                ended(protocol::GameResult::XWins, protocol::Termination::Line),
+                ended(protocol::GameResult::OWins, protocol::Termination::Count),
+                ended(protocol::GameResult::Draw, protocol::Termination::Decided),
+                ended(protocol::GameResult::OWins, protocol::Termination::Resign),
+                ended(
+                    protocol::GameResult::Draw,
+                    protocol::Termination::AgreedDraw,
+                ),
+                protocol::ServerMsg::Offer(offer(protocol::OfferKind::Draw, engine::Player::X)),
+                protocol::ServerMsg::Offer(offer(protocol::OfferKind::Takeback, engine::Player::O)),
+                protocol::ServerMsg::OfferAnswered {
+                    kind: protocol::OfferKind::Takeback,
+                    accepted: true,
                 },
-                protocol::ServerMsg::Ended {
-                    outcome: engine::Outcome::MostWon(engine::Player::X),
-                },
-                protocol::ServerMsg::Ended {
-                    outcome: engine::Outcome::Draw,
+                protocol::ServerMsg::TookBack { to_ply: 4 },
+                protocol::ServerMsg::RematchRoom {
+                    room: "6f1c0a9b3e2d4c5a7b8e".into(),
                 },
             ];
             assert_eq!(every::<_, ServerMsg>(server), declared::<ServerMsg>());
@@ -734,6 +858,7 @@ mod tests {
                 let asked = protocol::NewRoom {
                     rules: "cont+first5+most".into(),
                     seat,
+                    takebacks: seat == protocol::SeatChoice::Random,
                 };
                 holds::<_, NewRoom>(asked);
             }
@@ -747,6 +872,7 @@ mod tests {
                     rules: "std".into(),
                     players: players(Some("guest-4821"), Some("guest-1066")),
                     you,
+                    takebacks: you.is_some(),
                 });
             }
         }

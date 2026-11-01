@@ -142,7 +142,8 @@ test('a joiner reads the card, and joins on Accept or leaves on Decline', async 
 			variant: 'Standard',
 			rules: 'std',
 			players: { X: HOST, O: null },
-			you: null
+			you: null,
+			takebacks: false
 		}
 	});
 	await page.goto(`/r/${ROOM}`);
@@ -162,7 +163,7 @@ test('a joiner reads the card, and joins on Accept or leaves on Decline', async 
 	await expect(page.locator('main h1'), 'focus follows the page into the game').toBeFocused();
 	expect(room.said[0]).toEqual({
 		type: 'Hello',
-		protocol: 1,
+		protocol: 2,
 		rules_version: 1,
 		room: ROOM,
 		role: 'Player'
@@ -203,7 +204,8 @@ test('a Room that isn’t there, or is full, says so', async ({ page }) => {
 			variant: 'Standard',
 			rules: 'std',
 			players: { X: HOST, O: 'guest-0007' },
-			you: null
+			you: null,
+			takebacks: false
 		}
 	});
 	await page.goto(`/r/${ROOM}`);
@@ -236,7 +238,7 @@ test('a whole game ends in the banner, with no new game to start', async ({ page
 	await page.goto(`/r/${ROOM}`);
 	await expect(marked(page)).toHaveCount(top.length - 1);
 	room.moved(top.length - 1, top[top.length - 1]);
-	room.say({ type: 'Ended', outcome: { Objective: 'X' } });
+	room.say({ type: 'Ended', result: '1-0', termination: 'line' });
 	await expect(page.getByRole('heading', { name: 'X wins on a line' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'New game' })).toHaveCount(0);
 	expect(room.hellos(), 'the end agreed with the engine').toBe(1);

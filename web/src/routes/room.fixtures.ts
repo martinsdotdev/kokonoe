@@ -29,7 +29,8 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 			variant: 'Standard',
 			rules: 'std',
 			players: room.players,
-			you: room.you
+			you: room.you,
+			takebacks: false
 		};
 	const welcome = (): ServerMsg => ({
 		type: 'Welcome',
@@ -41,7 +42,11 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 				seed: '00000000005eed00',
 				moves: room.moves
 			},
-			players: room.players
+			players: room.players,
+			takebacks: false,
+			offer: null,
+			draws: { X: 0, O: 0 },
+			end: null
 		}
 	});
 	await page.route('/api/session', (route) => route.fulfill({ json: { handle: JOINER } }));

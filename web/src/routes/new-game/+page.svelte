@@ -20,31 +20,43 @@
 	const prefill = presetByCode(params.get('rules') ?? 'std');
 
 	type Kind = Opponent['kind'] | 'friend';
-	const kinds: Kind[] = ['computer', 'hotseat', 'friend'];
-	let kind: Kind = $state(kinds.find((k) => k === params.get('vs')) ?? 'computer');
+	/** How the sheet speaks of each opponent: the summary's line, the heading, the button. */
+	const KINDS: Record<Kind, { opponent: (level: Level) => string; title: string; start: string }> =
+		{
+			computer: {
+				opponent: (level) => `Computer, Level ${level}`,
+				title: 'against the computer',
+				start: 'Start game'
+			},
+			hotseat: {
+				opponent: () => 'Two players, one screen',
+				title: 'pass and play',
+				start: 'Start game'
+			},
+			friend: {
+				opponent: () => 'A friend, by invite link',
+				title: 'with a friend',
+				start: 'Create invite Room'
+			}
+		};
+	const asks = params.get('vs');
+	let kind: Kind = $state(asks === 'hotseat' || asks === 'friend' ? asks : 'computer');
 	let level: Level = $state(asked ?? DEFAULT_LEVEL);
 	/** The seat against the computer, X unless chosen; in an invite Room, Random (spec §10.1). */
 	let seats = $state<Record<'computer' | 'friend', Player | 'Random'>>({
 		computer: 'X',
 		friend: 'Random'
 	});
-	const seat = $derived(kind === 'friend' ? seats.friend : seats.computer);
+	const seatOf = $derived(kind === 'friend' ? 'friend' : 'computer');
+	const seat = $derived(seats[seatOf]);
 	let chosen = $state(prefill?.name ?? 'Standard');
 	/** An invite Room is being made, or why it couldn't be. */
 	let creating = $state(false);
 	let failure: string | null = $state(null);
 
 	const preset = $derived(SHELF.find((p) => p.name === chosen) ?? SHELF[0]);
-	const opponents: Record<Kind, string> = {
-		computer: '',
-		hotseat: 'Two players, one screen',
-		friend: 'A friend, by invite link'
-	};
 	const summary = $derived([
-		{
-			label: 'Opponent',
-			value: kind === 'computer' ? `Computer, Level ${level}` : opponents[kind]
-		},
+		{ label: 'Opponent', value: KINDS[kind].opponent(level) },
 		...(kind === 'hotseat'
 			? []
 			: [
@@ -64,13 +76,15 @@
 
 	/** Makes an invite Room on the server, and opens its link to wait there for a friend. */
 	const invite = async () => {
+		if (creating) return;
 		creating = true;
 		failure = null;
 		const room =
 			(await startSession()) && (await createRoom({ rules: rulesetCode(preset.ruleset), seat }));
-		creating = false;
+		// Still creating while the page goes to the Room, so a second press makes no second Room.
 		if (room) return goto(resolve('/r/[room]', { room }));
-		failure = 'Kokonoe’s server can’t be reached. Invite a friend once you’re online.';
+		creating = false;
+		failure = 'Kokonoe’s server couldn’t make the Room. Invite a friend once you’re online.';
 	};
 
 	const start = () => {
@@ -154,7 +168,7 @@
 										name="seat"
 										value={option}
 										checked={seat === option}
-										onchange={() => (seats[kind === 'friend' ? 'friend' : 'computer'] = option)}
+										onchange={() => (seats[seatOf] = option)}
 										class="accent-foreground"
 									/>
 									{option}
@@ -196,11 +210,7 @@
 			<span class="font-mono text-[13px] tracking-[0.08em] text-muted-foreground">YOUR GAME</span>
 			<h2 class="m-0 font-display text-3xl leading-[1.1] font-semibold">
 				{preset.name}
-				{kind === 'computer'
-					? 'against the computer'
-					: kind === 'friend'
-						? 'with a friend'
-						: 'pass and play'}
+				{KINDS[kind].title}
 			</h2>
 			<dl class="m-0 flex flex-col gap-2.5 text-[15px]">
 				{#each summary as row (row.label)}
@@ -212,15 +222,11 @@
 			</dl>
 			<button
 				type="button"
-				class="min-h-13 rounded-md bg-primary text-[17px] font-semibold text-primary-foreground disabled:opacity-60"
-				disabled={creating}
+				class="min-h-13 rounded-md bg-primary text-[17px] font-semibold text-primary-foreground aria-disabled:opacity-60"
+				aria-disabled={creating}
 				onclick={start}
 			>
-				{kind === 'friend'
-					? creating
-						? 'Creating the Room…'
-						: 'Create invite Room'
-					: 'Start game'}
+				{creating ? 'Creating the Room…' : KINDS[kind].start}
 			</button>
 			{#if failure}
 				<p class="m-0 text-sm" role="alert">{failure}</p>

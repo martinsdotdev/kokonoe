@@ -63,6 +63,9 @@ export const readPlayers = (body: unknown): Players | undefined => {
 
 export const isPlayer = (value: unknown): value is Player => value === 'X' || value === 'O';
 
+/** Both seats are taken. */
+export const full = (players: Players): boolean => players.X !== null && players.O !== null;
+
 /** `body[key]`, for a body that's an object. */
 export const field = (body: unknown, key: string): unknown =>
 	typeof body === 'object' && body !== null && key in body
@@ -82,5 +85,4 @@ const json = async (answer: Promise<Response>): Promise<unknown> => {
 
 /** A static host's fallback page, as sirv or Vite send for any path. */
 const html = (response: Response) =>
-	!response.headers.get('content-type')?.startsWith('application/json') &&
 	response.headers.get('content-type')?.startsWith('text/html') === true;

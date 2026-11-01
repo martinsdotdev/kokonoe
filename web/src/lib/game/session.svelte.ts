@@ -1,4 +1,4 @@
-import { Game, newSeed, type Board, type Cell, type Player, type Status } from '#lib/engine.js';
+import { Game, newSeed, type Cell, type Player, type Status } from '#lib/engine.js';
 import { WorkerComputer, type Computer } from './computer.js';
 import { againstLabel, type Level, type Opponent } from './launch.js';
 import type { GameFile } from './gamefile.js';
@@ -13,7 +13,7 @@ import {
 	type Seat
 } from './moves.js';
 import { illegalMove, openRecord } from './record.js';
-import { FLASH_MS, named } from './refusal.js';
+import { Refusals } from './refusal.svelte.js';
 import { resultText, type End } from './result.js';
 import { rulesetCode, type Variant } from './rules.js';
 import { browserStore, savedVariant, type GameStore, type SavedGame } from './saved.js';
@@ -76,21 +76,13 @@ export class OfflineGame implements GameSession, Controls {
 	#asking: AbortController | null = null;
 	/** What the computer is doing: nothing, searching for its move, or stuck after a failure. */
 	#phase: 'idle' | 'thinking' | 'stuck' = $state.raw('idle');
-	#flashTimer: ReturnType<typeof setTimeout> | undefined;
+	#refused = new Refusals();
 
 	view: BoardView;
 	status: Status;
 	moves: Move[];
 	won: Record<Player, number>;
 	resigned: Player | null = $state.raw(null);
-	/** The Board to flash, with a tick so the same board can flash twice running. */
-	flash: { board: Board; tick: number } | null = $state.raw(null);
-	/**
-	 * The last Cell tapped or typed was refused, until the next change: the Cell, the Board the
-	 * refusal named, if any, and a tick for each refusal. Unlike `flash`, it lasts, so the turn
-	 * line says it once.
-	 */
-	refusal: { cell: Cell; board: Board | null; tick: number } | null = $state.raw(null);
 	/** The last change was the computer's move, which the phone board shows landing. */
 	replied = $state.raw(false);
 	/** The game's id in the store, and its address once `stored`. A restart gives a new one. */
@@ -137,6 +129,14 @@ export class OfflineGame implements GameSession, Controls {
 			this.#started = saved.started;
 		}
 		this.#ask();
+	}
+
+	get flash() {
+		return this.#refused.flash;
+	}
+
+	get refusal() {
+		return this.#refused.refusal;
 	}
 
 	get against(): string {
@@ -259,7 +259,7 @@ export class OfflineGame implements GameSession, Controls {
 		this.#started = null;
 		this.resigned = null;
 		this.moves = dealtMoves(this.#game.opening(), this.variant.ruleset.depth);
-		this.#flash(null);
+		this.#refused.dispose();
 		this.#refresh();
 		this.#ask();
 	}
@@ -273,7 +273,7 @@ export class OfflineGame implements GameSession, Controls {
 	dispose() {
 		this.#cancel();
 		this.#against?.computer.dispose();
-		clearTimeout(this.#flashTimer);
+		this.#refused.dispose();
 		this.#game.free();
 	}
 
@@ -290,11 +290,7 @@ export class OfflineGame implements GameSession, Controls {
 		const before = this.view;
 		const result = this.#game.play(this.#game.ply(), cell);
 		if (typeof result === 'string') return false;
-		if ('Illegal' in result) {
-			const board = named(result.Illegal);
-			this.#flash(board);
-			this.refusal = { cell, board, tick: (this.refusal?.tick ?? 0) + 1 };
-		}
+		if ('Illegal' in result) this.#refused.refuse(cell, result.Illegal);
 		if (!('Now' in result)) return false;
 		this.#refresh();
 		this.moves = [...this.moves, playedMove(this.moves.length + 1, cell, before, this.view)];
@@ -368,7 +364,7 @@ export class OfflineGame implements GameSession, Controls {
 	}
 
 	#refresh() {
-		this.refusal = null;
+		this.#refused.clear();
 		this.replied = false;
 		this.view = boardView(this.#game);
 		this.status = this.#game.status();
@@ -377,11 +373,5 @@ export class OfflineGame implements GameSession, Controls {
 
 	#counts(): Record<Player, number> {
 		return { X: this.#game.wonCount('X'), O: this.#game.wonCount('O') };
-	}
-
-	#flash(board: Board | null) {
-		clearTimeout(this.#flashTimer);
-		this.flash = board === null ? null : { board, tick: (this.flash?.tick ?? 0) + 1 };
-		if (board !== null) this.#flashTimer = setTimeout(() => (this.flash = null), FLASH_MS);
 	}
 }

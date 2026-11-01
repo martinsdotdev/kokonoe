@@ -45,6 +45,7 @@ const DELAYS = [250, 500, 1000, 2000, 4000, 8000, 15000];
 /** A deploy's drain (1012) waits this long first, since the server isn't back yet. */
 const RESTARTING_MS = 1000;
 
+/** The closes that end the Link: reconnecting would only meet them again. */
 const FINAL: readonly number[] = [CloseCode.UpdateRequired, CloseCode.Forbidden, CloseCode.NoRoom];
 
 export class Link {
@@ -105,19 +106,18 @@ export class Link {
 		};
 		socket.onmessage = ({ data }) => {
 			const message = readServerMsg(data);
-			if (!message) return this.resync();
+			// A frame this build can't read: perhaps a newer server, so back off before asking again.
+			if (!message) return this.#lost(0);
 			if (message.type === 'Welcome') this.#tries = 0;
 			this.#events.message(message);
 		};
 		socket.onclose = ({ code }) => {
-			if (this.#socket !== socket) return;
-			this.#drop();
 			if (FINAL.includes(code)) {
+				// Disposed first, so nothing the page does next can reconnect.
 				this.dispose();
 				return this.#events.ended(code);
 			}
-			this.#events.dropped();
-			this.#retry(code === CloseCode.Restarting ? RESTARTING_MS : 0);
+			this.#lost(code === CloseCode.Restarting ? RESTARTING_MS : 0);
 		};
 	}
 
@@ -131,6 +131,13 @@ export class Link {
 		socket.close();
 	}
 
+	/** The socket is gone: say so, and reconnect after the next wait, `least` at the least. */
+	#lost(least: number) {
+		this.#drop();
+		this.#events.dropped();
+		this.#retry(least);
+	}
+
 	#retry(least: number) {
 		const delays = this.#delays;
 		const base = delays[Math.min(this.#tries, delays.length - 1)];
@@ -139,7 +146,7 @@ export class Link {
 		this.#timer = setTimeout(() => this.#connect(), wait);
 	}
 
-	/** Back online, or back in view: a socket that's waiting to reconnect tries now. */
+	/** Back online, or back in view: a Link waiting to reconnect, with no socket, tries now. */
 	#now = () => {
 		if (this.#disposed || this.#socket) return;
 		this.#connect();

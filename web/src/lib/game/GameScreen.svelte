@@ -61,8 +61,12 @@
 		);
 	});
 
-	/** The game's one live line: the last move, then the result or where to play. */
+	/**
+	 * The game's one live line: what keeps the game from going on, or the last move, then the
+	 * result or where to play.
+	 */
 	const spoken = $derived.by(() => {
+		if (session.trouble) return session.trouble.message;
 		const last = session.moves.at(-1);
 		if (session.end) {
 			// A resignation is no move, and the last move was said when it was made.
@@ -107,7 +111,8 @@
 	<ScreenHeader variant={variant.name} {against} exit="Leave game" />
 
 	<main class="mx-auto flex max-w-[1320px] flex-col gap-4 p-4 sm:gap-6 sm:p-7">
-		<h1 class="sr-only">{variant.name}, {against}</h1>
+		<!-- Focusable, so a page that swaps a game in can move focus to it. -->
+		<h1 class="sr-only" tabindex="-1">{variant.name}, {against}</h1>
 		<p class="sr-only" aria-live="polite" data-spoken>{spoken}</p>
 		{#if session.end}
 			<ResultBanner
@@ -190,7 +195,7 @@
 	{/each}
 	{#if session.trouble}
 		{@const { message, retry } = session.trouble}
-		<p class="m-0 flex flex-wrap items-center gap-3 text-sm" role="alert">
+		<p class="m-0 flex flex-wrap items-center gap-3 text-sm" data-trouble>
 			{message}
 			{#if retry}
 				<button

@@ -19,7 +19,8 @@ export type IllegalMove = "GameOver" | "WrongDepth" | "Occupied" | { BeneathDeci
 
 /**
  * A Room as it stands. `end` says how a finished game ended, which a Record can't for a
- * resignation; `offer` is the one waiting for an answer.
+ * resignation; `offer` is the one waiting for an answer; `rematch` is the Room an accepted
+ * rematch made.
  */
 export interface Snapshot {
     record: Record;
@@ -28,6 +29,7 @@ export interface Snapshot {
     offer: Offer | null;
     draws: Draws;
     end: GameEnd | null;
+    rematch: string | null;
 }
 
 /**

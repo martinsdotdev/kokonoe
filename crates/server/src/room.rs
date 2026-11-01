@@ -4,9 +4,7 @@
 //! was stored: a write that timed out may still have landed. It also stops once its last socket
 //! leaves. Either way the next `Hello` loads the Room again from the table.
 //!
-//! The Room's policies (spec §10.2) live here too: resigning, draw offers, takebacks and rematch.
-//! At most one offer waits for an answer at a time, in this task alone, until its deadline; a Room
-//! that stops forgets it.
+//! It also keeps spec §10.2's policies, and at most one offer waiting, which a stopped Room forgets.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -35,9 +33,9 @@ const COMMANDS: usize = 64;
 /// until it's answered or the offerer moves.
 #[derive(Clone, Copy, Debug)]
 pub struct Timing {
-    /// The other player answers a takeback within this, while the one who asked waits.
+    /// How long a takeback waits for its answer.
     pub takeback: Duration,
-    /// A rematch lapses after this.
+    /// How long a rematch waits for its answer.
     pub rematch: Duration,
 }
 
@@ -91,12 +89,8 @@ pub enum Command {
 pub enum Act {
     Move { ply: u16, cell: u16 },
     Resign,
-    OfferDraw,
-    AnswerDraw(bool),
-    AskTakeback,
-    AnswerTakeback(bool),
-    OfferRematch,
-    AnswerRematch(bool),
+    Offer(OfferKind),
+    Answer(OfferKind, bool),
 }
 
 impl Act {
@@ -106,12 +100,12 @@ impl Act {
             ClientMsg::Hello { .. } => return None,
             ClientMsg::Move { ply, cell } => Act::Move { ply, cell },
             ClientMsg::Resign => Act::Resign,
-            ClientMsg::OfferDraw => Act::OfferDraw,
-            ClientMsg::AnswerDraw { accept } => Act::AnswerDraw(accept),
-            ClientMsg::AskTakeback => Act::AskTakeback,
-            ClientMsg::AnswerTakeback { accept } => Act::AnswerTakeback(accept),
-            ClientMsg::OfferRematch => Act::OfferRematch,
-            ClientMsg::AnswerRematch { accept } => Act::AnswerRematch(accept),
+            ClientMsg::OfferDraw => Act::Offer(OfferKind::Draw),
+            ClientMsg::AskTakeback => Act::Offer(OfferKind::Takeback),
+            ClientMsg::OfferRematch => Act::Offer(OfferKind::Rematch),
+            ClientMsg::AnswerDraw { accept } => Act::Answer(OfferKind::Draw, accept),
+            ClientMsg::AnswerTakeback { accept } => Act::Answer(OfferKind::Takeback, accept),
+            ClientMsg::AnswerRematch { accept } => Act::Answer(OfferKind::Rematch, accept),
         })
     }
 }
@@ -129,6 +123,21 @@ pub struct Join {
 /// A write didn't do what the Room expected, so it stops.
 struct Broken;
 
+/// Why a move wasn't played: the game is over, or the move is refused.
+enum Refused {
+    Over(GameEnd),
+    Rejected(Rejection),
+}
+
+impl From<Refused> for ServerMsg {
+    fn from(refused: Refused) -> ServerMsg {
+        match refused {
+            Refused::Over(end) => ServerMsg::Ended(end),
+            Refused::Rejected(reason) => ServerMsg::Rejected { reason },
+        }
+    }
+}
+
 struct Room {
     id: RoomId,
     pool: PgPool,
@@ -140,6 +149,8 @@ struct Room {
     /// How the game ended other than by its rules: a resignation or an agreed draw.
     stopped: Option<GameEnd>,
     offer: Option<Pending>,
+    /// The Room this game's accepted rematch made.
+    rematch: Option<RoomId>,
     sockets: HashMap<Conn, Socket>,
     next: u64,
 }
@@ -182,6 +193,7 @@ pub fn spawn(
         draws: stored.draws,
         stopped,
         offer: None,
+        rematch: stored.rematch,
         sockets: HashMap::new(),
         next: 0,
     };
@@ -260,12 +272,8 @@ impl Room {
         let allowed = match act {
             Act::Move { ply, cell } => return self.play(conn, player, ply, cell).await,
             Act::Resign => self.resign(player).await?,
-            Act::OfferDraw => self.offer_draw(player).await?,
-            Act::AnswerDraw(accept) => self.answer(player, OfferKind::Draw, accept).await?,
-            Act::AskTakeback => self.ask_takeback(player),
-            Act::AnswerTakeback(accept) => self.answer(player, OfferKind::Takeback, accept).await?,
-            Act::OfferRematch => self.offer_rematch(player),
-            Act::AnswerRematch(accept) => self.answer(player, OfferKind::Rematch, accept).await?,
+            Act::Offer(kind) => self.offer(player, kind).await?,
+            Act::Answer(kind, accept) => self.answer(player, kind, accept).await?,
         };
         if !allowed {
             let reason = Rejection::NotAllowed;
@@ -281,48 +289,41 @@ impl Room {
         ply: u16,
         cell: u16,
     ) -> Result<(), Broken> {
-        let status = match self.judge(player, ply, cell) {
-            Ok(Some(status)) => status,
-            Ok(None) => return Ok(()),
-            Err(answer) => {
-                self.send(conn, answer);
+        match self.judge(player, ply, cell) {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(refused) => {
+                self.send(conn, refused.into());
                 return Ok(());
             }
-        };
-        let ruleset = self.game.state().ruleset();
-        let ended = match status {
-            Status::Over(outcome) => Some(GameEnd::of(outcome, &ruleset)),
-            Status::ToMove { .. } => None,
-        };
+        }
+        let ended = self.end();
         let before = self.game.moves().len() - 1;
         write(games::append(&self.pool, &self.id, before, cell, ended)).await?;
-        self.tell(|_, _| Some(ServerMsg::Moved { ply, cell }));
-        match ended {
-            Some(end) => {
-                self.offer = None;
-                self.tell(|_, _| Some(ServerMsg::Ended(end)));
-            }
-            // A move withdraws a takeback, which was asked of the game before it, and the mover's
-            // own draw offer.
-            None => {
-                let withdrawn = self.offer.as_ref().is_some_and(|pending| {
-                    let Offer { kind, by } = pending.offer;
-                    kind == OfferKind::Takeback || (kind == OfferKind::Draw && by == player)
-                });
-                if withdrawn {
-                    self.withdraw();
-                }
-            }
+        self.announce(ServerMsg::Moved { ply, cell });
+        if let Some(end) = ended {
+            self.offer = None;
+            self.announce(ServerMsg::Ended(end));
+            return Ok(());
+        }
+        // A move withdraws a takeback, which was asked of the game before it, and the mover's own
+        // draw offer.
+        let withdrawn = self.offer.as_ref().is_some_and(|pending| {
+            let Offer { kind, by } = pending.offer;
+            kind == OfferKind::Takeback || (kind == OfferKind::Draw && by == player)
+        });
+        if withdrawn {
+            self.withdraw();
         }
         Ok(())
     }
 
-    /// Plays `player`'s move at `ply` if it's theirs to make and the rules allow it, giving the
-    /// game's status after it; nothing for a move already made; or the answer that refuses it.
-    fn judge(&mut self, player: Player, ply: u16, cell: u16) -> Result<Option<Status>, ServerMsg> {
-        let refuse = |reason| ServerMsg::Rejected { reason };
+    /// Plays `player`'s move at `ply` if it's theirs to make and the rules allow it: true once
+    /// it's played, false for a move already made, or why it's refused.
+    fn judge(&mut self, player: Player, ply: u16, cell: u16) -> Result<bool, Refused> {
+        let refuse = Refused::Rejected;
         if let Some(end) = self.end() {
-            return Err(ServerMsg::Ended(end));
+            return Err(Refused::Over(end));
         }
         if !self.seats.full() || Ply::new(ply).player() != player {
             return Err(refuse(Rejection::NotAllowed));
@@ -330,8 +331,8 @@ impl Room {
         let depth = self.game.state().ruleset().depth;
         let cell = Cell::from_index(depth, cell).map_err(|_| refuse(Rejection::IllegalMove))?;
         match self.game.play(Ply::new(ply), cell) {
-            Ok(Played::Now(status)) => Ok(Some(status)),
-            Ok(Played::Already) => Ok(None),
+            Ok(Played::Now(_)) => Ok(true),
+            Ok(Played::Already) => Ok(false),
             Err(PlayError::Illegal(_)) => Err(refuse(Rejection::IllegalMove)),
             Err(PlayError::OutOfOrder { want, .. }) => {
                 Err(refuse(Rejection::OutOfOrder { want: want.get() }))
@@ -339,54 +340,55 @@ impl Room {
         }
     }
 
-    /// Whether the game goes on with both seats filled, so it can be resigned or drawn.
-    fn playing(&self) -> bool {
-        self.seats.full() && self.end().is_none()
-    }
-
     async fn resign(&mut self, player: Player) -> Result<bool, Broken> {
-        if !self.playing() {
+        if !self.seats.full() || self.end().is_some() {
             return Ok(false);
         }
-        self.finish(GameEnd {
+        let end = GameEnd {
             result: GameResult::won_by(Some(player.opponent())),
             termination: Termination::Resign,
-        })
-        .await?;
+        };
+        self.stop(end).await?;
+        self.announce(ServerMsg::Ended(end));
         Ok(true)
     }
 
-    async fn offer_draw(&mut self, player: Player) -> Result<bool, Broken> {
-        let made = self.draws.get(player);
-        if !self.playing() || self.offer.is_some() || made >= Draws::MAX {
-            return Ok(false);
-        }
-        write(games::offer_draw(&self.pool, &self.id, player, made)).await?;
-        match player {
-            Player::X => self.draws.x += 1,
-            Player::O => self.draws.o += 1,
-        }
-        self.propose(OfferKind::Draw, player, None);
+    /// Puts `player`'s offer of `kind` to the other player, if it can be made now.
+    async fn offer(&mut self, player: Player, kind: OfferKind) -> Result<bool, Broken> {
+        let wait = match kind {
+            OfferKind::Draw => {
+                let made = self.draws.get(player);
+                if !self.can_offer(false) || made >= Draws::MAX {
+                    return Ok(false);
+                }
+                write(games::offer_draw(&self.pool, &self.id, player, made)).await?;
+                self.draws.bump(player);
+                None
+            }
+            OfferKind::Takeback => {
+                let ours = self.taken_back(player).is_some();
+                if !self.takebacks || !self.can_offer(false) || !ours {
+                    return Ok(false);
+                }
+                Some(self.timing.takeback)
+            }
+            OfferKind::Rematch => {
+                if !self.can_offer(true) || self.rematch.is_some() {
+                    return Ok(false);
+                }
+                Some(self.timing.rematch)
+            }
+        };
+        let offer = Offer { kind, by: player };
+        let lapses = wait.map(|wait| Instant::now() + wait);
+        self.offer = Some(Pending { offer, lapses });
+        self.announce(ServerMsg::Offer(offer));
         Ok(true)
     }
 
-    fn ask_takeback(&mut self, player: Player) -> bool {
-        let allowed = self.takebacks && self.playing() && self.offer.is_none();
-        if !allowed || self.taken_back(player).is_none() {
-            return false;
-        }
-        let lapses = Instant::now() + self.timing.takeback;
-        self.propose(OfferKind::Takeback, player, Some(lapses));
-        true
-    }
-
-    fn offer_rematch(&mut self, player: Player) -> bool {
-        if !self.seats.full() || self.end().is_none() || self.offer.is_some() {
-            return false;
-        }
-        let lapses = Instant::now() + self.timing.rematch;
-        self.propose(OfferKind::Rematch, player, Some(lapses));
-        true
+    /// Both seats are filled, the game is `over` or goes on, and no offer waits.
+    fn can_offer(&self, over: bool) -> bool {
+        self.seats.full() && self.end().is_some() == over && self.offer.is_none()
     }
 
     /// `player`'s answer to the other's offer of `kind`, which must be the one waiting.
@@ -404,14 +406,8 @@ impl Room {
         let Some(offer) = waiting else {
             return Ok(false);
         };
-        self.offer = None;
         if !accept {
-            self.tell(|_, _| {
-                Some(ServerMsg::OfferAnswered {
-                    kind,
-                    accepted: false,
-                })
-            });
+            self.withdraw();
             return Ok(true);
         }
         let accepted = ServerMsg::OfferAnswered {
@@ -419,77 +415,77 @@ impl Room {
             accepted: true,
         };
         match kind {
-            OfferKind::Draw => {
-                self.tell(|_, _| Some(accepted.clone()));
-                self.finish(GameEnd {
-                    result: GameResult::Draw,
-                    termination: Termination::AgreedDraw,
-                })
-                .await?;
-            }
-            OfferKind::Takeback => {
-                // Nothing moved since it was asked, or the move would have withdrawn it.
-                let Some(keep) = self.taken_back(offer.by) else {
-                    return Ok(false);
-                };
-                let before = self.game.moves().len();
-                write(games::take_back(&self.pool, &self.id, before, keep)).await?;
-                for _ in keep..before {
-                    self.game.undo();
-                }
-                let to_ply = self.game.state().ply().get();
-                self.tell(|_, _| Some(accepted.clone()));
-                self.tell(|_, _| Some(ServerMsg::TookBack { to_ply }));
-            }
-            OfferKind::Rematch => {
-                let rematch = RoomId::new();
-                let seed = Seed(u64::from_le_bytes(bytes()));
-                write(games::rematch(&self.pool, &self.id, &rematch, seed)).await?;
-                let room = rematch.to_string();
-                self.tell(|_, _| Some(accepted.clone()));
-                self.tell(|_, _| Some(ServerMsg::RematchRoom { room: room.clone() }));
-            }
+            OfferKind::Draw => self.agree_draw(accepted).await,
+            OfferKind::Takeback => self.take_back(offer.by, accepted).await,
+            OfferKind::Rematch => self.rematch(accepted).await,
         }
+    }
+
+    async fn agree_draw(&mut self, accepted: ServerMsg) -> Result<bool, Broken> {
+        let end = GameEnd {
+            result: GameResult::Draw,
+            termination: Termination::AgreedDraw,
+        };
+        self.stop(end).await?;
+        self.announce(accepted);
+        self.announce(ServerMsg::Ended(end));
         Ok(true)
     }
 
-    /// How many of the game's moves are left once `player`'s last one is taken back, if they've
-    /// made one: the dealt opening can't be.
+    /// Undoes back to before `asker`'s last move.
+    async fn take_back(&mut self, asker: Player, accepted: ServerMsg) -> Result<bool, Broken> {
+        // Nothing moved since it was asked, or the move would have withdrawn it.
+        let Some(keep) = self.taken_back(asker) else {
+            return Ok(false);
+        };
+        let before = self.game.moves().len();
+        write(games::take_back(&self.pool, &self.id, before, keep)).await?;
+        for _ in keep..before {
+            self.game.undo();
+        }
+        self.offer = None;
+        let to_ply = self.game.state().ply().get();
+        self.announce(accepted);
+        self.announce(ServerMsg::TookBack { to_ply });
+        Ok(true)
+    }
+
+    /// Makes the next Room, X and O swapped, and sends both players to it.
+    async fn rematch(&mut self, accepted: ServerMsg) -> Result<bool, Broken> {
+        let rematch = RoomId::new();
+        let seed = Seed(u64::from_le_bytes(bytes()));
+        write(games::rematch(&self.pool, &self.id, &rematch, seed)).await?;
+        self.offer = None;
+        let room = rematch.to_string();
+        self.rematch = Some(rematch);
+        self.announce(accepted);
+        self.announce(ServerMsg::RematchRoom { room });
+        Ok(true)
+    }
+
     fn taken_back(&self, player: Player) -> Option<usize> {
-        let dealt = self.game.opening().len();
-        (0..self.game.moves().len())
-            .rev()
-            .find(|&index| ply(dealt + index).player() == player)
+        taken_back(&self.game, player)
     }
 
-    /// Puts `kind`, from `by`, to the other player, lapsing at `lapses` if it does.
-    fn propose(&mut self, kind: OfferKind, by: Player, lapses: Option<Instant>) {
-        let offer = Offer { kind, by };
-        self.offer = Some(Pending { offer, lapses });
-        self.tell(|_, _| Some(ServerMsg::Offer(offer)));
-    }
-
-    /// The waiting offer stands no more: it lapsed, or a move withdrew it.
+    /// The waiting offer stands no more: declined, lapsed, or withdrawn by a move.
     fn withdraw(&mut self) {
         let Some(pending) = self.offer.take() else {
             return;
         };
         let kind = pending.offer.kind;
-        self.tell(|_, _| {
-            Some(ServerMsg::OfferAnswered {
-                kind,
-                accepted: false,
-            })
+        self.announce(ServerMsg::OfferAnswered {
+            kind,
+            accepted: false,
         });
     }
 
-    /// Ends the game where it stands: a resignation or an agreed draw.
-    async fn finish(&mut self, end: GameEnd) -> Result<(), Broken> {
+    /// Ends the game where it stands, a resignation or an agreed draw, in the table first. Any
+    /// offer waiting goes with it, as `Ended` tells the players.
+    async fn stop(&mut self, end: GameEnd) -> Result<(), Broken> {
         let moves = self.game.moves().len();
         write(games::end(&self.pool, &self.id, moves, end)).await?;
         self.stopped = Some(end);
         self.offer = None;
-        self.tell(|_, _| Some(ServerMsg::Ended(end)));
         Ok(())
     }
 
@@ -510,7 +506,13 @@ impl Room {
             offer: self.offer.as_ref().map(|pending| pending.offer),
             draws: self.draws,
             end: self.end(),
+            rematch: self.rematch.as_ref().map(RoomId::to_string),
         }
+    }
+
+    /// Queues `message` for every socket.
+    fn announce(&mut self, message: ServerMsg) {
+        self.tell(|_, _| Some(message.clone()));
     }
 
     /// Queues each socket the message `to` gives it, if any. A socket that's gone, or so far
@@ -530,6 +532,15 @@ impl Room {
             self.sockets.remove(&conn);
         }
     }
+}
+
+/// How many of `game`'s moves are left once `player`'s last one is taken back, if they've made
+/// one: the dealt opening can't be.
+fn taken_back(game: &Game, player: Player) -> Option<usize> {
+    let dealt = game.opening().len();
+    (0..game.moves().len())
+        .rev()
+        .find(|&index| ply(dealt + index).player() == player)
 }
 
 /// The ply `index` counts to, the dealt opening included.
@@ -558,7 +569,49 @@ async fn write(write: impl Future<Output = Result<bool, sqlx::Error>>) -> Result
 
 #[cfg(test)]
 mod tests {
+    use kokonoe_engine::{Preset, RandomPlies, Ruleset};
+
     use super::*;
+
+    /// Plays the first legal Cell for whoever is to move.
+    fn step(game: &mut Game) {
+        let Status::ToMove { moves, .. } = game.state().status() else {
+            panic!("the game is over");
+        };
+        game.play(game.state().ply(), moves.nth(0)).unwrap();
+    }
+
+    #[test]
+    fn a_takeback_never_reaches_into_a_dealt_opening() {
+        let ruleset = Ruleset {
+            opening: kokonoe_engine::Opening::Random(RandomPlies::try_from(3).unwrap()),
+            ..Preset::Standard.ruleset()
+        };
+        // Three dealt plies, X, O and X: O moves first.
+        let mut game = Game::new(ruleset, Seed(1));
+        assert_eq!(game.opening().len(), 3);
+        assert_eq!(
+            (taken_back(&game, Player::X), taken_back(&game, Player::O)),
+            (None, None)
+        );
+        step(&mut game);
+        assert_eq!(
+            taken_back(&game, Player::O),
+            Some(0),
+            "back to the dealt opening"
+        );
+        assert_eq!(taken_back(&game, Player::X), None, "X has dealt plies only");
+        step(&mut game);
+        assert_eq!(taken_back(&game, Player::X), Some(1));
+        assert_eq!(taken_back(&game, Player::O), Some(0), "two plies back");
+    }
+
+    #[test]
+    fn offers_wait_as_spec_10_2_says() {
+        let timing = Timing::default();
+        assert_eq!(timing.takeback, Duration::from_secs(15));
+        assert_eq!(timing.rematch, Duration::from_secs(60));
+    }
 
     #[test]
     fn a_room_id_is_20_lowercase_hex_digits() {

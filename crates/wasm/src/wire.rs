@@ -61,7 +61,8 @@ pub enum ServerMsg {
 }
 
 /// A Room as it stands. `end` says how a finished game ended, which a Record can't for a
-/// resignation; `offer` is the one waiting for an answer.
+/// resignation; `offer` is the one waiting for an answer; `rematch` is the Room an accepted
+/// rematch made.
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub struct Snapshot {
@@ -73,6 +74,8 @@ pub struct Snapshot {
     pub draws: Draws,
     #[tsify(type = "GameEnd | null")]
     pub end: Option<GameEnd>,
+    #[tsify(type = "string | null")]
+    pub rematch: Option<String>,
 }
 
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]

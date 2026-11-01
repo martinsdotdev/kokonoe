@@ -24,28 +24,24 @@ pub enum ClientMsg {
     },
     /// A move at `ply`, which counts the dealt opening. Idempotent by ply, so a resend after a
     /// reconnect changes nothing.
-    Move {
-        ply: u16,
-        cell: u16,
-    },
+    Move { ply: u16, cell: u16 },
     /// Gives the game up: the other player wins.
     Resign,
-    /// Offers a draw, at most 3 times a game. It stands until it's answered or the offerer moves.
+    /// Offers a draw, at most [`Draws::MAX`] times a game. It stands until it's answered or the
+    /// offerer moves.
     OfferDraw,
-    AnswerDraw {
-        accept: bool,
-    },
+    /// Accepts or declines the other player's draw offer.
+    AnswerDraw { accept: bool },
     /// Asks to undo back to before this player's last move, in a Room that allows takebacks. The
-    /// other player has 15 s to answer, and any move withdraws it.
+    /// other player answers before it lapses, and any move withdraws it.
     AskTakeback,
-    AnswerTakeback {
-        accept: bool,
-    },
-    /// Offers another game, X and O swapped, once this one is over. It lapses after 60 s.
+    /// Accepts or declines the other player's takeback.
+    AnswerTakeback { accept: bool },
+    /// Offers another game, X and O swapped, once this one is over and before it has had one. It
+    /// lapses if it isn't answered.
     OfferRematch,
-    AnswerRematch {
-        accept: bool,
-    },
+    /// Accepts or declines the other player's rematch.
+    AnswerRematch { accept: bool },
 }
 
 /// What a socket comes to a Room as. Spectators join it with KOK-61.
@@ -69,16 +65,18 @@ pub enum ServerMsg {
     Welcome { you: Player, snapshot: Snapshot },
     /// A move was played and stored.
     Moved { ply: u16, cell: u16 },
-    /// The sender's move, offer or answer changed nothing.
+    /// The sender's message changed nothing.
     Rejected { reason: Rejection },
     /// The game is over: after the move, resignation or agreed draw that ended it, or to a move
-    /// sent after.
+    /// sent after. It withdraws a draw offer or takeback still waiting. Rating changes join it
+    /// with KOK-62.
     Ended(GameEnd),
     /// A player offered a draw, a takeback or a rematch, which the other answers.
     Offer(Offer),
     /// The offer stands no more: answered, lapsed, or withdrawn by a move.
     OfferAnswered { kind: OfferKind, accepted: bool },
-    /// An accepted takeback: the game is as it was after `to_ply` plies.
+    /// An accepted takeback: the game is as it was after `to_ply` plies. Clocks join it with
+    /// KOK-57.
     TookBack { to_ply: u16 },
     /// An accepted rematch: the new Room, where both players already have their seats.
     RematchRoom { room: String },
@@ -95,11 +93,13 @@ pub struct Snapshot {
     pub takebacks: bool,
     /// The offer waiting for an answer, if one is.
     pub offer: Option<Offer>,
-    /// How many draws each player has offered, of the 3 a game allows.
+    /// How many draws each player has offered, of the [`Draws::MAX`] a game allows.
     pub draws: Draws,
     /// How the game ended, once it has: a resignation or an agreed draw can't be read from the
     /// Record.
     pub end: Option<GameEnd>,
+    /// The Room an accepted rematch made, so a player who missed `RematchRoom` can follow it.
+    pub rematch: Option<String>,
 }
 
 /// What a player offered.
@@ -110,6 +110,7 @@ pub struct Offer {
     pub by: Player,
 }
 
+/// What an offer is for.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OfferKind {
@@ -132,11 +133,21 @@ impl Draws {
     /// How many draws a player may offer in one game.
     pub const MAX: u8 = 3;
 
+    /// The draws `player` has offered.
     pub fn get(&self, player: Player) -> u8 {
         match player {
             Player::X => self.x,
             Player::O => self.o,
         }
+    }
+
+    /// Counts one more draw offered by `player`.
+    pub fn bump(&mut self, player: Player) {
+        let made = match player {
+            Player::X => &mut self.x,
+            Player::O => &mut self.o,
+        };
+        *made = made.saturating_add(1);
     }
 }
 
@@ -171,6 +182,9 @@ pub enum GameResult {
 }
 
 impl GameResult {
+    pub const ALL: [GameResult; 3] = [GameResult::XWins, GameResult::OWins, GameResult::Draw];
+
+    /// The Result of a game `winner` won, or a draw without one.
     pub const fn won_by(winner: Option<Player>) -> GameResult {
         match winner {
             Some(Player::X) => GameResult::XWins,
@@ -179,6 +193,7 @@ impl GameResult {
         }
     }
 
+    /// The Result as spec §4.4 spells it, on the wire and in the `games` table.
     pub const fn as_str(self) -> &'static str {
         match self {
             GameResult::XWins => "1-0",
@@ -187,8 +202,9 @@ impl GameResult {
         }
     }
 
+    /// The Result `text` spells, if it spells one.
     pub fn parse(text: &str) -> Option<GameResult> {
-        [GameResult::XWins, GameResult::OWins, GameResult::Draw]
+        GameResult::ALL
             .into_iter()
             .find(|result| result.as_str() == text)
     }
@@ -232,6 +248,7 @@ impl Termination {
         }
     }
 
+    /// The Termination as spec §4.4 spells it, on the wire and in the `games` table.
     pub const fn as_str(self) -> &'static str {
         match self {
             Termination::Line => "line",
@@ -242,6 +259,7 @@ impl Termination {
         }
     }
 
+    /// The Termination `text` spells, if it spells one.
     pub fn parse(text: &str) -> Option<Termination> {
         Termination::ALL
             .into_iter()
@@ -268,7 +286,7 @@ impl Players {
     }
 }
 
-/// Why a move changed nothing.
+/// Why a message changed nothing.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rejection {
@@ -277,7 +295,8 @@ pub enum Rejection {
     /// The ply isn't the next one, nor a move already made there; `want` is the next. The client
     /// is behind, and reconnects for a fresh `Welcome`.
     OutOfOrder { want: u16 },
-    /// It isn't this socket's move to make: the other seat's turn, or the other seat still empty.
+    /// It isn't this socket's to do now: the other seat's turn, the other seat still empty, a
+    /// finished game, an offer already waiting, or no such offer to answer.
     NotAllowed,
 }
 
@@ -339,6 +358,7 @@ mod tests {
                 }),
                 draws: Draws { x: 1, o: 0 },
                 end: None,
+                rematch: None,
             },
         };
         pinned(
@@ -349,7 +369,7 @@ mod tests {
                 r#""objective":"Line","fallback":"Draw","opening":"Free"},"#,
                 r#""seed":"00000000005eed00","moves":[38]},"#,
                 r#""players":{"X":"guest-4821","O":null},"takebacks":true,"#,
-                r#""offer":{"kind":"Draw","by":"X"},"draws":{"X":1,"O":0},"end":null}}"#
+                r#""offer":{"kind":"Draw","by":"X"},"draws":{"X":1,"O":0},"end":null,"rematch":null}}"#
             ),
         );
         pinned(
@@ -452,6 +472,13 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(termination).unwrap(),
                 termination.as_str(),
+                "the wire and the table spell it alike"
+            );
+        }
+        for result in GameResult::ALL {
+            assert_eq!(
+                serde_json::to_value(result).unwrap(),
+                result.as_str(),
                 "the wire and the table spell it alike"
             );
         }

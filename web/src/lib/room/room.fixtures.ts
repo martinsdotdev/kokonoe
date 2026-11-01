@@ -25,7 +25,8 @@ export const welcome = (
 		takebacks: false,
 		offer: null,
 		draws: { X: 0, O: 0 },
-		end: null
+		end: null,
+		rematch: null
 	}
 });
 

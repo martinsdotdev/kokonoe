@@ -426,6 +426,7 @@ mod wire {
                 offer: snapshot.offer.map(Offer::from),
                 draws: snapshot.draws.into(),
                 end: snapshot.end.map(GameEnd::from),
+                rematch: snapshot.rematch,
             }
         }
     }
@@ -806,6 +807,7 @@ mod tests {
                         offer: None,
                         draws: protocol::Draws::default(),
                         end: None,
+                        rematch: None,
                     },
                 },
                 protocol::ServerMsg::Welcome {
@@ -820,6 +822,7 @@ mod tests {
                             result: protocol::GameResult::Draw,
                             termination: protocol::Termination::AgreedDraw,
                         }),
+                        rematch: Some("0123456789abcdef0123".into()),
                     },
                 },
                 protocol::ServerMsg::Moved { ply: 3, cell: 728 },

@@ -1,7 +1,9 @@
 //! The `games` table: one row a Room, written through before anything is acknowledged.
 
+use std::time::Duration;
+
 use kokonoe_engine::{Player, Preset, RULES_VERSION, Record, Ruleset, Seed};
-use kokonoe_protocol::{Draws, GameEnd, GameResult, Players, Termination};
+use kokonoe_protocol::{Draws, GameEnd, GameResult, Players, Termination, TimeControl};
 use sqlx::PgPool;
 
 use crate::room::RoomId;
@@ -63,8 +65,8 @@ impl Seats {
     }
 }
 
-/// A Room as stored: its game so far, its host's Handle, who sits where, the Room's option, the
-/// draws offered, and how the game ended once it has.
+/// A Room as stored: its game so far, its host's Handle, who sits where, the Room's options, the
+/// draws offered, its clocks, and how the game ended once it has.
 pub struct Stored {
     pub record: Record,
     pub host: String,
@@ -76,6 +78,12 @@ pub struct Stored {
     pub end: Option<GameEnd>,
     /// The Room this game's rematch made, once one has.
     pub rematch: Option<RoomId>,
+    /// The time control, or None for an untimed Room.
+    pub clock: Option<TimeControl>,
+    /// In a timed Room, each played move's mover's ms left after it.
+    pub clocks: Vec<u32>,
+    /// How long ago the turn now running began, by the table's clock.
+    pub turn: Duration,
 }
 
 impl Stored {
@@ -92,6 +100,7 @@ pub struct NewGame {
     pub host: AccountId,
     pub seat: Player,
     pub takebacks: bool,
+    pub clock: Option<TimeControl>,
 }
 
 /// Makes the Room `room`, with the host in their seat, the other seat empty, and no moves.
@@ -102,12 +111,14 @@ pub async fn insert(pool: &PgPool, room: &RoomId, game: NewGame) -> Result<(), s
         host,
         seat,
         takebacks,
+        clock,
     } = game;
     let json = serde_json::to_string(&ruleset).expect("a Ruleset is always JSON");
     sqlx::query(
         "INSERT INTO games
-             (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id, takebacks)
-         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9)",
+             (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id, takebacks,
+              clock)
+         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10)",
     )
     .bind(room.as_str())
     .bind(i64::from(RULES_VERSION))
@@ -118,13 +129,14 @@ pub async fn insert(pool: &PgPool, room: &RoomId, game: NewGame) -> Result<(), s
     .bind((seat == Player::X).then_some(host))
     .bind((seat == Player::O).then_some(host))
     .bind(takebacks)
+    .bind(clock.map(|clock| clock.to_string()))
     .execute(pool)
     .await?;
     Ok(())
 }
 
 /// Puts `account` in the empty seat `player`; false if it wasn't empty, or `account` holds the
-/// other one.
+/// other one. Filling the second seat starts the first turn.
 pub async fn seat(
     pool: &PgPool,
     room: &RoomId,
@@ -133,11 +145,11 @@ pub async fn seat(
 ) -> Result<bool, sqlx::Error> {
     let query = match player {
         Player::X => {
-            "UPDATE games SET x_id = $2, updated_at = now()
+            "UPDATE games SET x_id = $2, turn_since = now(), updated_at = now()
              WHERE room = $1 AND x_id IS NULL AND o_id IS DISTINCT FROM $2"
         }
         Player::O => {
-            "UPDATE games SET o_id = $2, updated_at = now()
+            "UPDATE games SET o_id = $2, turn_since = now(), updated_at = now()
              WHERE room = $1 AND o_id IS NULL AND x_id IS DISTINCT FROM $2"
         }
     };
@@ -154,19 +166,22 @@ fn count(moves: usize) -> i64 {
     i64::try_from(moves).expect("a game has at most 729 moves")
 }
 
-/// Appends `cell`, the move after the first `before`, and how it ended the game if it did. False,
-/// changing nothing, unless the row holds exactly `before` moves and no Result, so a write can
-/// never land twice or out of order.
+/// Appends `cell`, the move after the first `before`, with its mover's ms `left` in a timed Room,
+/// and how it ended the game if it did. False, changing nothing, unless the row holds exactly
+/// `before` moves and no Result, so a write can never land twice or out of order.
 pub async fn append(
     pool: &PgPool,
     room: &RoomId,
     before: usize,
     cell: u16,
+    left: Option<u32>,
     ended: Option<GameEnd>,
 ) -> Result<bool, sqlx::Error> {
     let done = sqlx::query(
         "UPDATE games SET moves = array_append(moves, $3), result = $4, termination = $5,
-                          updated_at = now()
+                          clocks = CASE WHEN $6::integer IS NULL THEN clocks
+                                        ELSE array_append(clocks, $6) END,
+                          turn_since = now(), updated_at = now()
          WHERE room = $1 AND cardinality(moves) = $2 AND result IS NULL",
     )
     .bind(room.as_str())
@@ -174,12 +189,14 @@ pub async fn append(
     .bind(i32::from(cell))
     .bind(ended.map(|end| end.result.as_str()))
     .bind(ended.map(|end| end.termination.as_str()))
+    .bind(left.map(|left| i32::try_from(left).unwrap_or(i32::MAX)))
     .execute(pool)
     .await?;
     Ok(done.rows_affected() == 1)
 }
 
-/// Ends the game after its first `moves` moves without another: a resignation or an agreed draw.
+/// Ends the game after its first `moves` moves without another: a resignation, an agreed draw or
+/// a timeout.
 pub async fn end(
     pool: &PgPool,
     room: &RoomId,
@@ -199,7 +216,8 @@ pub async fn end(
     Ok(done.rows_affected() == 1)
 }
 
-/// Takes the game back from `before` moves to its first `to`: an accepted takeback.
+/// Takes the game, and its clocks, back from `before` moves to its first `to`: an accepted
+/// takeback, which starts a turn.
 pub async fn take_back(
     pool: &PgPool,
     room: &RoomId,
@@ -207,12 +225,26 @@ pub async fn take_back(
     to: usize,
 ) -> Result<bool, sqlx::Error> {
     let done = sqlx::query(
-        "UPDATE games SET moves = moves[1:$3], updated_at = now()
+        "UPDATE games SET moves = moves[1:$3], clocks = clocks[1:$3], turn_since = now(),
+                          updated_at = now()
          WHERE room = $1 AND cardinality(moves) = $2 AND result IS NULL",
     )
     .bind(room.as_str())
     .bind(count(before))
     .bind(i32::try_from(to).expect("a game has at most 729 moves"))
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Deletes the game after its first `moves` moves, which goes on: an abort, which keeps nothing.
+/// A rematch that named it names none.
+pub async fn abort(pool: &PgPool, room: &RoomId, moves: usize) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "DELETE FROM games WHERE room = $1 AND cardinality(moves) = $2 AND result IS NULL",
+    )
+    .bind(room.as_str())
+    .bind(count(moves))
     .execute(pool)
     .await?;
     Ok(done.rows_affected() == 1)
@@ -244,7 +276,7 @@ pub async fn offer_draw(
 }
 
 /// Makes `rematch` the next game of the finished Room `room`, which had none: the same rules and
-/// option, a new Seed, and its players in each other's seats. The old row names it, in the same
+/// options, a new Seed, and its players in each other's seats. The old row names it, in the same
 /// statement, so a game is rematched once.
 pub async fn rematch(
     pool: &PgPool,
@@ -255,8 +287,9 @@ pub async fn rematch(
     let done = sqlx::query(
         "WITH made AS (
              INSERT INTO games
-                 (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id, takebacks)
-             SELECT $2, $3, ruleset, ruleset_code, $4, host_id, o_id, x_id, takebacks
+                 (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id, takebacks,
+                  clock, turn_since)
+             SELECT $2, $3, ruleset, ruleset_code, $4, host_id, o_id, x_id, takebacks, clock, now()
              FROM games WHERE room = $1 AND result IS NOT NULL AND rematch IS NULL
              RETURNING room
          )
@@ -286,6 +319,9 @@ struct StoredRow {
     result: Option<String>,
     termination: Option<String>,
     rematch: Option<String>,
+    clock: Option<String>,
+    clocks: Vec<i32>,
+    turn_ms: i64,
 }
 
 /// The Room `room`, as the server last stored it. Its Record is read through the engine's own
@@ -295,7 +331,9 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
         "SELECT json_build_object('rules_version', g.rules_version, 'ruleset', g.ruleset,
                                   'seed', g.seed, 'moves', g.moves)::text AS record,
                 h.handle::text AS host, g.x_id, x.handle::text AS x, g.o_id, o.handle::text AS o,
-                g.takebacks, g.x_draw_offers, g.o_draw_offers, g.result, g.termination, g.rematch
+                g.takebacks, g.x_draw_offers, g.o_draw_offers, g.result, g.termination, g.rematch,
+                g.clock, g.clocks,
+                COALESCE((extract(epoch FROM now() - g.turn_since) * 1000)::bigint, 0) AS turn_ms
          FROM games g
          JOIN accounts h ON h.id = g.host_id
          LEFT JOIN accounts x ON x.id = g.x_id
@@ -342,6 +380,16 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
             Some(rematch) => Some(RoomId::parse(&rematch).ok_or_else(|| unreadable("a Room id"))?),
             None => None,
         },
+        clock: match found.clock {
+            Some(clock) => Some(TimeControl::parse(&clock).ok_or_else(|| unreadable("a clock"))?),
+            None => None,
+        },
+        clocks: found
+            .clocks
+            .into_iter()
+            .map(|ms| u32::try_from(ms).map_err(|_| unreadable("a clock")))
+            .collect::<Result<_, _>>()?,
+        turn: Duration::from_millis(u64::try_from(found.turn_ms).unwrap_or(0)),
     }))
 }
 

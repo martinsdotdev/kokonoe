@@ -28,7 +28,7 @@ test('a host invites a friend from Home, and plays once they join', async ({ con
 	await page.getByRole('button', { name: 'Create invite Room' }).click();
 
 	await expect(page).toHaveURL(`/r/${ROOM}`);
-	expect(room.created).toEqual([{ rules: 'std', seat: 'Random', takebacks: false }]);
+	expect(room.created).toEqual([{ rules: 'std', seat: 'Random', takebacks: false, clock: null }]);
 	await expect(page.getByRole('heading', { name: 'Waiting for your friend' })).toBeVisible();
 	await expect(page).toHaveTitle('Waiting for your friend · Kokonoe');
 	const link = `${new URL(page.url()).origin}/r/${ROOM}`;
@@ -166,7 +166,8 @@ test('a joiner reads the card, and joins on Accept or leaves on Decline', async 
 			rules: 'std',
 			players: { X: HOST, O: null },
 			you: null,
-			takebacks: false
+			takebacks: false,
+			clock: null
 		}
 	});
 	await page.goto(`/r/${ROOM}`);
@@ -207,7 +208,7 @@ test('a dropped socket reconnects into the game as it now stands', async ({ page
 
 	room.moved(0, top[0]);
 	await expect(marked(page)).toHaveCount(1);
-	room.say({ type: 'Moved', ply: 5, cell: top[5] });
+	room.say({ type: 'Moved', ply: 5, cell: top[5], clocks: null });
 	await expect.poll(() => room.hellos(), 'a gap resyncs').toBe(3);
 	room.say({ type: 'Rejected', reason: { OutOfOrder: { want: 1 } } });
 	await expect.poll(() => room.hellos(), 'a refusal resyncs').toBe(4);
@@ -228,7 +229,8 @@ test('a Room that isn’t there, or is full, says so', async ({ page }) => {
 			rules: 'std',
 			players: { X: HOST, O: 'guest-0007' },
 			you: null,
-			takebacks: false
+			takebacks: false,
+			clock: null
 		}
 	});
 	await page.goto(`/r/${ROOM}`);
@@ -343,7 +345,8 @@ test.describe('a Room’s endings', () => {
 				rules: 'std',
 				players: { X: HOST, O: null },
 				you: null,
-				takebacks: true
+				takebacks: true,
+				clock: null
 			}
 		});
 		await page.goto('/new-game?vs=friend');
@@ -352,7 +355,7 @@ test.describe('a Room’s endings', () => {
 		await page.getByRole('button', { name: 'Create invite Room' }).click();
 		await expect
 			.poll(() => room.created)
-			.toEqual([{ rules: 'std', seat: 'Random', takebacks: true }]);
+			.toEqual([{ rules: 'std', seat: 'Random', takebacks: true, clock: null }]);
 		await expect(page.getByText('Takebacks allowed')).toBeVisible();
 	});
 
@@ -470,7 +473,7 @@ test.describe('a Room’s endings', () => {
 		await expect(offer(page).locator('[data-left]')).toHaveText(/^\d+ seconds left to answer$/);
 		room.say({ type: 'OfferAnswered', kind: 'Takeback', accepted: true });
 		state.moves = top.slice(0, 1);
-		room.say({ type: 'TookBack', to_ply: 1 });
+		room.say({ type: 'TookBack', to_ply: 1, clocks: null });
 		await expect(marked(page)).toHaveCount(1);
 		await expect(offer(page)).toHaveCount(0);
 		await expect(turnLine(page, 'O: play in board 4.')).toBeVisible();

@@ -156,6 +156,7 @@ pub async fn create(
         host: host.account,
         seat,
         takebacks: asked.takebacks,
+        clock: asked.clock,
     };
     games::insert(&state.pool, &room, game).await?;
     let link = [(header::LOCATION, format!("/r/{room}"))];
@@ -186,6 +187,7 @@ pub async fn card(
         rules: stored.record.ruleset.to_string(),
         you: asker.and_then(|asker| stored.seats.of(asker.account)),
         takebacks: stored.takebacks,
+        clock: stored.clock,
         players: stored.seats.players(),
         host: stored.host,
     };

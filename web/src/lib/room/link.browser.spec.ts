@@ -48,7 +48,7 @@ describe('a Room’s link', () => {
 		fake.last().accept();
 		expect(fake.last().sent).toEqual([HELLO]);
 		fake.last().say(welcome('X'));
-		fake.last().say({ type: 'Moved', ply: 0, cell: 40 });
+		fake.last().say({ type: 'Moved', ply: 0, cell: 40, clocks: null });
 		expect(heard.map((message) => message.type)).toEqual(['Welcome', 'Moved']);
 	});
 

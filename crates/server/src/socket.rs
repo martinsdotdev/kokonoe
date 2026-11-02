@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use crate::room::{Act, Command, Conn, RoomId};
 use crate::rooms::{Joined, Refused};
 use crate::session::{self, Session};
+use crate::time;
 use crate::{AppState, Unavailable, from_here, not_from_here};
 
 /// How long a socket has to say `Hello`.
@@ -131,13 +132,23 @@ async fn relay(
     loop {
         tokio::select! {
             received = socket.recv() => match received {
-                Some(Ok(Message::Text(text))) => match serde_json::from_str(&text).map(Act::of) {
-                    Ok(Some(act)) => {
-                        if room.send(Command::Act { conn, act }).await.is_err() {
-                            return (close_code::ERROR, "the Room stopped");
+                Some(Ok(Message::Text(text))) => match serde_json::from_str(&text) {
+                    // Answered here, so the server's time isn't held up behind the Room's work.
+                    Ok(ClientMsg::Ping { t }) => {
+                        let pong = ServerMsg::Pong { t, server_ms: time::unix_ms() };
+                        let text = serde_json::to_string(&pong).expect("a message is always JSON");
+                        if socket.send(Message::Text(text.into())).await.is_err() {
+                            return GONE;
                         }
                     }
-                    Ok(None) => return (CloseCode::Forbidden.into(), "hello again"),
+                    Ok(message) => match Act::of(message) {
+                        Some(act) => {
+                            if room.send(Command::Act { conn, act }).await.is_err() {
+                                return (close_code::ERROR, "the Room stopped");
+                            }
+                        }
+                        None => return (CloseCode::Forbidden.into(), "hello again"),
+                    },
                     Err(_) => return (close_code::INVALID, "not a message"),
                 },
                 Some(Ok(Message::Binary(_))) => return (close_code::UNSUPPORTED, "text only"),

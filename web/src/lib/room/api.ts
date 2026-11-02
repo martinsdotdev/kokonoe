@@ -2,7 +2,7 @@
  * The Room routes (spec §10.1): making an invite Room, and reading the card its link shows a
  * joiner. Engine-free, so Home and the New game sheet can make one.
  */
-import type { NewRoom, Player, Players, RoomCard } from '#lib/engine.js';
+import type { NewRoom, Player, Players, RoomCard, TimeControl } from '#lib/engine.js';
 
 /** A Room's id: 20 lowercase hex digits, as the server writes them. */
 export const isRoomId = (text: unknown): text is string =>
@@ -52,11 +52,18 @@ export const readCard = (body: unknown): RoomCard | undefined => {
 	const players = readPlayers(field(body, 'players'));
 	const you = field(body, 'you');
 	const takebacks = field(body, 'takebacks');
+	const clock = field(body, 'clock');
 	const strings = [host, variant, rules].every((value) => typeof value === 'string');
 	if (!strings || !players || !(you === null || isPlayer(you))) return undefined;
-	if (typeof takebacks !== 'boolean') return undefined;
-	return { host, variant, rules, players, you, takebacks } as RoomCard;
+	if (typeof takebacks !== 'boolean' || !(clock === null || isClock(clock))) return undefined;
+	return { host, variant, rules, players, you, takebacks, clock } as RoomCard;
 };
+
+/** The four time controls, which list every member of the union. */
+const CLOCKS: Record<TimeControl, true> = { '3+2': true, '5+3': true, '10+5': true, '15+5': true };
+
+export const isClock = (value: unknown): value is TimeControl =>
+	typeof value === 'string' && Object.hasOwn(CLOCKS, value);
 
 export const readPlayers = (body: unknown): Players | undefined => {
 	const [x, o] = [field(body, 'X'), field(body, 'O')];

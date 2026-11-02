@@ -6,6 +6,8 @@ use alloc::string::String;
 
 use kokonoe_engine::{Fallback, Objective, Outcome, Player, Record, Ruleset};
 
+use crate::{Abort, Clocks, TimeControl};
+
 /// What a client says.
 #[cfg_attr(
     feature = "serde",
@@ -42,6 +44,9 @@ pub enum ClientMsg {
     OfferRematch,
     /// Accepts or declines the other player's rematch.
     AnswerRematch { accept: bool },
+    /// Asks the server's time, to set the page's clocks by: `t` is the page's own, in whole ms,
+    /// which the `Pong` returns.
+    Ping { t: u64 },
 }
 
 /// What a socket comes to a Room as. Spectators join it with KOK-61.
@@ -63,8 +68,12 @@ pub enum ServerMsg {
     /// to every socket when a seat fills, so whoever was waiting learns who joined. A client
     /// replaces everything it knew with it.
     Welcome { you: Player, snapshot: Snapshot },
-    /// A move was played and stored.
-    Moved { ply: u16, cell: u16 },
+    /// A move was played and stored, and in a timed Room, the clocks after it.
+    Moved {
+        ply: u16,
+        cell: u16,
+        clocks: Option<Clocks>,
+    },
     /// The sender's message changed nothing.
     Rejected { reason: Rejection },
     /// The game is over: after the move, resignation or agreed draw that ended it, or to a move
@@ -75,11 +84,15 @@ pub enum ServerMsg {
     Offer(Offer),
     /// The offer stands no more: answered, lapsed, or withdrawn by a move.
     OfferAnswered { kind: OfferKind, accepted: bool },
-    /// An accepted takeback: the game is as it was after `to_ply` plies. Clocks join it with
-    /// KOK-57.
-    TookBack { to_ply: u16 },
+    /// An accepted takeback: the game, and in a timed Room its clocks, as they were after
+    /// `to_ply` plies.
+    TookBack { to_ply: u16, clocks: Option<Clocks> },
     /// An accepted rematch: the new Room, where both players already have their seats.
     RematchRoom { room: String },
+    /// The game ended without a result, and isn't kept: the Room is gone.
+    Aborted { reason: Abort },
+    /// The answer to a `Ping`: its `t`, and the server's Unix time in ms.
+    Pong { t: u64, server_ms: u64 },
 }
 
 /// A Room as it stands.
@@ -100,6 +113,10 @@ pub struct Snapshot {
     pub end: Option<GameEnd>,
     /// The Room an accepted rematch made, so a player who missed `RematchRoom` can follow it.
     pub rematch: Option<String>,
+    /// The time control, or None for an untimed Room.
+    pub clock: Option<TimeControl>,
+    /// The clocks now, in a timed Room.
+    pub clocks: Option<Clocks>,
 }
 
 /// What a player offered, and how long it waits for its answer.
@@ -213,8 +230,8 @@ impl GameResult {
     }
 }
 
-/// Spec §4.4's Termination: how a game came to its end. Timeouts, Claims and abandonment arrive
-/// with clocks and presence.
+/// Spec §4.4's Termination: how a game came to its end. Claims and abandonment arrive with
+/// presence.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Termination {
@@ -228,15 +245,18 @@ pub enum Termination {
     Resign,
     #[cfg_attr(feature = "serde", serde(rename = "agreed draw"))]
     AgreedDraw,
+    #[cfg_attr(feature = "serde", serde(rename = "timeout"))]
+    Timeout,
 }
 
 impl Termination {
-    pub const ALL: [Termination; 5] = [
+    pub const ALL: [Termination; 6] = [
         Termination::Line,
         Termination::Count,
         Termination::Decided,
         Termination::Resign,
         Termination::AgreedDraw,
+        Termination::Timeout,
     ];
 
     /// How the rules ended a game (spec §4.4's table).
@@ -259,6 +279,7 @@ impl Termination {
             Termination::Decided => "decided",
             Termination::Resign => "resign",
             Termination::AgreedDraw => "agreed draw",
+            Termination::Timeout => "timeout",
         }
     }
 
@@ -346,24 +367,45 @@ mod tests {
             seed: Seed(0x5eed00),
             moves: vec![Cell::from_digits(&[4, 2]).unwrap()],
         };
+        let clocks = Clocks {
+            x_ms: 180_000,
+            o_ms: 180_000,
+            running: None,
+            at: 1_793_600_000_000,
+            aborts_at: Some(1_793_600_030_000),
+        };
+        let snapshot = Snapshot {
+            record,
+            players: Players {
+                x: Some("guest-4821".to_string()),
+                o: None,
+            },
+            takebacks: true,
+            offer: Some(Offer {
+                kind: OfferKind::Draw,
+                by: Player::X,
+                lapses_in: None,
+            }),
+            draws: Draws { x: 1, o: 0 },
+            end: None,
+            rematch: None,
+            clock: Some(TimeControl::ThreePlusTwo),
+            clocks: Some(clocks),
+        };
+        let untimed = Snapshot {
+            clock: None,
+            clocks: None,
+            ..snapshot.clone()
+        };
+        let json = serde_json::to_value(&untimed).unwrap();
+        assert_eq!(
+            (&json["clock"], &json["clocks"]),
+            (&serde_json::Value::Null, &serde_json::Value::Null),
+            "an untimed Room's are null"
+        );
         let welcome = ServerMsg::Welcome {
             you: Player::O,
-            snapshot: Snapshot {
-                record,
-                players: Players {
-                    x: Some("guest-4821".to_string()),
-                    o: None,
-                },
-                takebacks: true,
-                offer: Some(Offer {
-                    kind: OfferKind::Draw,
-                    by: Player::X,
-                    lapses_in: None,
-                }),
-                draws: Draws { x: 1, o: 0 },
-                end: None,
-                rematch: None,
-            },
+            snapshot,
         };
         pinned(
             &welcome,
@@ -373,12 +415,35 @@ mod tests {
                 r#""objective":"Line","fallback":"Draw","opening":"Free"},"#,
                 r#""seed":"00000000005eed00","moves":[38]},"#,
                 r#""players":{"X":"guest-4821","O":null},"takebacks":true,"#,
-                r#""offer":{"kind":"Draw","by":"X","lapses_in":null},"draws":{"X":1,"O":0},"end":null,"rematch":null}}"#
+                r#""offer":{"kind":"Draw","by":"X","lapses_in":null},"draws":{"X":1,"O":0},"end":null,"rematch":null,"#,
+                r#""clock":"3+2","clocks":{"x_ms":180000,"o_ms":180000,"running":null,"#,
+                r#""at":1793600000000,"aborts_at":1793600030000}}}"#
             ),
         );
         pinned(
-            &ServerMsg::Moved { ply: 1, cell: 22 },
-            r#"{"type":"Moved","ply":1,"cell":22}"#,
+            &ServerMsg::Moved {
+                ply: 1,
+                cell: 22,
+                clocks: None,
+            },
+            r#"{"type":"Moved","ply":1,"cell":22,"clocks":null}"#,
+        );
+        let running = Clocks {
+            x_ms: 171_250,
+            running: Some(Player::X),
+            aborts_at: None,
+            ..clocks
+        };
+        pinned(
+            &ServerMsg::Moved {
+                ply: 2,
+                cell: 40,
+                clocks: Some(running),
+            },
+            concat!(
+                r#"{"type":"Moved","ply":2,"cell":40,"clocks":{"x_ms":171250,"o_ms":180000,"#,
+                r#""running":"X","at":1793600000000,"aborts_at":null}}"#
+            ),
         );
         let reasons = [
             (Rejection::IllegalMove, r#""IllegalMove""#),
@@ -418,8 +483,38 @@ mod tests {
             r#"{"type":"OfferAnswered","kind":"Rematch","accepted":false}"#,
         );
         pinned(
-            &ServerMsg::TookBack { to_ply: 4 },
-            r#"{"type":"TookBack","to_ply":4}"#,
+            &ServerMsg::TookBack {
+                to_ply: 4,
+                clocks: None,
+            },
+            r#"{"type":"TookBack","to_ply":4,"clocks":null}"#,
+        );
+        let restored = Clocks {
+            running: Some(Player::O),
+            ..running
+        };
+        pinned(
+            &ServerMsg::TookBack {
+                to_ply: 3,
+                clocks: Some(restored),
+            },
+            concat!(
+                r#"{"type":"TookBack","to_ply":3,"clocks":{"x_ms":171250,"o_ms":180000,"#,
+                r#""running":"O","at":1793600000000,"aborts_at":null}}"#
+            ),
+        );
+        pinned(
+            &ServerMsg::Aborted {
+                reason: Abort::FirstMoveTimeout,
+            },
+            r#"{"type":"Aborted","reason":"FirstMoveTimeout"}"#,
+        );
+        pinned(
+            &ServerMsg::Pong {
+                t: 12_345,
+                server_ms: 1_793_600_000_000,
+            },
+            r#"{"type":"Pong","t":12345,"server_ms":1793600000000}"#,
         );
         pinned(
             &ServerMsg::RematchRoom {
@@ -447,6 +542,10 @@ mod tests {
             (
                 ClientMsg::AnswerRematch { accept: true },
                 r#"{"type":"AnswerRematch","accept":true}"#,
+            ),
+            (
+                ClientMsg::Ping { t: 12_345 },
+                r#"{"type":"Ping","t":12345}"#,
             ),
         ];
         for (intent, json) in intents {

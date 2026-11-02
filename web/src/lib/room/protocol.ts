@@ -8,7 +8,7 @@ import {
 	type ServerMsg,
 	type Termination
 } from '#lib/engine.js';
-import { field, isPlayer, isRoomId, readPlayers } from './api.js';
+import { field, isClock, isPlayer, isRoomId, readPlayers } from './api.js';
 
 /** The `Hello` that opens every socket, naming this build. Needs the engine loaded. */
 export const hello = (room: string): ClientMsg => ({
@@ -50,11 +50,17 @@ export const readServerMsg = (data: unknown): ServerMsg | null => {
 					count(field(draws, 'X')) &&
 					count(field(draws, 'O')) &&
 					(end === null || isEnd(end)) &&
-					(rematch === null || isRoomId(rematch))
+					(rematch === null || isRoomId(rematch)) &&
+					nullOr(isClock, field(snapshot, 'clock')) &&
+					nullOr(isClocks, field(snapshot, 'clocks'))
 				);
 			}
 			case 'Moved':
-				return count(field(body, 'ply')) && count(field(body, 'cell'));
+				return (
+					count(field(body, 'ply')) &&
+					count(field(body, 'cell')) &&
+					nullOr(isClocks, field(body, 'clocks'))
+				);
 			case 'Rejected':
 				return field(body, 'reason') !== undefined;
 			case 'Ended':
@@ -64,7 +70,7 @@ export const readServerMsg = (data: unknown): ServerMsg | null => {
 			case 'OfferAnswered':
 				return isKind(field(body, 'kind')) && typeof field(body, 'accepted') === 'boolean';
 			case 'TookBack':
-				return count(field(body, 'to_ply'));
+				return count(field(body, 'to_ply')) && nullOr(isClocks, field(body, 'clocks'));
 			case 'RematchRoom':
 				return isRoomId(field(body, 'room'));
 			default:
@@ -87,7 +93,8 @@ const TERMINATIONS: Record<Termination, true> = {
 	count: true,
 	decided: true,
 	resign: true,
-	'agreed draw': true
+	'agreed draw': true,
+	timeout: true
 };
 
 const isKind = (kind: unknown): boolean => among(KINDS, kind);
@@ -103,3 +110,14 @@ const isOffer = (offer: unknown): boolean => {
 
 const isEnd = (end: unknown): boolean =>
 	among(RESULTS, field(end, 'result')) && among(TERMINATIONS, field(end, 'termination'));
+
+const nullOr = (is: (value: unknown) => boolean, value: unknown): boolean =>
+	value === null || is(value);
+
+/** A timed Room's clocks: each player's ms left, whose runs, and the server's times. */
+const isClocks = (clocks: unknown): boolean =>
+	count(field(clocks, 'x_ms')) &&
+	count(field(clocks, 'o_ms')) &&
+	nullOr(isPlayer, field(clocks, 'running')) &&
+	count(field(clocks, 'at')) &&
+	nullOr(count, field(clocks, 'aborts_at'));

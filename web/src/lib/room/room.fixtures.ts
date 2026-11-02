@@ -31,6 +31,8 @@ export const welcome = (
 		draws: { X: 0, O: 0 },
 		end: null,
 		rematch: null,
+		clock: null,
+		clocks: null,
 		...snapshot
 	}
 });

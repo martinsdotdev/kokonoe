@@ -5,9 +5,10 @@ use alloc::string::String;
 
 use kokonoe_engine::Player;
 
-use crate::Players;
+use crate::{Players, TimeControl};
 
-/// What the host chose: a Preset, by its Ruleset code, a seat, and whether takebacks are allowed.
+/// What the host chose: a Preset, by its Ruleset code, a seat, whether takebacks are allowed, and
+/// the time control, untimed unless one is sent.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewRoom {
@@ -15,6 +16,7 @@ pub struct NewRoom {
     pub seat: SeatChoice,
     #[cfg_attr(feature = "serde", serde(default))]
     pub takebacks: bool,
+    pub clock: Option<TimeControl>,
 }
 
 /// The seat the host takes. `Random` is drawn when the Room is made.
@@ -33,8 +35,8 @@ pub struct CreatedRoom {
     pub room: String,
 }
 
-/// What the joiner sees before accepting (spec §10.1). Every Room is Casual and untimed for now,
-/// so that isn't said.
+/// What the joiner sees before accepting (spec §10.1). Every Room is Casual for now, so that
+/// isn't said.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoomCard {
@@ -49,6 +51,8 @@ pub struct RoomCard {
     pub you: Option<Player>,
     /// Whether the Room allows takebacks.
     pub takebacks: bool,
+    /// The time control, or None for an untimed Room.
+    pub clock: Option<TimeControl>,
 }
 
 #[cfg(test)]
@@ -65,9 +69,17 @@ mod tests {
             NewRoom {
                 rules: "std".to_string(),
                 seat: SeatChoice::Random,
-                takebacks: false
+                takebacks: false,
+                clock: None
             },
-            "takebacks are off unless asked for"
+            "takebacks are off and the Room untimed unless asked for"
+        );
+        let timed: NewRoom =
+            serde_json::from_str(r#"{"rules":"std","seat":"X","clock":"5+3"}"#).unwrap();
+        assert_eq!(timed.clock, TimeControl::parse("5+3"));
+        assert!(
+            serde_json::from_str::<NewRoom>(r#"{"rules":"std","seat":"X","clock":"4+4"}"#).is_err(),
+            "only the four controls"
         );
         let card = RoomCard {
             host: "guest-4821".to_string(),
@@ -79,10 +91,20 @@ mod tests {
             },
             you: None,
             takebacks: true,
+            clock: TimeControl::parse("10+5"),
         };
         assert_eq!(
             serde_json::to_string(&card).unwrap(),
-            r#"{"host":"guest-4821","variant":"Standard","rules":"std","players":{"X":"guest-4821","O":null},"you":null,"takebacks":true}"#
+            r#"{"host":"guest-4821","variant":"Standard","rules":"std","players":{"X":"guest-4821","O":null},"you":null,"takebacks":true,"clock":"10+5"}"#
+        );
+        let untimed = RoomCard {
+            clock: None,
+            ..card
+        };
+        assert!(
+            serde_json::to_string(&untimed)
+                .unwrap()
+                .ends_with(r#""takebacks":true,"clock":null}"#)
         );
     }
 }

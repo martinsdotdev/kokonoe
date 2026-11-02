@@ -36,7 +36,8 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 			rules: 'std',
 			players: room.players,
 			you: room.you,
-			takebacks: false
+			takebacks: false,
+			clock: null
 		};
 	const welcome = (): ServerMsg => ({
 		type: 'Welcome',
@@ -54,6 +55,8 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 			draws: { X: 0, O: 0 },
 			end: null,
 			rematch: null,
+			clock: null,
+			clocks: null,
 			...room.snapshot
 		}
 	});
@@ -92,7 +95,7 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 		/** A move the Room accepts, told on the newest socket. */
 		moved: (ply: number, cell: number) => {
 			room.moves = [...room.moves, cell];
-			last().send(JSON.stringify({ type: 'Moved', ply, cell }));
+			last().send(JSON.stringify({ type: 'Moved', ply, cell, clocks: null }));
 		},
 		close: (code: number) => last().close({ code }),
 		sockets

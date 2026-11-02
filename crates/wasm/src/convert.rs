@@ -344,8 +344,9 @@ impl From<protocol::CloseCode> for crate::CloseCode {
 mod wire {
     use super::*;
     use crate::wire::{
-        ClientMsg, CreatedRoom, Draws, GameEnd, GameResult, NewRoom, Offer, OfferKind, Players,
-        Rejection, Role, RoomCard, SeatChoice, ServerMsg, Snapshot, Termination,
+        Abort, ClientMsg, Clocks, CreatedRoom, Draws, GameEnd, GameResult, NewRoom, Offer,
+        OfferKind, Players, Rejection, Role, RoomCard, SeatChoice, ServerMsg, Snapshot,
+        Termination, TimeControl,
     };
 
     impl From<protocol::ClientMsg> for ClientMsg {
@@ -377,6 +378,7 @@ mod wire {
                 protocol::ClientMsg::AnswerRematch { accept } => {
                     ClientMsg::AnswerRematch { accept }
                 }
+                protocol::ClientMsg::Ping { t } => ClientMsg::Ping { t },
             }
         }
     }
@@ -396,9 +398,10 @@ mod wire {
                     you: you.into(),
                     snapshot: snapshot.into(),
                 },
-                protocol::ServerMsg::Moved { ply, cell } => ServerMsg::Moved {
+                protocol::ServerMsg::Moved { ply, cell, clocks } => ServerMsg::Moved {
                     ply: Ply(ply.into()),
                     cell: Cell(cell),
+                    clocks: clocks.map(Clocks::from),
                 },
                 protocol::ServerMsg::Rejected { reason } => ServerMsg::Rejected {
                     reason: reason.into(),
@@ -409,10 +412,15 @@ mod wire {
                     kind: kind.into(),
                     accepted,
                 },
-                protocol::ServerMsg::TookBack { to_ply } => ServerMsg::TookBack {
+                protocol::ServerMsg::TookBack { to_ply, clocks } => ServerMsg::TookBack {
                     to_ply: Ply(to_ply.into()),
+                    clocks: clocks.map(Clocks::from),
                 },
                 protocol::ServerMsg::RematchRoom { room } => ServerMsg::RematchRoom { room },
+                protocol::ServerMsg::Aborted { reason } => ServerMsg::Aborted {
+                    reason: reason.into(),
+                },
+                protocol::ServerMsg::Pong { t, server_ms } => ServerMsg::Pong { t, server_ms },
             }
         }
     }
@@ -427,6 +435,39 @@ mod wire {
                 draws: snapshot.draws.into(),
                 end: snapshot.end.map(GameEnd::from),
                 rematch: snapshot.rematch,
+                clock: snapshot.clock.map(TimeControl::from),
+                clocks: snapshot.clocks.map(Clocks::from),
+            }
+        }
+    }
+
+    impl From<protocol::TimeControl> for TimeControl {
+        fn from(control: protocol::TimeControl) -> TimeControl {
+            match control {
+                protocol::TimeControl::ThreePlusTwo => TimeControl::ThreePlusTwo,
+                protocol::TimeControl::FivePlusThree => TimeControl::FivePlusThree,
+                protocol::TimeControl::TenPlusFive => TimeControl::TenPlusFive,
+                protocol::TimeControl::FifteenPlusFive => TimeControl::FifteenPlusFive,
+            }
+        }
+    }
+
+    impl From<protocol::Clocks> for Clocks {
+        fn from(clocks: protocol::Clocks) -> Clocks {
+            Clocks {
+                x_ms: clocks.x_ms,
+                o_ms: clocks.o_ms,
+                running: clocks.running.map(Player::from),
+                at: clocks.at,
+                aborts_at: clocks.aborts_at,
+            }
+        }
+    }
+
+    impl From<protocol::Abort> for Abort {
+        fn from(reason: protocol::Abort) -> Abort {
+            match reason {
+                protocol::Abort::FirstMoveTimeout => Abort::FirstMoveTimeout,
             }
         }
     }
@@ -487,6 +528,7 @@ mod wire {
                 protocol::Termination::Decided => Termination::Decided,
                 protocol::Termination::Resign => Termination::Resign,
                 protocol::Termination::AgreedDraw => Termination::AgreedDraw,
+                protocol::Termination::Timeout => Termination::Timeout,
             }
         }
     }
@@ -518,6 +560,7 @@ mod wire {
                 rules: asked.rules,
                 seat: asked.seat.into(),
                 takebacks: asked.takebacks,
+                clock: asked.clock.map(TimeControl::from),
             }
         }
     }
@@ -547,6 +590,7 @@ mod wire {
                 players: card.players.into(),
                 you: card.you.map(Player::from),
                 takebacks: card.takebacks,
+                clock: card.clock.map(TimeControl::from),
             }
         }
     }
@@ -783,6 +827,7 @@ mod tests {
                 protocol::ClientMsg::AnswerTakeback { accept: false },
                 protocol::ClientMsg::OfferRematch,
                 protocol::ClientMsg::AnswerRematch { accept: true },
+                protocol::ClientMsg::Ping { t: 12_345 },
             ];
             assert_eq!(every::<_, ClientMsg>(client), declared::<ClientMsg>());
 
@@ -802,6 +847,18 @@ mod tests {
                 by,
                 lapses_in,
             };
+            let clocks = protocol::Clocks {
+                x_ms: 171_250,
+                o_ms: 300_000,
+                running: Some(engine::Player::X),
+                at: 1_793_600_000_000,
+                aborts_at: None,
+            };
+            let starting = protocol::Clocks {
+                running: None,
+                aborts_at: Some(1_793_600_030_000),
+                ..clocks
+            };
             let server = vec![
                 protocol::ServerMsg::Welcome {
                     you: engine::Player::O,
@@ -813,6 +870,8 @@ mod tests {
                         draws: protocol::Draws::default(),
                         end: None,
                         rematch: None,
+                        clock: None,
+                        clocks: None,
                     },
                 },
                 protocol::ServerMsg::Welcome {
@@ -832,9 +891,20 @@ mod tests {
                             termination: protocol::Termination::AgreedDraw,
                         }),
                         rematch: Some("0123456789abcdef0123".into()),
+                        clock: protocol::TimeControl::parse("5+3"),
+                        clocks: Some(starting),
                     },
                 },
-                protocol::ServerMsg::Moved { ply: 3, cell: 728 },
+                protocol::ServerMsg::Moved {
+                    ply: 3,
+                    cell: 728,
+                    clocks: None,
+                },
+                protocol::ServerMsg::Moved {
+                    ply: 4,
+                    cell: 0,
+                    clocks: Some(clocks),
+                },
                 rejected(protocol::Rejection::IllegalMove),
                 rejected(protocol::Rejection::OutOfOrder { want: 5 }),
                 rejected(protocol::Rejection::NotAllowed),
@@ -846,6 +916,7 @@ mod tests {
                     protocol::GameResult::Draw,
                     protocol::Termination::AgreedDraw,
                 ),
+                ended(protocol::GameResult::XWins, protocol::Termination::Timeout),
                 protocol::ServerMsg::Offer(offer(
                     protocol::OfferKind::Draw,
                     engine::Player::X,
@@ -860,9 +931,23 @@ mod tests {
                     kind: protocol::OfferKind::Takeback,
                     accepted: true,
                 },
-                protocol::ServerMsg::TookBack { to_ply: 4 },
+                protocol::ServerMsg::TookBack {
+                    to_ply: 4,
+                    clocks: None,
+                },
+                protocol::ServerMsg::TookBack {
+                    to_ply: 2,
+                    clocks: Some(clocks),
+                },
                 protocol::ServerMsg::RematchRoom {
                     room: "6f1c0a9b3e2d4c5a7b8e".into(),
+                },
+                protocol::ServerMsg::Aborted {
+                    reason: protocol::Abort::FirstMoveTimeout,
+                },
+                protocol::ServerMsg::Pong {
+                    t: 12_345,
+                    server_ms: 1_793_600_000_000,
                 },
             ];
             assert_eq!(every::<_, ServerMsg>(server), declared::<ServerMsg>());
@@ -879,8 +964,17 @@ mod tests {
                     rules: "cont+first5+most".into(),
                     seat,
                     takebacks: seat == protocol::SeatChoice::Random,
+                    clock: None,
                 };
                 holds::<_, NewRoom>(asked);
+            }
+            for clock in protocol::TimeControl::ALL {
+                holds::<_, NewRoom>(protocol::NewRoom {
+                    rules: "std".into(),
+                    seat: protocol::SeatChoice::X,
+                    takebacks: false,
+                    clock: Some(clock),
+                });
             }
             holds::<_, CreatedRoom>(protocol::CreatedRoom {
                 room: "6f1c0a9b3e2d4c5a7b8e".into(),
@@ -893,6 +987,7 @@ mod tests {
                     players: players(Some("guest-4821"), Some("guest-1066")),
                     you,
                     takebacks: you.is_some(),
+                    clock: you.and(protocol::TimeControl::parse("15+5")),
                 });
             }
         }

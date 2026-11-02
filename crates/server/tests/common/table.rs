@@ -221,8 +221,13 @@ pub fn indices(record: &Record) -> Vec<u16> {
     record.moves.iter().map(|cell| cell.index()).collect()
 }
 
+/// A move as an untimed Room tells it.
 pub fn moved(ply: u16, cell: u16) -> ServerMsg {
-    ServerMsg::Moved { ply, cell }
+    ServerMsg::Moved {
+        ply,
+        cell,
+        clocks: None,
+    }
 }
 
 pub fn rejected(reason: Rejection) -> ServerMsg {

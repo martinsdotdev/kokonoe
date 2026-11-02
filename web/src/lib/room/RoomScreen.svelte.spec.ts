@@ -21,7 +21,8 @@ const seated = async (url: string | URL | Request) =>
 				rules: 'std',
 				players: { X: 'guest-4821', O: null },
 				you: 'X',
-				takebacks: false
+				takebacks: false,
+				clock: null
 			});
 
 const offline = async (): Promise<Response> => {

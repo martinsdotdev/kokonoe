@@ -18,9 +18,15 @@ export type Cell = number;
 export type IllegalMove = "GameOver" | "WrongDepth" | "Occupied" | { BeneathDecided: { board: Board } } | { OutsideActiveBoards: { within: Board } };
 
 /**
+ * A Fischer time control, spelled as a game file's `TimeControl` tag: a bank in minutes, plus
+ * an increment in seconds.
+ */
+export type TimeControl = "3+2" | "5+3" | "10+5" | "15+5";
+
+/**
  * A Room as it stands. `end` says how a finished game ended, which a Record can't for a
  * resignation; `offer` is the one waiting for an answer; `rematch` is the Room an accepted
- * rematch made.
+ * rematch made; `clock` and `clocks` are a timed Room's.
  */
 export interface Snapshot {
     record: Record;
@@ -30,6 +36,8 @@ export interface Snapshot {
     draws: Draws;
     end: GameEnd | null;
     rematch: string | null;
+    clock: TimeControl | null;
+    clocks: Clocks | null;
 }
 
 /**
@@ -47,6 +55,18 @@ export interface Record {
     ruleset: Ruleset;
     seed: Seed;
     moves: Cell[];
+}
+
+/**
+ * A timed game's clocks as they stood at `at`, the server's Unix ms: each player's time left,
+ * whose runs, and when the game aborts unless the player to move makes their first move.
+ */
+export interface Clocks {
+    x_ms: number;
+    o_ms: number;
+    running: Player | null;
+    at: number;
+    aborts_at: number | null;
 }
 
 /**
@@ -122,6 +142,7 @@ export interface RoomCard {
     players: Players;
     you: Player | null;
     takebacks: boolean;
+    clock: TimeControl | null;
 }
 
 /**
@@ -140,7 +161,7 @@ export type PlayResult = { Now: Status } | "Already" | { Illegal: IllegalMove } 
 /**
  * What a client says on a Room's socket.
  */
-export type ClientMsg = { type: "Hello"; protocol: number; rules_version: number; room: string; role: Role } | { type: "Move"; ply: Ply; cell: Cell } | { type: "Resign" } | { type: "OfferDraw" } | { type: "AnswerDraw"; accept: boolean } | { type: "AskTakeback" } | { type: "AnswerTakeback"; accept: boolean } | { type: "OfferRematch" } | { type: "AnswerRematch"; accept: boolean };
+export type ClientMsg = { type: "Hello"; protocol: number; rules_version: number; room: string; role: Role } | { type: "Move"; ply: Ply; cell: Cell } | { type: "Resign" } | { type: "OfferDraw" } | { type: "AnswerDraw"; accept: boolean } | { type: "AskTakeback" } | { type: "AnswerTakeback"; accept: boolean } | { type: "OfferRematch" } | { type: "AnswerRematch"; accept: boolean } | { type: "Ping"; t: number };
 
 /**
  * What one search from a root found: a move the tactics force, or the visits of every root move
@@ -152,7 +173,7 @@ export type Searched = { Forced: Cell } | { Visits: Visit[] };
  * What the server says on a Room's socket. A `Welcome` comes after `Hello`, and again to every
  * socket when a seat fills; it replaces everything the page knew.
  */
-export type ServerMsg = { type: "Welcome"; you: Player; snapshot: Snapshot } | { type: "Moved"; ply: Ply; cell: Cell } | { type: "Rejected"; reason: Rejection } | ({ type: "Ended" } & GameEnd) | ({ type: "Offer" } & Offer) | { type: "OfferAnswered"; kind: OfferKind; accepted: boolean } | { type: "TookBack"; to_ply: Ply } | { type: "RematchRoom"; room: string };
+export type ServerMsg = { type: "Welcome"; you: Player; snapshot: Snapshot } | { type: "Moved"; ply: Ply; cell: Cell; clocks: Clocks | null } | { type: "Rejected"; reason: Rejection } | ({ type: "Ended" } & GameEnd) | ({ type: "Offer" } & Offer) | { type: "OfferAnswered"; kind: OfferKind; accepted: boolean } | { type: "TookBack"; to_ply: Ply; clocks: Clocks | null } | { type: "RematchRoom"; room: string } | { type: "Aborted"; reason: Abort } | { type: "Pong"; t: number; server_ms: number };
 
 /**
  * Who holds each seat, by Handle: `null` while it waits for someone.
@@ -161,6 +182,11 @@ export interface Players {
     X: string | null;
     O: string | null;
 }
+
+/**
+ * Why a game ended without a result.
+ */
+export type Abort = "FirstMoveTimeout";
 
 /**
  * Why the server refused a move. `OutOfOrder` means the page is behind: it reconnects.
@@ -173,12 +199,14 @@ export type Rejection = "IllegalMove" | { OutOfOrder: { want: Ply } } | "NotAllo
 export type Objective = "Line" | { FirstTo: number };
 
 /**
- * `POST /api/rooms`: a Preset by its Ruleset code, and the host's seat.
+ * `POST /api/rooms`: a Preset by its Ruleset code, the host's seat, whether takebacks are
+ * allowed, and the time control, `null` for untimed.
  */
 export interface NewRoom {
     rules: string;
     seat: SeatChoice;
     takebacks: boolean;
+    clock: TimeControl | null;
 }
 
 /**
@@ -217,7 +245,7 @@ export type Role = "Player";
 
 export type SeatChoice = "X" | "O" | "Random";
 
-export type Termination = "line" | "count" | "decided" | "resign" | "agreed draw";
+export type Termination = "line" | "count" | "decided" | "resign" | "agreed draw" | "timeout";
 
 
 /**

@@ -4,7 +4,9 @@
 //! was stored: a write that timed out may still have landed. It also stops once its last socket
 //! leaves. Either way the next `Hello` loads the Room again from the table.
 //!
-//! It also keeps spec §10.2's policies, and at most one offer waiting, which a stopped Room forgets.
+//! It also keeps spec §10.2's policies, and at most one offer waiting, which a stopped Room forgets,
+//! and a timed Room's clocks (spec §11): a turn past its deadline aborts the game or loses it on
+//! time, before anything else the Room hears, even when the Room loads again long after.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -12,16 +14,18 @@ use std::time::Duration;
 
 use kokonoe_engine::{Cell, Game, PlayError, Played, Player, Ply, Seed, Status};
 use kokonoe_protocol::{
-    ClientMsg, Draws, GameEnd, GameResult, Offer, OfferKind, Rejection, ServerMsg, Snapshot,
-    Termination,
+    Abort, ClientMsg, Clocks, Draws, GameEnd, GameResult, Offer, OfferKind, Rejection, ServerMsg,
+    Snapshot, Termination,
 };
 use sqlx::PgPool;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
+use crate::clock::{Clock, Deadline};
 use crate::games::{self, Seat, Seats, Stored};
 use crate::random::{bytes, hex};
 use crate::session::AccountId;
+use crate::time::{ms, unix_ms};
 
 /// How long a write may take before the Room gives up on it.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -29,14 +33,22 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// How many commands wait for a Room before its sockets wait too.
 const COMMANDS: usize = 64;
 
-/// How long an offer waits for its answer (spec §10.2), which the players hear as each `Offer`'s
-/// `lapses_in`. A draw offer has no deadline: it stands until it's answered or the offerer moves.
+/// How long things take in a Room: how long an offer waits for its answer (spec §10.2), which the
+/// players hear as each `Offer`'s `lapses_in`, and a timed Room's first-move window and the units
+/// of its time controls (spec §11), which tests shorten. A draw offer has no deadline: it stands
+/// until it's answered or the offerer moves.
 #[derive(Clone, Copy, Debug)]
 pub struct Timing {
     /// How long a takeback waits for its answer.
     pub takeback: Duration,
     /// How long a rematch waits for its answer.
     pub rematch: Duration,
+    /// How long a player has for their first move in a timed Room before the game aborts.
+    pub abort: Duration,
+    /// A time control's minute, its bank's unit.
+    pub minute: Duration,
+    /// A time control's second, its increment's unit.
+    pub second: Duration,
 }
 
 impl Default for Timing {
@@ -44,6 +56,9 @@ impl Default for Timing {
         Timing {
             takeback: Duration::from_secs(15),
             rematch: Duration::from_secs(60),
+            abort: Duration::from_secs(30),
+            minute: Duration::from_secs(60),
+            second: Duration::from_secs(1),
         }
     }
 }
@@ -94,10 +109,11 @@ pub enum Act {
 }
 
 impl Act {
-    /// What `message` asks, or nothing for a `Hello`, which only opens a socket.
+    /// What `message` asks, or nothing for what isn't the Room's: a `Hello`, which only opens a
+    /// socket, or a `Ping`, which the socket answers itself.
     pub fn of(message: ClientMsg) -> Option<Act> {
         Some(match message {
-            ClientMsg::Hello { .. } => return None,
+            ClientMsg::Hello { .. } | ClientMsg::Ping { .. } => return None,
             ClientMsg::Move { ply, cell } => Act::Move { ply, cell },
             ClientMsg::Resign => Act::Resign,
             ClientMsg::OfferDraw => Act::Offer(OfferKind::Draw),
@@ -151,6 +167,10 @@ struct Room {
     offer: Option<Pending>,
     /// The Room this game's accepted rematch made.
     rematch: Option<RoomId>,
+    /// A timed Room's clocks.
+    clock: Option<Clock>,
+    /// When the turn now running began.
+    since: Instant,
     sockets: HashMap<Conn, Socket>,
     next: u64,
 }
@@ -168,9 +188,7 @@ impl Pending {
         Offer {
             kind: self.kind,
             by: self.by,
-            lapses_in: self.lapses.map(|at| {
-                u32::try_from(at.saturating_duration_since(now).as_millis()).unwrap_or(u32::MAX)
-            }),
+            lapses_in: self.lapses.map(|at| ms(at.saturating_duration_since(now))),
         }
     }
 }
@@ -190,13 +208,22 @@ pub fn spawn(
     stored: Stored,
 ) -> mpsc::Sender<Command> {
     let (commands, inbox) = mpsc::channel(COMMANDS);
-    // A rules ending is the engine's to tell again; only these two need the table.
+    // A rules ending is the engine's to tell again; only these need the table.
     let stopped = stored.end.filter(|end| {
         matches!(
             end.termination,
-            Termination::Resign | Termination::AgreedDraw
+            Termination::Resign | Termination::AgreedDraw | Termination::Timeout
         )
     });
+    let clock = stored.clock.map(|control| {
+        let first = first_mover(&game);
+        let mut clock = Clock::new(control, timing.minute, timing.second, first, &stored.clocks);
+        if let Some(end) = stopped.filter(|end| end.termination == Termination::Timeout) {
+            clock.flag(loser(end.result));
+        }
+        clock
+    });
+    let now = Instant::now();
     let room = Room {
         id,
         pool,
@@ -208,6 +235,8 @@ pub fn spawn(
         stopped,
         offer: None,
         rematch: stored.rematch,
+        clock,
+        since: now.checked_sub(stored.turn).unwrap_or(now),
         sockets: HashMap::new(),
         next: 0,
     };
@@ -219,7 +248,16 @@ impl Room {
     async fn run(mut self, mut inbox: mpsc::Receiver<Command>) {
         loop {
             let lapses = self.offer.as_ref().and_then(|pending| pending.lapses);
+            let deadline = self.deadline().map(|(at, _)| at);
             let done = tokio::select! {
+                // A turn past its deadline, or an offer past its lapse, is settled before any
+                // message that came after it.
+                biased;
+                () = until(deadline) => self.expire().await,
+                () = until(lapses) => {
+                    self.withdraw();
+                    Ok(())
+                }
                 command = inbox.recv() => match command {
                     Some(Command::Join(join)) => self.join(join).await,
                     Some(Command::Act { conn, act }) => self.act(conn, act).await,
@@ -229,10 +267,6 @@ impl Room {
                     }
                     None => return,
                 },
-                () = until(lapses) => {
-                    self.withdraw();
-                    Ok(())
-                }
             };
             if done.is_err() {
                 tracing::error!(room = %self.id, "a Room stopped: what's stored is unknown");
@@ -263,6 +297,10 @@ impl Room {
                 (player, true)
             }
         };
+        if seated && self.seats.full() {
+            // The game begins, and with it the first turn.
+            self.since = Instant::now();
+        }
         let conn = Conn(self.next);
         self.next += 1;
         self.sockets.insert(conn, Socket { player, out });
@@ -280,6 +318,7 @@ impl Room {
 
     /// Does what a seated socket asked, or tells it why not.
     async fn act(&mut self, conn: Conn, act: Act) -> Result<(), Broken> {
+        self.expire().await?;
         let Some(player) = self.sockets.get(&conn).map(|socket| socket.player) else {
             return Ok(());
         };
@@ -311,10 +350,18 @@ impl Room {
                 return Ok(());
             }
         }
+        let elapsed = self.since.elapsed();
+        let left = self.clock.as_mut().map(|clock| ms(clock.spend(elapsed)));
         let ended = self.end();
         let before = self.game.moves().len() - 1;
-        write(games::append(&self.pool, &self.id, before, cell, ended)).await?;
-        self.announce(ServerMsg::Moved { ply, cell });
+        write(games::append(
+            &self.pool, &self.id, before, cell, left, ended,
+        ))
+        .await?;
+        let now = Instant::now();
+        self.since = now;
+        let clocks = self.clocks(now);
+        self.announce(ServerMsg::Moved { ply, cell, clocks });
         if let Some(end) = ended {
             self.offer = None;
             self.announce(ServerMsg::Ended(end));
@@ -460,10 +507,16 @@ impl Room {
         for _ in keep..before {
             self.game.undo();
         }
+        if let Some(clock) = &mut self.clock {
+            clock.take_back(keep);
+        }
+        let now = Instant::now();
+        self.since = now;
         self.offer = None;
         let to_ply = self.game.state().ply().get();
+        let clocks = self.clocks(now);
         self.announce(accepted);
-        self.announce(ServerMsg::TookBack { to_ply });
+        self.announce(ServerMsg::TookBack { to_ply, clocks });
         Ok(true)
     }
 
@@ -496,14 +549,79 @@ impl Room {
         });
     }
 
-    /// Ends the game where it stands, a resignation or an agreed draw, in the table first. Any
-    /// offer waiting goes with it, as `Ended` tells the players.
+    /// Ends the game where it stands, a resignation, an agreed draw or a timeout, in the table
+    /// first. Any offer waiting goes with it, as `Ended` tells the players.
     async fn stop(&mut self, end: GameEnd) -> Result<(), Broken> {
         let moves = self.game.moves().len();
         write(games::end(&self.pool, &self.id, moves, end)).await?;
         self.stopped = Some(end);
         self.offer = None;
         Ok(())
+    }
+
+    /// A turn runs: both seats are filled and the game goes on.
+    fn turn(&self) -> bool {
+        self.seats.full() && self.end().is_none()
+    }
+
+    /// When the turn now running runs out, in a timed Room, and how.
+    fn deadline(&self) -> Option<(Instant, Deadline)> {
+        let clock = self.clock.as_ref().filter(|_| self.turn())?;
+        let deadline = clock.deadline(self.timing.abort);
+        Some((self.since + deadline.after(), deadline))
+    }
+
+    /// Settles the turn now running if it has run out: before its player's first move the game
+    /// aborts, and the Room is gone, its sockets closed; after it, they lose on time.
+    async fn expire(&mut self) -> Result<(), Broken> {
+        let Some((at, deadline)) = self.deadline() else {
+            return Ok(());
+        };
+        let Some(clock) = self.clock.as_mut().filter(|_| at <= Instant::now()) else {
+            return Ok(());
+        };
+        let player = clock.to_move();
+        match deadline {
+            Deadline::Abort(_) => {
+                let moves = self.game.moves().len();
+                write(games::abort(&self.pool, &self.id, moves)).await?;
+                let reason = Abort::FirstMoveTimeout;
+                self.announce(ServerMsg::Aborted { reason });
+                self.sockets.clear();
+            }
+            Deadline::Flag(_) => {
+                clock.flag(player);
+                let end = GameEnd {
+                    result: GameResult::won_by(Some(player.opponent())),
+                    termination: Termination::Timeout,
+                };
+                self.stop(end).await?;
+                self.announce(ServerMsg::Ended(end));
+            }
+        }
+        Ok(())
+    }
+
+    /// A timed Room's clocks at `now`: the running one counted down, and a player who lost on time
+    /// at 0.
+    fn clocks(&self, now: Instant) -> Option<Clocks> {
+        let clock = self.clock.as_ref()?;
+        let elapsed = now.saturating_duration_since(self.since);
+        let reading = clock.read(self.turn(), elapsed);
+        let at = unix_ms();
+        let aborts_at = match self.deadline() {
+            Some((_, Deadline::Abort(after))) => {
+                Some(at.saturating_add(u64::from(ms(after.saturating_sub(elapsed)))))
+            }
+            _ => None,
+        };
+        Some(Clocks {
+            x_ms: ms(reading.x),
+            o_ms: ms(reading.o),
+            running: reading.running,
+            at,
+            aborts_at,
+        })
     }
 
     /// How the game ended, once it has.
@@ -527,6 +645,8 @@ impl Room {
             draws: self.draws,
             end: self.end(),
             rematch: self.rematch.as_ref().map(RoomId::to_string),
+            clock: self.clock.as_ref().map(Clock::control),
+            clocks: self.clocks(Instant::now()),
         }
     }
 
@@ -561,6 +681,19 @@ fn taken_back(game: &Game, player: Player) -> Option<usize> {
     (0..game.moves().len())
         .rev()
         .find(|&index| ply(dealt + index).player() == player)
+}
+
+/// Who makes `game`'s first played move, after its dealt opening.
+fn first_mover(game: &Game) -> Player {
+    ply(game.opening().len()).player()
+}
+
+/// The player who lost a game that ended `result` on time.
+fn loser(result: GameResult) -> Player {
+    match result {
+        GameResult::XWins => Player::O,
+        GameResult::OWins | GameResult::Draw => Player::X,
+    }
 }
 
 /// The ply `index` counts to, the dealt opening included.
@@ -599,6 +732,26 @@ mod tests {
             panic!("the game is over");
         };
         game.play(game.state().ply(), moves.nth(0)).unwrap();
+    }
+
+    #[test]
+    fn the_played_moves_start_after_a_dealt_opening() {
+        assert_eq!(
+            first_mover(&Game::new(Preset::Standard.ruleset(), Seed(1))),
+            Player::X
+        );
+        for (dealt, first) in [(1, Player::O), (2, Player::X), (3, Player::O)] {
+            let ruleset = Ruleset {
+                opening: kokonoe_engine::Opening::Random(RandomPlies::try_from(dealt).unwrap()),
+                ..Preset::Standard.ruleset()
+            };
+            let game = Game::new(ruleset, Seed(1));
+            assert_eq!(first_mover(&game), first, "{dealt} dealt");
+            let Status::ToMove { player, .. } = game.state().status() else {
+                panic!("the game is over");
+            };
+            assert_eq!(player, first, "the engine agrees");
+        }
     }
 
     #[test]

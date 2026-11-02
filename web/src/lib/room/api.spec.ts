@@ -18,17 +18,20 @@ const CARD = {
 	rules: 'std',
 	players: { X: 'guest-4821', O: null },
 	you: null,
-	takebacks: false
+	takebacks: false,
+	clock: null
 };
 
 describe('making a Room', () => {
 	it('posts the host’s choice and gives the Room’s id', async () => {
 		const fetch = vi.fn(async () => json({ room: ROOM }, 201));
-		expect(await createRoom({ rules: 'std', seat: 'Random', takebacks: false }, fetch)).toBe(ROOM);
+		expect(
+			await createRoom({ rules: 'std', seat: 'Random', takebacks: false, clock: null }, fetch)
+		).toBe(ROOM);
 		expect(fetch).toHaveBeenCalledWith('/api/rooms', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: '{"rules":"std","seat":"Random","takebacks":false}'
+			body: '{"rules":"std","seat":"Random","takebacks":false,"clock":null}'
 		});
 	});
 
@@ -38,7 +41,9 @@ describe('making a Room', () => {
 		['a static host’s fallback page', async () => page()],
 		['an id of another shape', async () => json({ room: '../oops' }, 201)]
 	])('gives nothing %s', async (_, fetch) => {
-		expect(await createRoom({ rules: 'std', seat: 'X', takebacks: false }, fetch)).toBeUndefined();
+		expect(
+			await createRoom({ rules: 'std', seat: 'X', takebacks: false, clock: null }, fetch)
+		).toBeUndefined();
 	});
 });
 

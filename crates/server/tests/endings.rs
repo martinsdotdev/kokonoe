@@ -337,7 +337,10 @@ async fn a_takeback_undoes_back_to_the_askers_last_move() {
     .await;
     let taken = [
         answered(OfferKind::Takeback, true),
-        ServerMsg::TookBack { to_ply: 0 },
+        ServerMsg::TookBack {
+            to_ply: 0,
+            clocks: None,
+        },
     ];
     let yes = ClientMsg::AnswerTakeback { accept: true };
     both_hear(&mut table, Player::O, yes.clone(), taken.clone()).await;

@@ -36,6 +36,9 @@ pub enum ClientMsg {
     AnswerRematch {
         accept: bool,
     },
+    Ping {
+        t: u64,
+    },
 }
 
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,19 +53,45 @@ pub enum Role {
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 #[serde(tag = "type")]
 pub enum ServerMsg {
-    Welcome { you: Player, snapshot: Snapshot },
-    Moved { ply: Ply, cell: Cell },
-    Rejected { reason: Rejection },
+    Welcome {
+        you: Player,
+        snapshot: Snapshot,
+    },
+    Moved {
+        ply: Ply,
+        cell: Cell,
+        #[tsify(type = "Clocks | null")]
+        clocks: Option<Clocks>,
+    },
+    Rejected {
+        reason: Rejection,
+    },
     Ended(GameEnd),
     Offer(Offer),
-    OfferAnswered { kind: OfferKind, accepted: bool },
-    TookBack { to_ply: Ply },
-    RematchRoom { room: String },
+    OfferAnswered {
+        kind: OfferKind,
+        accepted: bool,
+    },
+    TookBack {
+        to_ply: Ply,
+        #[tsify(type = "Clocks | null")]
+        clocks: Option<Clocks>,
+    },
+    RematchRoom {
+        room: String,
+    },
+    Aborted {
+        reason: Abort,
+    },
+    Pong {
+        t: u64,
+        server_ms: u64,
+    },
 }
 
 /// A Room as it stands. `end` says how a finished game ended, which a Record can't for a
 /// resignation; `offer` is the one waiting for an answer; `rematch` is the Room an accepted
-/// rematch made.
+/// rematch made; `clock` and `clocks` are a timed Room's.
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub struct Snapshot {
@@ -76,6 +105,46 @@ pub struct Snapshot {
     pub end: Option<GameEnd>,
     #[tsify(type = "string | null")]
     pub rematch: Option<String>,
+    #[tsify(type = "TimeControl | null")]
+    pub clock: Option<TimeControl>,
+    #[tsify(type = "Clocks | null")]
+    pub clocks: Option<Clocks>,
+}
+
+/// A Fischer time control, spelled as a game file's `TimeControl` tag: a bank in minutes, plus
+/// an increment in seconds.
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub enum TimeControl {
+    #[serde(rename = "3+2")]
+    ThreePlusTwo,
+    #[serde(rename = "5+3")]
+    FivePlusThree,
+    #[serde(rename = "10+5")]
+    TenPlusFive,
+    #[serde(rename = "15+5")]
+    FifteenPlusFive,
+}
+
+/// A timed game's clocks as they stood at `at`, the server's Unix ms: each player's time left,
+/// whose runs, and when the game aborts unless the player to move makes their first move.
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub struct Clocks {
+    pub x_ms: u32,
+    pub o_ms: u32,
+    #[tsify(type = "Player | null")]
+    pub running: Option<Player>,
+    pub at: u64,
+    #[tsify(type = "number | null")]
+    pub aborts_at: Option<u64>,
+}
+
+/// Why a game ended without a result.
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub enum Abort {
+    FirstMoveTimeout,
 }
 
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,6 +206,8 @@ pub enum Termination {
     Resign,
     #[serde(rename = "agreed draw")]
     AgreedDraw,
+    #[serde(rename = "timeout")]
+    Timeout,
 }
 
 /// Who holds each seat, by Handle: `null` while it waits for someone.
@@ -160,13 +231,16 @@ pub enum Rejection {
     NotAllowed,
 }
 
-/// `POST /api/rooms`: a Preset by its Ruleset code, and the host's seat.
+/// `POST /api/rooms`: a Preset by its Ruleset code, the host's seat, whether takebacks are
+/// allowed, and the time control, `null` for untimed.
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub struct NewRoom {
     pub rules: String,
     pub seat: SeatChoice,
     pub takebacks: bool,
+    #[tsify(type = "TimeControl | null")]
+    pub clock: Option<TimeControl>,
 }
 
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,4 +270,6 @@ pub struct RoomCard {
     #[tsify(type = "Player | null")]
     pub you: Option<Player>,
     pub takebacks: bool,
+    #[tsify(type = "TimeControl | null")]
+    pub clock: Option<TimeControl>,
 }

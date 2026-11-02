@@ -14,7 +14,8 @@ const card = (players: RoomCard['players'], you: RoomCard['you'] = null): RoomCa
 	rules: 'std',
 	players,
 	you,
-	takebacks: false
+	takebacks: false,
+	clock: null
 });
 
 /** A server answering the session with a Guest and the card with `cards`, one per ask. */

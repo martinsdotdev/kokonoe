@@ -49,11 +49,11 @@ describe('a Room’s game', () => {
 		expect(room.moves).toEqual([]);
 		expect(room.frozen).toBe(true);
 
-		room.receive({ type: 'Moved', ply: 0, cell: top[0] });
+		room.receive({ type: 'Moved', ply: 0, cell: top[0], clocks: null });
 		expect(room.moves).toHaveLength(1);
 		expect(room.pending).toBeNull();
 		expect(room.replied).toBe(false);
-		room.receive({ type: 'Moved', ply: 1, cell: top[1] });
+		room.receive({ type: 'Moved', ply: 1, cell: top[1], clocks: null });
 		expect(room.replied, 'the other side’s move lands').toBe(true);
 		expect(room.frozen).toBe(false);
 	});
@@ -71,11 +71,11 @@ describe('a Room’s game', () => {
 
 	it('resyncs on a gap, a refusal or a move it can’t play, and ignores one it has', () => {
 		const { room, link } = game('X', undefined, top.slice(0, 2));
-		room.receive({ type: 'Moved', ply: 1, cell: top[1] });
+		room.receive({ type: 'Moved', ply: 1, cell: top[1], clocks: null });
 		expect(link.resync).not.toHaveBeenCalled();
 		expect(room.moves).toHaveLength(2);
-		room.receive({ type: 'Moved', ply: 3, cell: top[3] });
-		room.receive({ type: 'Moved', ply: 2, cell: top[0] });
+		room.receive({ type: 'Moved', ply: 3, cell: top[3], clocks: null });
+		room.receive({ type: 'Moved', ply: 2, cell: top[0], clocks: null });
 		room.receive({ type: 'Rejected', reason: 'NotAllowed' });
 		expect(link.resync).toHaveBeenCalledTimes(3);
 		expect(room.moves).toHaveLength(2);
@@ -124,7 +124,7 @@ describe('a Room’s game', () => {
 		room.receive({ type: 'OfferAnswered', kind: 'Draw', accepted: false });
 		expect(room.offer).toBeNull();
 		expect(room.notice).toBe('guest-1066 didn’t accept the draw.');
-		room.receive({ type: 'Moved', ply: 2, cell: top[2] });
+		room.receive({ type: 'Moved', ply: 2, cell: top[2], clocks: null });
 		expect(room.notice, 'until the next move').toBeNull();
 	});
 
@@ -153,20 +153,20 @@ describe('a Room’s game', () => {
 	it('drops an offer a move withdraws, as the server does', () => {
 		const { room } = game('X', undefined, top.slice(0, 2), { takebacks: true });
 		room.receive({ type: 'Offer', kind: 'Draw', by: 'X', lapses_in: null });
-		room.receive({ type: 'Moved', ply: 2, cell: top[2] });
+		room.receive({ type: 'Moved', ply: 2, cell: top[2], clocks: null });
 		room.receive({ type: 'OfferAnswered', kind: 'Draw', accepted: false });
 		expect(room.offer).toBeNull();
 		expect(room.notice, 'its own move withdrew it').toBeNull();
 
 		room.receive({ type: 'Offer', kind: 'Draw', by: 'X', lapses_in: null });
-		room.receive({ type: 'Moved', ply: 3, cell: top[3] });
+		room.receive({ type: 'Moved', ply: 3, cell: top[3], clocks: null });
 		expect(room.offer, 'a draw offer stands through the other’s move').toMatchObject({
 			kind: 'Draw'
 		});
 		room.receive({ type: 'OfferAnswered', kind: 'Draw', accepted: false });
 
 		room.receive({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
-		room.receive({ type: 'Moved', ply: 4, cell: top[4] });
+		room.receive({ type: 'Moved', ply: 4, cell: top[4], clocks: null });
 		expect(room.offer, 'any move withdraws a takeback').toBeNull();
 	});
 
@@ -179,7 +179,7 @@ describe('a Room’s game', () => {
 		room.receive({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
 		expect(room.offer?.lapses).toBeGreaterThanOrEqual(heard + 15_000);
 		room.receive({ type: 'OfferAnswered', kind: 'Takeback', accepted: true });
-		room.receive({ type: 'TookBack', to_ply: 1 });
+		room.receive({ type: 'TookBack', to_ply: 1, clocks: null });
 		expect(room.moves.map((move) => move.notation)).toEqual(['1·4']);
 		expect(room.toMove).toBe('O');
 		expect(room.offer).toBeNull();
@@ -202,12 +202,12 @@ describe('a Room’s game', () => {
 
 	it('keeps a takeback to before every move, so nothing shows the move taken back', async () => {
 		const { room, store } = game('O', undefined, [], { takebacks: true });
-		room.receive({ type: 'Moved', ply: 0, cell: top[0] });
+		room.receive({ type: 'Moved', ply: 0, cell: top[0], clocks: null });
 		await expect.poll(() => store.saves.length).toBe(1);
 		room.receive({ type: 'Offer', kind: 'Takeback', by: 'X', lapses_in: 15_000 });
 		room.answer(true);
 		room.receive({ type: 'OfferAnswered', kind: 'Takeback', accepted: true });
-		room.receive({ type: 'TookBack', to_ply: 0 });
+		room.receive({ type: 'TookBack', to_ply: 0, clocks: null });
 		expect(room.moves).toEqual([]);
 		await expect.poll(() => store.saves.length).toBe(2);
 		expect(store.last?.record.moves).toEqual([]);
@@ -225,7 +225,7 @@ describe('a Room’s game', () => {
 
 	it('resyncs on a takeback past what it holds', () => {
 		const { room, link } = game('X', undefined, top.slice(0, 2), { takebacks: true });
-		room.receive({ type: 'TookBack', to_ply: 3 });
+		room.receive({ type: 'TookBack', to_ply: 3, clocks: null });
 		expect(link.resync).toHaveBeenCalledOnce();
 	});
 
@@ -277,7 +277,7 @@ describe('a Room’s game', () => {
 
 		const { room, store } = game('X');
 		expect(store.saves, 'nor before a move').toEqual([]);
-		room.receive({ type: 'Moved', ply: 0, cell: top[0] });
+		room.receive({ type: 'Moved', ply: 0, cell: top[0], clocks: null });
 		await expect.poll(() => store.saves.length).toBe(1);
 		expect(store.last).toMatchObject({
 			id: ROOM,
@@ -297,13 +297,13 @@ describe('a Room’s game', () => {
 
 	it('keeps each move it plays, and nothing it doesn’t', async () => {
 		const { room, store } = game('X');
-		room.receive({ type: 'Moved', ply: 0, cell: top[0] });
-		room.receive({ type: 'Moved', ply: 1, cell: top[1] });
+		room.receive({ type: 'Moved', ply: 0, cell: top[0], clocks: null });
+		room.receive({ type: 'Moved', ply: 1, cell: top[1], clocks: null });
 		await expect
 			.poll(() => store.saves.map((saved) => saved.record.moves))
 			.toEqual([[top[0]], [top[0], top[1]]]);
-		room.receive({ type: 'Moved', ply: 0, cell: top[0] });
-		room.receive({ type: 'Moved', ply: 5, cell: top[5] });
+		room.receive({ type: 'Moved', ply: 0, cell: top[0], clocks: null });
+		room.receive({ type: 'Moved', ply: 5, cell: top[5], clocks: null });
 		room.welcome(welcome('X', undefined, top.slice(0, 2)));
 		expect(store.saves, 'a resend, a gap and a Welcome changing nothing').toHaveLength(2);
 		room.welcome(welcome('X', undefined, top.slice(0, 3)));

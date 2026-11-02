@@ -2,6 +2,7 @@
 //! and need no CORS: every page, a link preview for invite Rooms, a health check, Guest sessions,
 //! invite Rooms and the game socket, which plays them.
 
+mod clock;
 mod games;
 mod preview;
 mod random;
@@ -9,6 +10,7 @@ mod room;
 mod rooms;
 mod session;
 mod socket;
+mod time;
 
 pub use room::Timing;
 
@@ -61,7 +63,8 @@ struct AppState {
 /// The app: the SPA from `web_root`, as adapter-static built it, precompressed. Every path that
 /// names no file gets the fallback page `200.html`, so deep links resolve; a missing file gets a
 /// 404, never the page in its place. `origin` is where the pages are served from, and `timing` how
-/// long a Room's offers wait for their answers.
+/// long things take in a Room: its offers' waits, a timed Room's first-move window, and its time
+/// controls' units.
 pub fn app(
     pool: PgPool,
     web_root: &Path,

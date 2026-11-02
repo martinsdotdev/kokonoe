@@ -102,11 +102,16 @@ pub async fn guest(app: &Router) -> String {
     value.split(';').next().unwrap().to_owned()
 }
 
-/// How long a test server's offers wait: long enough to answer, short enough to watch lapse, and
-/// apart, so a takeback can't wait as a rematch does.
+/// How long things take on a test server. Its offers wait long enough to answer, short enough to
+/// watch lapse, and apart, so a takeback can't wait as a rematch does. Its time controls run in
+/// a fifth of a second a minute and 40 ms a second, so 3+2 is a 600 ms bank and an 80 ms
+/// increment, and a timed Room's first move has 500 ms.
 pub const TIMING: Timing = Timing {
     takeback: Duration::from_millis(400),
     rematch: Duration::from_millis(900),
+    abort: Duration::from_millis(500),
+    minute: Duration::from_millis(200),
+    second: Duration::from_millis(40),
 };
 
 /// The server, listening on its own runtime as a deployed one would, so [`Server::kill`] can stop

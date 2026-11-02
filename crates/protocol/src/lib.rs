@@ -7,10 +7,12 @@
 extern crate alloc;
 
 mod api;
+mod clock;
 mod close;
 mod socket;
 
 pub use api::{CreatedRoom, NewRoom, RoomCard, SeatChoice};
+pub use clock::{Abort, Clocks, TimeControl};
 pub use close::CloseCode;
 pub use socket::{
     ClientMsg, Draws, GameEnd, GameResult, Offer, OfferKind, Players, Rejection, Role, ServerMsg,

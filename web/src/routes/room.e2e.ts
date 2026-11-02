@@ -106,7 +106,7 @@ test.describe('on a phone', () => {
 		});
 		await page.goto(`/r/${ROOM}`);
 		await expect(marked(page)).not.toHaveCount(0);
-		room.say({ type: 'Offer', kind: 'Takeback', by: 'O' });
+		room.say({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
 		await expect(page.getByRole('button', { name: 'Accept' })).toBeInViewport();
 	});
 });
@@ -383,7 +383,7 @@ test.describe('a Room’s endings', () => {
 		await expect.poll(() => room.said.at(-1)).toEqual({ type: 'OfferDraw' });
 		await expect(offer(page)).toHaveText(`You offered a draw. Waiting for ${JOINER}…`);
 		await expect(page.getByRole('button', { name: 'Offer draw' })).toBeDisabled();
-		room.say({ type: 'Offer', kind: 'Draw', by: 'X' });
+		room.say({ type: 'Offer', kind: 'Draw', by: 'X', lapses_in: null });
 		room.say({ type: 'OfferAnswered', kind: 'Draw', accepted: true });
 		room.say({ type: 'Ended', result: '1/2-1/2', termination: 'agreed draw' });
 		await expect(page.getByRole('heading', { name: 'Draw agreed' })).toBeVisible();
@@ -399,7 +399,7 @@ test.describe('a Room’s endings', () => {
 		});
 		await page.goto(`/r/${ROOM}`);
 		await expect(marked(page)).toHaveCount(2);
-		room.say({ type: 'Offer', kind: 'Draw', by: 'O' });
+		room.say({ type: 'Offer', kind: 'Draw', by: 'O', lapses_in: null });
 		await expect(offer(page)).toContainText(`${JOINER} offers a draw.`);
 		await expect(spoken(page)).toContainText(`${JOINER} offers a draw.`);
 		// Kit's route announcer lives outside the page's content.
@@ -413,7 +413,9 @@ test.describe('a Room’s endings', () => {
 		await expect(page.locator('main h1'), 'focus goes to the game with the card').toBeFocused();
 	});
 
-	test('an offer waiting survives a reconnect', async ({ page }) => {
+	test('an offer waiting survives a reconnect, counting down from the server’s word', async ({
+		page
+	}) => {
 		const state = {
 			you: 'X' as const,
 			players: { X: HOST, O: JOINER },
@@ -423,14 +425,15 @@ test.describe('a Room’s endings', () => {
 		const room = await fakeRoom(page, state);
 		await page.goto(`/r/${ROOM}`);
 		await expect(marked(page)).toHaveCount(2);
-		room.say({ type: 'Offer', kind: 'Draw', by: 'O' });
+		room.say({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
 		await expect(offer(page)).toBeVisible();
-		state.snapshot = { offer: { kind: 'Draw', by: 'O' }, draws: { X: 0, O: 1 } };
+		state.snapshot = { offer: { kind: 'Takeback', by: 'O', lapses_in: 9000 } };
 		room.close(1011);
 		await expect.poll(() => room.hellos()).toBe(2);
 		await expect(page.locator('[data-trouble]')).toHaveCount(0);
-		await expect(offer(page)).toContainText(`${JOINER} offers a draw.`);
+		await expect(offer(page)).toContainText(`${JOINER} asks to take back their last move.`);
 		await expect(offer(page).getByRole('button', { name: 'Accept' })).toBeVisible();
+		await expect(offer(page).locator('[data-left]')).toHaveText(/^[1-9] seconds? left to answer$/);
 	});
 
 	test('a takeback that lapses says so, and can be asked again', async ({ page }) => {
@@ -443,7 +446,7 @@ test.describe('a Room’s endings', () => {
 		await page.goto(`/r/${ROOM}`);
 		const ask = page.getByRole('button', { name: 'Ask takeback' });
 		await ask.click();
-		room.say({ type: 'Offer', kind: 'Takeback', by: 'O' });
+		room.say({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
 		await expect(ask).toHaveAttribute('aria-disabled', 'true');
 		await expect(ask, 'a disabled control keeps focus').toBeFocused();
 		room.say({ type: 'OfferAnswered', kind: 'Takeback', accepted: false });
@@ -463,8 +466,8 @@ test.describe('a Room’s endings', () => {
 		await expect(marked(page)).toHaveCount(2);
 		await page.getByRole('button', { name: 'Ask takeback' }).click();
 		await expect.poll(() => room.said.at(-1)).toEqual({ type: 'AskTakeback' });
-		room.say({ type: 'Offer', kind: 'Takeback', by: 'O' });
-		await expect(offer(page).locator('[data-left]')).toHaveText(/^1[45] seconds left to answer$/);
+		room.say({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
+		await expect(offer(page).locator('[data-left]')).toHaveText(/^\d+ seconds left to answer$/);
 		room.say({ type: 'OfferAnswered', kind: 'Takeback', accepted: true });
 		state.moves = top.slice(0, 1);
 		room.say({ type: 'TookBack', to_ply: 1 });
@@ -481,7 +484,7 @@ test.describe('a Room’s endings', () => {
 		await page.getByRole('button', { name: 'Rematch' }).click();
 		await expect.poll(() => room.said.at(-1)).toEqual({ type: 'OfferRematch' });
 		await expect(offer(page)).toHaveText(`You offered a rematch. Waiting for ${HOST}…`);
-		room.say({ type: 'Offer', kind: 'Rematch', by: 'O' });
+		room.say({ type: 'Offer', kind: 'Rematch', by: 'O', lapses_in: 60_000 });
 		room.say({ type: 'OfferAnswered', kind: 'Rematch', accepted: true });
 		Object.assign(state, { you: 'X', players: { X: JOINER, O: HOST }, moves: [] });
 		room.say({ type: 'RematchRoom', room: NEXT });
@@ -497,7 +500,7 @@ test.describe('a Room’s endings', () => {
 		const room = await fakeRoom(page, { you: 'O', players: { X: HOST, O: JOINER }, moves: top });
 		await page.goto(`/r/${ROOM}`);
 		await page.getByRole('button', { name: 'Rematch' }).click();
-		room.say({ type: 'Offer', kind: 'Rematch', by: 'O' });
+		room.say({ type: 'Offer', kind: 'Rematch', by: 'O', lapses_in: 60_000 });
 		room.say({ type: 'OfferAnswered', kind: 'Rematch', accepted: false });
 		await expect(page.locator('[data-notice]')).toHaveText(`${HOST} didn’t accept the rematch.`);
 		await expect(spoken(page)).toContainText(`${HOST} didn’t accept the rematch.`);

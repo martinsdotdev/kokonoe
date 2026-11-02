@@ -83,6 +83,8 @@ pub struct Snapshot {
 pub struct Offer {
     pub kind: OfferKind,
     pub by: Player,
+    #[tsify(type = "number | null")]
+    pub lapses_in: Option<u32>,
 }
 
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]

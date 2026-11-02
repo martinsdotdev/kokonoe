@@ -436,6 +436,7 @@ mod wire {
             Offer {
                 kind: offer.kind.into(),
                 by: offer.by.into(),
+                lapses_in: offer.lapses_in,
             }
         }
     }
@@ -796,7 +797,11 @@ mod tests {
                     termination,
                 })
             };
-            let offer = |kind, by| protocol::Offer { kind, by };
+            let offer = |kind, by, lapses_in| protocol::Offer {
+                kind,
+                by,
+                lapses_in,
+            };
             let server = vec![
                 protocol::ServerMsg::Welcome {
                     you: engine::Player::O,
@@ -816,7 +821,11 @@ mod tests {
                         record: game.record(),
                         players: players(Some("guest-4821"), Some("guest-1066")),
                         takebacks: true,
-                        offer: Some(offer(protocol::OfferKind::Rematch, engine::Player::O)),
+                        offer: Some(offer(
+                            protocol::OfferKind::Rematch,
+                            engine::Player::O,
+                            Some(60_000),
+                        )),
                         draws: protocol::Draws { x: 3, o: 1 },
                         end: Some(protocol::GameEnd {
                             result: protocol::GameResult::Draw,
@@ -837,8 +846,16 @@ mod tests {
                     protocol::GameResult::Draw,
                     protocol::Termination::AgreedDraw,
                 ),
-                protocol::ServerMsg::Offer(offer(protocol::OfferKind::Draw, engine::Player::X)),
-                protocol::ServerMsg::Offer(offer(protocol::OfferKind::Takeback, engine::Player::O)),
+                protocol::ServerMsg::Offer(offer(
+                    protocol::OfferKind::Draw,
+                    engine::Player::X,
+                    None,
+                )),
+                protocol::ServerMsg::Offer(offer(
+                    protocol::OfferKind::Takeback,
+                    engine::Player::O,
+                    Some(15_000),
+                )),
                 protocol::ServerMsg::OfferAnswered {
                     kind: protocol::OfferKind::Takeback,
                     accepted: true,

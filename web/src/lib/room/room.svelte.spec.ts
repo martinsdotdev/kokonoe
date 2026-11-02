@@ -120,7 +120,7 @@ describe('a Room’s game', () => {
 		expect(sent).toEqual([{ type: 'OfferDraw' }]);
 		expect(room.offer).toEqual({ kind: 'Draw', mine: true, other: 'guest-1066', lapses: null });
 		expect(room.controls.offerDraw?.enabled, 'one offer at a time').toBe(false);
-		room.receive({ type: 'Offer', kind: 'Draw', by: 'X' });
+		room.receive({ type: 'Offer', kind: 'Draw', by: 'X', lapses_in: null });
 		room.receive({ type: 'OfferAnswered', kind: 'Draw', accepted: false });
 		expect(room.offer).toBeNull();
 		expect(room.notice).toBe('guest-1066 didn’t accept the draw.');
@@ -130,7 +130,7 @@ describe('a Room’s game', () => {
 
 	it('answers the other player’s draw, and ends agreed', async () => {
 		const { room, sent, store } = game('X', undefined, top.slice(0, 2));
-		room.receive({ type: 'Offer', kind: 'Draw', by: 'O' });
+		room.receive({ type: 'Offer', kind: 'Draw', by: 'O', lapses_in: null });
 		expect(room.offer).toEqual({ kind: 'Draw', mine: false, other: 'guest-1066', lapses: null });
 		room.answer(true);
 		expect(sent).toEqual([{ type: 'AnswerDraw', accept: true }]);
@@ -145,27 +145,27 @@ describe('a Room’s game', () => {
 
 	it('counts each player’s draw offers, and allows none past the last', () => {
 		const { room } = game('X', undefined, top.slice(0, 2), { draws: { X: 2, O: 3 } });
-		room.receive({ type: 'Offer', kind: 'Draw', by: 'X' });
+		room.receive({ type: 'Offer', kind: 'Draw', by: 'X', lapses_in: null });
 		room.receive({ type: 'OfferAnswered', kind: 'Draw', accepted: false });
 		expect(room.controls.offerDraw?.enabled).toBe(false);
 	});
 
 	it('drops an offer a move withdraws, as the server does', () => {
 		const { room } = game('X', undefined, top.slice(0, 2), { takebacks: true });
-		room.receive({ type: 'Offer', kind: 'Draw', by: 'X' });
+		room.receive({ type: 'Offer', kind: 'Draw', by: 'X', lapses_in: null });
 		room.receive({ type: 'Moved', ply: 2, cell: top[2] });
 		room.receive({ type: 'OfferAnswered', kind: 'Draw', accepted: false });
 		expect(room.offer).toBeNull();
 		expect(room.notice, 'its own move withdrew it').toBeNull();
 
-		room.receive({ type: 'Offer', kind: 'Draw', by: 'X' });
+		room.receive({ type: 'Offer', kind: 'Draw', by: 'X', lapses_in: null });
 		room.receive({ type: 'Moved', ply: 3, cell: top[3] });
 		expect(room.offer, 'a draw offer stands through the other’s move').toMatchObject({
 			kind: 'Draw'
 		});
 		room.receive({ type: 'OfferAnswered', kind: 'Draw', accepted: false });
 
-		room.receive({ type: 'Offer', kind: 'Takeback', by: 'O' });
+		room.receive({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
 		room.receive({ type: 'Moved', ply: 4, cell: top[4] });
 		expect(room.offer, 'any move withdraws a takeback').toBeNull();
 	});
@@ -176,7 +176,7 @@ describe('a Room’s game', () => {
 		room.controls.askTakeback?.run();
 		expect(sent).toEqual([{ type: 'AskTakeback' }]);
 		const heard = Date.now();
-		room.receive({ type: 'Offer', kind: 'Takeback', by: 'O' });
+		room.receive({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
 		expect(room.offer?.lapses).toBeGreaterThanOrEqual(heard + 15_000);
 		room.receive({ type: 'OfferAnswered', kind: 'Takeback', accepted: true });
 		room.receive({ type: 'TookBack', to_ply: 1 });
@@ -184,6 +184,15 @@ describe('a Room’s game', () => {
 		expect(room.toMove).toBe('O');
 		expect(room.offer).toBeNull();
 		await expect.poll(() => store.last?.record.moves).toEqual([top[0]]);
+	});
+
+	it('counts a waiting takeback down from what a Welcome says it has left', () => {
+		const offer = { kind: 'Takeback', by: 'O', lapses_in: 9000 } as const;
+		const before = Date.now();
+		const { room } = game('X', undefined, top.slice(0, 2), { takebacks: true, offer });
+		const after = Date.now();
+		expect(room.offer?.lapses).toBeGreaterThanOrEqual(before + 9000);
+		expect(room.offer?.lapses).toBeLessThanOrEqual(after + 9000);
 	});
 
 	it('needs a move of this player’s own to ask a takeback', () => {
@@ -195,7 +204,7 @@ describe('a Room’s game', () => {
 		const { room, store } = game('O', undefined, [], { takebacks: true });
 		room.receive({ type: 'Moved', ply: 0, cell: top[0] });
 		await expect.poll(() => store.saves.length).toBe(1);
-		room.receive({ type: 'Offer', kind: 'Takeback', by: 'X' });
+		room.receive({ type: 'Offer', kind: 'Takeback', by: 'X', lapses_in: 15_000 });
 		room.answer(true);
 		room.receive({ type: 'OfferAnswered', kind: 'Takeback', accepted: true });
 		room.receive({ type: 'TookBack', to_ply: 0 });
@@ -207,7 +216,7 @@ describe('a Room’s game', () => {
 	it('says when its takeback lapsed, and lets it be asked again', () => {
 		const { room } = game('O', undefined, top.slice(0, 2), { takebacks: true });
 		room.controls.askTakeback?.run();
-		room.receive({ type: 'Offer', kind: 'Takeback', by: 'O' });
+		room.receive({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
 		expect(room.controls.askTakeback?.enabled).toBe(false);
 		room.receive({ type: 'OfferAnswered', kind: 'Takeback', accepted: false });
 		expect(room.notice).toBe('guest-4821 didn’t accept the takeback.');
@@ -226,7 +235,7 @@ describe('a Room’s game', () => {
 		room.rematch.run();
 		expect(sent).toEqual([{ type: 'OfferRematch' }]);
 		expect(room.rematch.enabled).toBe(false);
-		room.receive({ type: 'Offer', kind: 'Rematch', by: 'O' });
+		room.receive({ type: 'Offer', kind: 'Rematch', by: 'O', lapses_in: 60_000 });
 		room.receive({ type: 'OfferAnswered', kind: 'Rematch', accepted: true });
 		room.receive({ type: 'RematchRoom', room: NEXT });
 		expect(onrematch).toHaveBeenCalledWith(NEXT);
@@ -239,7 +248,7 @@ describe('a Room’s game', () => {
 		const { room } = game('X', undefined, top.slice(0, 2), { end, rematch: NEXT });
 		expect(room.end).toEqual({ resigned: 'O' });
 		expect(room.rematchRoom).toBe(NEXT);
-		const offer = { kind: 'Draw', by: 'O' } as const;
+		const offer = { kind: 'Draw', by: 'O', lapses_in: null } as const;
 		room.welcome(welcome('X', undefined, top.slice(0, 2), { offer }));
 		expect(room.end).toBeNull();
 		expect(room.offer).toEqual({ kind: 'Draw', mine: false, other: 'guest-1066', lapses: null });

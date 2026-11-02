@@ -92,8 +92,14 @@ const TERMINATIONS: Record<Termination, true> = {
 
 const isKind = (kind: unknown): boolean => among(KINDS, kind);
 
-const isOffer = (offer: unknown): boolean =>
-	isKind(field(offer, 'kind')) && isPlayer(field(offer, 'by'));
+const isOffer = (offer: unknown): boolean => {
+	const lapses = field(offer, 'lapses_in');
+	return (
+		isKind(field(offer, 'kind')) &&
+		isPlayer(field(offer, 'by')) &&
+		(lapses === null || count(lapses))
+	);
+};
 
 const isEnd = (end: unknown): boolean =>
 	among(RESULTS, field(end, 'result')) && among(TERMINATIONS, field(end, 'termination'));

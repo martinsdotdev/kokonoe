@@ -278,6 +278,15 @@ export function choose(level, depth, visits, seed) {
 }
 
 /**
+ * How many draws a player may offer in one game.
+ * @returns {number}
+ */
+export function drawOffers() {
+    const ret = wasm.drawOffers();
+    return ret;
+}
+
+/**
  * A Cell in Notation: `5·5` at depth 2, `5·1·8` at depth 3.
  * @param {Cell} cell
  * @param {2 | 3} depth

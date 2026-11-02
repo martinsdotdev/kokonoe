@@ -189,6 +189,7 @@ export type Opening = "Free" | { Random: number };
 export interface Offer {
     kind: OfferKind;
     by: Player;
+    lapses_in: number | null;
 }
 
 export interface Preset {
@@ -307,6 +308,11 @@ export class State {
 export function choose(level: number, depth: 2 | 3, visits: Visit[], seed: Seed): Cell;
 
 /**
+ * How many draws a player may offer in one game.
+ */
+export function drawOffers(): number;
+
+/**
  * A Cell in Notation: `5·5` at depth 2, `5·1·8` at depth 3.
  */
 export function notation(cell: Cell, depth: 2 | 3): string;
@@ -359,6 +365,7 @@ export interface InitOutput {
     readonly __wbg_game_free: (a: number, b: number) => void;
     readonly __wbg_state_free: (a: number, b: number) => void;
     readonly choose: (a: number, b: number, c: any, d: any) => [number, number, number];
+    readonly drawOffers: () => number;
     readonly game_boardStatus: (a: number, b: any) => [number, number, number];
     readonly game_mark: (a: number, b: any) => [number, number, number];
     readonly game_moves: (a: number) => [number, number];

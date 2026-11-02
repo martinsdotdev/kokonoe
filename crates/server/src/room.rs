@@ -29,8 +29,8 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// How many commands wait for a Room before its sockets wait too.
 const COMMANDS: usize = 64;
 
-/// How long an offer waits for its answer (spec §10.2). A draw offer has no deadline: it stands
-/// until it's answered or the offerer moves.
+/// How long an offer waits for its answer (spec §10.2), which the players hear as each `Offer`'s
+/// `lapses_in`. A draw offer has no deadline: it stands until it's answered or the offerer moves.
 #[derive(Clone, Copy, Debug)]
 pub struct Timing {
     /// How long a takeback waits for its answer.
@@ -157,8 +157,22 @@ struct Room {
 
 /// The offer waiting for an answer, and when it lapses.
 struct Pending {
-    offer: Offer,
+    kind: OfferKind,
+    by: Player,
     lapses: Option<Instant>,
+}
+
+impl Pending {
+    /// The offer as the players hear it at `now`, with the time it has left.
+    fn offer(&self, now: Instant) -> Offer {
+        Offer {
+            kind: self.kind,
+            by: self.by,
+            lapses_in: self.lapses.map(|at| {
+                u32::try_from(at.saturating_duration_since(now).as_millis()).unwrap_or(u32::MAX)
+            }),
+        }
+    }
 }
 
 struct Socket {
@@ -309,7 +323,7 @@ impl Room {
         // A move withdraws a takeback, which was asked of the game before it, and the mover's own
         // draw offer.
         let withdrawn = self.offer.as_ref().is_some_and(|pending| {
-            let Offer { kind, by } = pending.offer;
+            let &Pending { kind, by, .. } = pending;
             kind == OfferKind::Takeback || (kind == OfferKind::Draw && by == player)
         });
         if withdrawn {
@@ -379,10 +393,14 @@ impl Room {
                 Some(self.timing.rematch)
             }
         };
-        let offer = Offer { kind, by: player };
-        let lapses = wait.map(|wait| Instant::now() + wait);
-        self.offer = Some(Pending { offer, lapses });
-        self.announce(ServerMsg::Offer(offer));
+        let now = Instant::now();
+        let pending = Pending {
+            kind,
+            by: player,
+            lapses: wait.map(|wait| now + wait),
+        };
+        self.announce(ServerMsg::Offer(pending.offer(now)));
+        self.offer = Some(pending);
         Ok(true)
     }
 
@@ -401,9 +419,8 @@ impl Room {
         let waiting = self
             .offer
             .as_ref()
-            .map(|pending| pending.offer)
-            .filter(|offer| offer.kind == kind && offer.by != player);
-        let Some(offer) = waiting else {
+            .filter(|pending| pending.kind == kind && pending.by != player);
+        let Some(by) = waiting.map(|pending| pending.by) else {
             return Ok(false);
         };
         if !accept {
@@ -416,7 +433,7 @@ impl Room {
         };
         match kind {
             OfferKind::Draw => self.agree_draw(accepted).await,
-            OfferKind::Takeback => self.take_back(offer.by, accepted).await,
+            OfferKind::Takeback => self.take_back(by, accepted).await,
             OfferKind::Rematch => self.rematch(accepted).await,
         }
     }
@@ -472,7 +489,7 @@ impl Room {
         let Some(pending) = self.offer.take() else {
             return;
         };
-        let kind = pending.offer.kind;
+        let kind = pending.kind;
         self.announce(ServerMsg::OfferAnswered {
             kind,
             accepted: false,
@@ -503,7 +520,10 @@ impl Room {
             record: self.game.record(),
             players: self.seats.players(),
             takebacks: self.takebacks,
-            offer: self.offer.as_ref().map(|pending| pending.offer),
+            offer: self
+                .offer
+                .as_ref()
+                .map(|pending| pending.offer(Instant::now())),
             draws: self.draws,
             end: self.end(),
             rematch: self.rematch.as_ref().map(RoomId::to_string),

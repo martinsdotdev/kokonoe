@@ -10,35 +10,19 @@ export interface PendingOffer {
 	mine: boolean;
 	/** The other player's Handle. */
 	other: string;
-	/** When it lapses, in epoch milliseconds, if it does. */
+	/** When it lapses, in epoch milliseconds, by the server's word, if it does. */
 	lapses: number | null;
 }
 
-/** The draw offers each player has in a game, the server's `Draws::MAX`. */
-export const DRAWS = 3;
-
-/**
- * Each kind of offer: how it's worded, and how long it waits before it lapses, the server's
- * `Timing`, counted from when this page heard it, so a little longer than the server's. A draw
- * waits to be answered.
- */
-export const OFFERS: Record<
-	OfferKind,
-	{ made: string; heard: string; name: string; lapses: number | null }
-> = {
-	Draw: { made: 'offered a draw', heard: 'offers a draw', name: 'the draw', lapses: null },
+/** How each kind of offer is worded: as this page made it, as it heard it, and by name. */
+const OFFERS: Record<OfferKind, { made: string; heard: string; name: string }> = {
+	Draw: { made: 'offered a draw', heard: 'offers a draw', name: 'the draw' },
 	Takeback: {
 		made: 'asked to take back your last move',
 		heard: 'asks to take back their last move',
-		name: 'the takeback',
-		lapses: 15_000
+		name: 'the takeback'
 	},
-	Rematch: {
-		made: 'offered a rematch',
-		heard: 'offers a rematch',
-		name: 'the rematch',
-		lapses: 60_000
-	}
+	Rematch: { made: 'offered a rematch', heard: 'offers a rematch', name: 'the rematch' }
 };
 
 /** What the offer is, for the player who answers it, or for the one who made it. */

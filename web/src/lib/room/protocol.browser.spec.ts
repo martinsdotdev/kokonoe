@@ -10,7 +10,7 @@ it('reads every message the server sends', () => {
 		welcome('X'),
 		welcome('O', undefined, [], {
 			takebacks: true,
-			offer: { kind: 'Takeback', by: 'X' },
+			offer: { kind: 'Takeback', by: 'X', lapses_in: 15_000 },
 			draws: { X: 1, O: 3 },
 			end: { result: '1/2-1/2', termination: 'agreed draw' },
 			rematch: 'b'.repeat(20)
@@ -18,7 +18,7 @@ it('reads every message the server sends', () => {
 		{ type: 'Moved', ply: 0, cell: 40 },
 		{ type: 'Rejected', reason: 'NotAllowed' },
 		{ type: 'Ended', result: '0-1', termination: 'resign' },
-		{ type: 'Offer', kind: 'Rematch', by: 'O' },
+		{ type: 'Offer', kind: 'Rematch', by: 'O', lapses_in: 60_000 },
 		{ type: 'OfferAnswered', kind: 'Draw', accepted: false },
 		{ type: 'TookBack', to_ply: 2 },
 		{ type: 'RematchRoom', room: 'b'.repeat(20) }
@@ -38,8 +38,12 @@ it('reads a message of the wrong shape as nothing', () => {
 		{ type: 'OfferAnswered', kind: 'Draw', accepted: 'no' },
 		{ type: 'Ended', result: '2-0', termination: 'resign' },
 		{ type: 'Ended', result: '1-0', termination: 'timeout' },
-		{ type: 'Offer', kind: 'Draw', by: 'Z' },
+		{ type: 'Offer', kind: 'Draw', by: 'Z', lapses_in: null },
 		{ type: 'OfferAnswered', kind: 'Draw' },
+		{ type: 'Offer', kind: 'Draw', by: 'X' },
+		{ type: 'Offer', kind: 'Takeback', by: 'X', lapses_in: -1 },
+		{ type: 'Offer', kind: 'Takeback', by: 'X', lapses_in: 1.5 },
+		{ type: 'Offer', kind: 'Takeback', by: 'X', lapses_in: 'soon' },
 		{ type: 'TookBack', to_ply: -1 },
 		{ type: 'RematchRoom', room: '../r' },
 		{ type: 'Claim' }

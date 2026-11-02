@@ -4,6 +4,7 @@ export const memory: WebAssembly.Memory;
 export const __wbg_game_free: (a: number, b: number) => void;
 export const __wbg_state_free: (a: number, b: number) => void;
 export const choose: (a: number, b: number, c: any, d: any) => [number, number, number];
+export const drawOffers: () => number;
 export const game_boardStatus: (a: number, b: any) => [number, number, number];
 export const game_mark: (a: number, b: any) => [number, number, number];
 export const game_moves: (a: number) => [number, number];

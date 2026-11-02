@@ -309,6 +309,12 @@ pub fn protocol_version() -> u32 {
     kokonoe_protocol::PROTOCOL
 }
 
+/// How many draws a player may offer in one game.
+#[wasm_bindgen(js_name = drawOffers)]
+pub fn draw_offers() -> u8 {
+    kokonoe_protocol::Draws::MAX
+}
+
 /// The five Presets, Standard first.
 #[wasm_bindgen]
 pub fn presets() -> Vec<Ts<Preset>> {

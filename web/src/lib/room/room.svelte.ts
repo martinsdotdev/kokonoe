@@ -1,4 +1,5 @@
 import {
+	drawOffers,
 	Game,
 	type Cell,
 	type ClientMsg,
@@ -18,7 +19,7 @@ import { againstLabel, type RoomOpponent } from '#lib/game/launch.js';
 import { dealtMoves, gameFile, playedMove, seats, type Move, type Seat } from '#lib/game/moves.js';
 import { openRecord } from '#lib/game/record.js';
 import { Refusals } from '#lib/game/refusal.svelte.js';
-import { DRAWS, OFFERS, unansweredText, type PendingOffer } from '#lib/game/offers.js';
+import { unansweredText, type PendingOffer } from '#lib/game/offers.js';
 import { endOf, opponent, result, stoppedFrom, type End, type Stopped } from '#lib/game/result.js';
 import { rulesetCode, type Variant } from '#lib/game/rules.js';
 import { browserStore, savedGame, type GameStore, type SavedGame } from '#lib/game/saved.js';
@@ -52,6 +53,16 @@ type Snapshot = Welcome['snapshot'];
 /** What a save holds that the Room can change: the moves, who sits where, and the result. */
 const kept = (saved: SavedGame): string =>
 	JSON.stringify([saved.record.moves, saved.opponent, saved.result]);
+
+/** An offer as this page holds it: when it lapses, if it does, in epoch milliseconds. */
+type Waiting = { kind: OfferKind; by: Player; lapses: number | null };
+
+/** An offer the server sent, counted down from now. */
+const waiting = ({ kind, by, lapses_in }: Offer): Waiting => ({
+	kind,
+	by,
+	lapses: lapses_in === null ? null : Date.now() + lapses_in
+});
 
 /** What a page sends to make an offer of each kind, and to answer one. */
 const OFFER = { Draw: 'OfferDraw', Takeback: 'AskTakeback', Rematch: 'OfferRematch' } as const;
@@ -106,7 +117,7 @@ export class RoomGame implements GameSession {
 	notice: string | null = $state.raw(null);
 	#takebacks = $state.raw(false);
 	#draws: Draws = $state.raw({ X: 0, O: 0 });
-	#offer: (Offer & { lapses: number | null }) | null = $state.raw(null);
+	#offer: Waiting | null = $state.raw(null);
 	#stopped: Stopped | null = $state.raw(null);
 	#rematch: string | null = $state.raw(null);
 	#onrematch: ((room: string) => void) | undefined;
@@ -249,7 +260,10 @@ export class RoomGame implements GameSession {
 		const controls: Controls = {
 			resigner: playing ? this.you : null,
 			resign: () => this.#link.send({ type: 'Resign' }),
-			offerDraw: { enabled: free && this.#draws[this.you] < DRAWS, run: () => this.#make('Draw') }
+			offerDraw: {
+				enabled: free && this.#draws[this.you] < drawOffers(),
+				run: () => this.#make('Draw')
+			}
 		};
 		if (!this.#takebacks) return controls;
 		// The server takes the game back to before this player's last move, so they need one.
@@ -378,8 +392,7 @@ export class RoomGame implements GameSession {
 		if (offer.kind === 'Draw') {
 			this.#draws = { ...this.#draws, [offer.by]: this.#draws[offer.by] + 1 };
 		}
-		const wait = OFFERS[offer.kind].lapses;
-		this.#offer = { ...offer, lapses: wait === null ? null : Date.now() + wait };
+		this.#offer = waiting(offer);
 		this.notice = null;
 	}
 
@@ -424,7 +437,7 @@ export class RoomGame implements GameSession {
 	#take(snapshot: Snapshot) {
 		this.#takebacks = snapshot.takebacks;
 		this.#draws = snapshot.draws;
-		this.#offer = snapshot.offer && { ...snapshot.offer, lapses: null };
+		this.#offer = snapshot.offer && waiting(snapshot.offer);
 		this.#stopped = snapshot.end && stoppedFrom(snapshot.end.result, snapshot.end.termination);
 		this.#rematch = snapshot.rematch;
 		this.notice = null;

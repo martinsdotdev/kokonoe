@@ -26,8 +26,19 @@ async fn takebacks(world: &World, rules: &str) -> Table {
     world.table_with(&body).await
 }
 
+/// `by`'s offer of `kind` as the players first hear it, with all of `common::TIMING`'s wait.
 fn offer(kind: OfferKind, by: Player) -> ServerMsg {
-    ServerMsg::Offer(Offer { kind, by })
+    let wait = match kind {
+        OfferKind::Draw => None,
+        OfferKind::Takeback => Some(TIMING.takeback),
+        OfferKind::Rematch => Some(TIMING.rematch),
+    };
+    let lapses_in = wait.map(|wait| u32::try_from(wait.as_millis()).unwrap());
+    ServerMsg::Offer(Offer {
+        kind,
+        by,
+        lapses_in,
+    })
 }
 
 fn answered(kind: OfferKind, accepted: bool) -> ServerMsg {
@@ -343,6 +354,26 @@ async fn a_takeback_undoes_back_to_the_askers_last_move() {
 }
 
 #[tokio::test]
+async fn a_reconnect_hears_how_long_a_takeback_has_left() {
+    let world = world().await;
+    let mut table = takebacks(&world, "std").await;
+    play(&mut table, 0, &cells(MOVES)[..1]).await;
+    let asked = offer(OfferKind::Takeback, Player::X);
+    both_hear(&mut table, Player::X, ClientMsg::AskTakeback, [asked]).await;
+    let waited = Duration::from_millis(50);
+    tokio::time::sleep(waited).await;
+
+    let mut again = world.enter(&table.joiner, &table.room).await;
+    let (_, snapshot) = welcome(&mut again).await;
+    let offer = snapshot.offer.expect("the takeback still waits");
+    let ms = |wait: Duration| u32::try_from(wait.as_millis()).unwrap();
+    let left = offer.lapses_in.expect("a takeback lapses");
+    let most = ms(TIMING.takeback - waited);
+    assert!(left > 0 && left <= most, "{left} ms left, at most {most}");
+    assert_eq!((offer.kind, offer.by), (OfferKind::Takeback, Player::X));
+}
+
+#[tokio::test]
 async fn a_takeback_lapses_is_declined_or_is_withdrawn_by_a_move() {
     let world = world().await;
     let mut table = takebacks(&world, "std").await;
@@ -509,6 +540,7 @@ async fn offers_wait_their_turn() {
     let waiting = Offer {
         kind: OfferKind::Draw,
         by: Player::X,
+        lapses_in: None,
     };
     assert_eq!(
         (snapshot.offer, snapshot.takebacks),

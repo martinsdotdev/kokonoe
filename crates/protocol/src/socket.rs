@@ -102,12 +102,15 @@ pub struct Snapshot {
     pub rematch: Option<String>,
 }
 
-/// What a player offered.
+/// What a player offered, and how long it waits for its answer.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Offer {
     pub kind: OfferKind,
     pub by: Player,
+    /// Milliseconds left before the offer lapses, as of this message. None for a draw offer,
+    /// which stands until it's answered or its player moves.
+    pub lapses_in: Option<u32>,
 }
 
 /// What an offer is for.
@@ -355,6 +358,7 @@ mod tests {
                 offer: Some(Offer {
                     kind: OfferKind::Draw,
                     by: Player::X,
+                    lapses_in: None,
                 }),
                 draws: Draws { x: 1, o: 0 },
                 end: None,
@@ -369,7 +373,7 @@ mod tests {
                 r#""objective":"Line","fallback":"Draw","opening":"Free"},"#,
                 r#""seed":"00000000005eed00","moves":[38]},"#,
                 r#""players":{"X":"guest-4821","O":null},"takebacks":true,"#,
-                r#""offer":{"kind":"Draw","by":"X"},"draws":{"X":1,"O":0},"end":null,"rematch":null}}"#
+                r#""offer":{"kind":"Draw","by":"X","lapses_in":null},"draws":{"X":1,"O":0},"end":null,"rematch":null}}"#
             ),
         );
         pinned(
@@ -402,8 +406,9 @@ mod tests {
             &ServerMsg::Offer(Offer {
                 kind: OfferKind::Takeback,
                 by: Player::O,
+                lapses_in: Some(15_000),
             }),
-            r#"{"type":"Offer","kind":"Takeback","by":"O"}"#,
+            r#"{"type":"Offer","kind":"Takeback","by":"O","lapses_in":15000}"#,
         );
         pinned(
             &ServerMsg::OfferAnswered {

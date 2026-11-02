@@ -106,7 +106,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 			let room = await fakeRoom(page, { you: 'X', players, moves: top.slice(0, 2), snapshot });
 			await page.goto(`/r/${ROOM}`);
 			await expect(page.getByRole('button', { name: 'Ask takeback' })).toBeVisible();
-			room.say({ type: 'Offer', kind: 'Takeback', by: 'O' });
+			room.say({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
 			await expect(page.locator('[data-left]')).toBeVisible();
 			await scan(page, 'a takeback asked');
 			room.say({ type: 'OfferAnswered', kind: 'Takeback', accepted: false });
@@ -123,7 +123,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 			room = await fakeRoom(page, { you: 'X', players, moves: top });
 			await page.goto(`/r/${ROOM}`);
 			await expect(page.getByRole('button', { name: 'Rematch' })).toBeVisible();
-			room.say({ type: 'Offer', kind: 'Rematch', by: 'O' });
+			room.say({ type: 'Offer', kind: 'Rematch', by: 'O', lapses_in: 60_000 });
 			await expect(page.getByRole('button', { name: 'Accept' })).toBeVisible();
 			await scan(page, 'a rematch offered');
 

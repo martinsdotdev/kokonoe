@@ -70,3 +70,71 @@ jobs:
       - run: pnpm check
       - run: pnpm lint
       - run: pnpm test
+
+  # The Dockerfile's image, built on every run so a change that breaks it fails before it merges.
+  # Its layers go to the Actions cache, which the deploy builds from.
+  image:
+    name: Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+
+  # Each merge to master that passes, onto the server (deploy/): the image goes over SSH, and
+  # deploy.sh restarts what changed. Only the newest master deploys, so a slower run of an older
+  # merge can't put it back. The production environment holds the server's address, its host key
+  # and the deploy user's SSH key, and only master may use them.
+  deploy:
+    name: Deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [rust, web, image]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://${{ vars.DOMAIN }}
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    env:
+      HOST: ${{ vars.DEPLOY_HOST }}
+      IMAGE: kokonoe:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Deploy only the newest master
+        id: newest
+        run: |
+          if [ "$(git ls-remote origin refs/heads/master | cut -f1)" = "$GITHUB_SHA" ]; then
+            echo "newest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::master has moved on from $GITHUB_SHA; its own run deploys."
+          fi
+      - if: steps.newest.outputs.newest == 'true'
+        uses: docker/setup-buildx-action@v3
+      - if: steps.newest.outputs.newest == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+      - name: Ship the image, and restart the app on it
+        if: steps.newest.outputs.newest == 'true'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          docker save "$IMAGE" | gzip | ssh "deploy@$HOST" 'gunzip | docker load'
+          scp deploy/compose.yaml deploy/Caddyfile deploy/deploy.sh "deploy@$HOST:/opt/kokonoe/"
+          ssh "deploy@$HOST" sh /opt/kokonoe/deploy.sh "$IMAGE"
+      - name: The site answers
+        if: steps.newest.outputs.newest == 'true'
+        run: curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors "https://${{ vars.DOMAIN }}/healthz"

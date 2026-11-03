@@ -1,0 +1,29 @@
+#cloud-config
+# The server Kokonoe runs on (KOK-51): Ubuntu 24.04 with Docker, and a `deploy` user the deploy
+# job logs in as, which owns /opt/kokonoe and its .env. ${DOMAIN} is the site's name and
+# ${DEPLOY_KEY} the deploy job's public key: fill both in before passing this as the server's user
+# data. Password logins are off, so only the deploy key and the keys Hetzner gives root get in.
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - unattended-upgrades
+ssh_pwauth: false
+users:
+  - default
+  - name: deploy
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${DEPLOY_KEY}
+write_files:
+  - path: /opt/kokonoe/.env
+    permissions: "0600"
+    content: |
+      DOMAIN=${DOMAIN}
+runcmd:
+  - usermod -aG docker deploy
+  - echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" >> /opt/kokonoe/.env
+  - chown -R deploy:deploy /opt/kokonoe
+  - systemctl enable --now docker

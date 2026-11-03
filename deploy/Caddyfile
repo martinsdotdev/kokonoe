@@ -1,0 +1,5 @@
+# HTTPS for Kokonoe, with a certificate from Let's Encrypt. Everything goes to the app as it is: it
+# sends its own precompressed files and cache headers, and the socket is a WebSocket.
+{$DOMAIN} {
+	reverse_proxy app:8080
+}

@@ -80,6 +80,33 @@ describe('saved games in IndexedDB', () => {
 		expect(stoppedOf(untimed)).toBeNull();
 	});
 
+	it('keeps every way a game stops, each in its own words', () => {
+		const { id, record, opponent, started, view } = game('a', 1);
+		const playing = {
+			id,
+			record,
+			variant: SHELF[0],
+			opponent,
+			started,
+			view,
+			toMove: 'O' as const
+		};
+		const ends = [
+			[{ resigned: 'X' }, 'X resigned. O wins.'],
+			[{ agreed: true }, 'Draw agreed'],
+			[{ flagged: 'O' }, 'O ran out of time. X wins.'],
+			[{ claimed: 'X' }, 'O left the game. X claimed the win.'],
+			[{ claimedDraw: true }, 'Draw claimed'],
+			[{ abandoned: true }, 'Game abandoned']
+		] as const;
+		for (const [end, words] of ends) {
+			const saved = savedGame({ ...playing, end, won: { X: 0, O: 0 } });
+			expect(saved.result).toBe(words);
+			expect(stoppedOf(saved)).toEqual(end);
+		}
+		expect(stoppedOf(game('a', 1, 'X wins on a line')), 'saved before Claims').toBeNull();
+	});
+
 	it('lists the most recently played first, up to the limit', async () => {
 		const db = fresh();
 		for (const [id, updated] of [

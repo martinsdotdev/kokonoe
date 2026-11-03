@@ -39,6 +39,18 @@ describe('the result in words', () => {
 		);
 		expect(winner({ flagged: 'O' })).toBe('X');
 	});
+
+	it('names a Claim and an abandoned game, and who won', () => {
+		const none = { X: 0, O: 0 };
+		expect(resultText({ claimed: 'X' }, STANDARD, none)).toBe(
+			'O left the game. X claimed the win.'
+		);
+		expect(resultText({ claimedDraw: true }, STANDARD, none)).toBe('Draw claimed');
+		expect(resultText({ abandoned: true }, STANDARD, none)).toBe('Game abandoned');
+		expect(winner({ claimed: 'O' })).toBe('O');
+		expect(winner({ claimedDraw: true })).toBeNull();
+		expect(winner({ abandoned: true })).toBeNull();
+	});
 });
 
 describe('a stop, from its Result and Termination', () => {
@@ -48,9 +60,19 @@ describe('a stop, from its Result and Termination', () => {
 		expect(stoppedFrom('1/2-1/2', 'agreed draw')).toEqual({ agreed: true });
 	});
 
+	it('reads a Claim, and an abandoned game whatever its Result', () => {
+		expect(stoppedFrom('1-0', 'claim')).toEqual({ claimed: 'X' });
+		expect(stoppedFrom('0-1', 'claim')).toEqual({ claimed: 'O' });
+		expect(stoppedFrom('1/2-1/2', 'claim')).toEqual({ claimedDraw: true });
+		expect(stoppedFrom(null, 'abandoned'), 'as the server says it').toEqual({ abandoned: true });
+		expect(stoppedFrom('*', 'abandoned'), 'as a file says it').toEqual({ abandoned: true });
+	});
+
 	it('reads no stop from the rules’ ends, or from one that names no winner', () => {
 		expect(stoppedFrom('1-0', 'line')).toBeNull();
 		expect(stoppedFrom('1/2-1/2', 'timeout')).toBeNull();
 		expect(stoppedFrom('*', 'resign')).toBeNull();
+		expect(stoppedFrom('*', 'claim')).toBeNull();
+		expect(stoppedFrom(undefined, 'claim')).toBeNull();
 	});
 });

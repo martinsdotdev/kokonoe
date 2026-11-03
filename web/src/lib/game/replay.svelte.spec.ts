@@ -68,6 +68,14 @@ describe('a replayed game', () => {
 		expect(fromSaved(saved()).clock, 'an untimed game, or one saved before clocks').toBeNull();
 	});
 
+	it('keeps a Claim and an abandoned game for its banner and its file', () => {
+		expect(fromSaved({ ...saved(), claimed: 'X' }).stopped).toEqual({ claimed: 'X' });
+		const abandoned = Replay.open(fromSaved({ ...saved(), abandoned: true }));
+		expect(abandoned.end).toEqual({ abandoned: true });
+		expect(abandoned.file.end).toEqual({ abandoned: true });
+		abandoned.dispose();
+	});
+
 	it('has a position for every ply, from the empty board to the end', () => {
 		const replay = Replay.open(fromSaved(saved()));
 		expect(replay.last).toBe(55);

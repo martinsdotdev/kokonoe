@@ -59,6 +59,11 @@
 					heading: 'This game doesn’t exist',
 					text: 'Check the link you were sent: it may be mistyped.'
 				};
+			case 'aborted':
+				return {
+					heading: 'Game aborted',
+					text: `${phase.late ?? 'A player'} didn’t make a first move in time, so the game wasn’t kept.`
+				};
 			case 'full':
 				return {
 					heading: 'This game is full',
@@ -105,6 +110,7 @@
 					link={`${location.origin}${resolve('/r/[room]', { room })}`}
 					variant={waiting.variant.name}
 					you={waiting.you}
+					clock={waiting.clock}
 					trouble={waiting.trouble?.message ?? null}
 				/>
 			{:else if notice}

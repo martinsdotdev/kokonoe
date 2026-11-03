@@ -1,5 +1,5 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { loadEngine, type ClientMsg } from '#lib/engine.js';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadEngine, type ClientMsg, type Clocks } from '#lib/engine.js';
 import { TOP_ROW, cells } from '#lib/game/games.fixtures.js';
 import { UnplayableGame } from '#lib/game/record.js';
 import { RoomGame } from './room.svelte.js';
@@ -331,5 +331,110 @@ describe('a Room’s game', () => {
 		expect(() => new RoomGame(future, link, { room: ROOM, store: new FakeStore() })).toThrow(
 			UnplayableGame
 		);
+	});
+});
+
+describe('a timed Room’s game', () => {
+	/** This page's time when each test begins. */
+	const T = 1_793_600_000_000;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(T);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/** The clocks as a server 5 s ahead of this page read them as each test begins. */
+	const clocks = (edit: Partial<Clocks> = {}): Clocks => ({
+		x_ms: 180_000,
+		o_ms: 180_000,
+		running: null,
+		at: T + 5_000,
+		aborts_at: T + 35_000,
+		...edit
+	});
+
+	const timed = (you: 'X' | 'O' = 'X', moves: number[] = [], edit: Partial<Clocks> = {}) =>
+		game(you, undefined, moves, { clock: '3+2', clocks: clocks(edit) });
+
+	it('shows a Welcome’s clocks in this page’s time before anything measures it', () => {
+		const { room } = timed();
+		expect(room.clock).toBe('3+2');
+		expect(room.clocks).toEqual({
+			ms: { X: 180_000, O: 180_000 },
+			running: null,
+			at: T,
+			aborts: T + 30_000
+		});
+	});
+
+	it('measures the server’s time with three Pings after each Welcome, keeping the quickest', () => {
+		const { room, sent } = timed();
+		const pong = (wait: number, server: number) => {
+			const { t } = sent.at(-1) as { t: number };
+			vi.advanceTimersByTime(wait);
+			room.receive({ type: 'Pong', t, server_ms: server });
+		};
+		pong(100, T + 5_030);
+		expect(room.clocks?.at, 'over 100 ms, 4,980 ms ahead').toBe(T + 20);
+		pong(40, T + 5_110);
+		expect(room.clocks?.at, 'over 40 ms, 4,990 ms ahead').toBe(T + 10);
+		pong(300, T + 5_500);
+		expect(room.clocks?.at, 'over 300 ms, which is kept for nothing').toBe(T + 10);
+		room.receive({ type: 'Pong', t: Date.now() + 1_000, server_ms: T });
+		expect(room.clocks?.at, 'over a round trip this page’s clock ran back through').toBe(T + 10);
+		expect(sent).toEqual([
+			{ type: 'Ping', t: T },
+			{ type: 'Ping', t: T + 100 },
+			{ type: 'Ping', t: T + 140 }
+		]);
+		room.welcome(welcome('X', undefined, [], { clock: '3+2', clocks: clocks() }));
+		expect(sent.at(-1), 'a Welcome measures it again').toEqual({ type: 'Ping', t: T + 440 });
+		expect(room.clocks?.at, 'keeping what was measured').toBe(T + 10);
+	});
+
+	it('sends no Ping in an untimed Room', () => {
+		const { room, sent } = game('X');
+		expect(sent).toEqual([]);
+		expect([room.clock, room.clocks]).toEqual([null, null]);
+	});
+
+	it('takes the clocks from each move and takeback, and none from a move it has', () => {
+		const { room } = timed();
+		room.receive({
+			type: 'Moved',
+			ply: 0,
+			cell: top[0],
+			clocks: clocks({ aborts_at: T + 65_000 })
+		});
+		expect(room.clocks?.aborts).toBe(T + 60_000);
+		const running = clocks({ running: 'X', aborts_at: null });
+		room.receive({ type: 'Moved', ply: 1, cell: top[1], clocks: running });
+		expect(room.clocks?.running).toBe('X');
+		room.receive({ type: 'Moved', ply: 1, cell: top[1], clocks: clocks({ x_ms: 1 }) });
+		expect(room.clocks?.ms.X, 'a resend').toBe(180_000);
+		room.receive({ type: 'TookBack', to_ply: 1, clocks: clocks({ aborts_at: T + 90_000 }) });
+		expect(room.clocks).toMatchObject({ running: null, aborts: T + 85_000 });
+	});
+
+	it('ends on time without resyncing, the clock that ran out at 0', async () => {
+		const { room, link, store } = timed('X', top.slice(0, 2), { running: 'X', aborts_at: null });
+		room.receive({ type: 'Ended', result: '0-1', termination: 'timeout' });
+		expect(room.end).toEqual({ flagged: 'X' });
+		expect(link.resync).not.toHaveBeenCalled();
+		expect(room.clocks).toMatchObject({ ms: { X: 0, O: 180_000 }, running: null, aborts: null });
+		await expect.poll(() => store.last?.result).toBe('X ran out of time. O wins.');
+		expect(store.last).toMatchObject({ flagged: 'X', clock: '3+2' });
+		expect(room.file).toMatchObject({ end: { flagged: 'X' }, clock: '3+2' });
+	});
+
+	it('stops the clocks where they stand when the game ends', () => {
+		const { room } = timed('X', top.slice(0, 2), { running: 'X', aborts_at: null, x_ms: 50_000 });
+		vi.advanceTimersByTime(1_500);
+		room.receive({ type: 'Ended', result: '0-1', termination: 'resign' });
+		expect(room.clocks).toMatchObject({ ms: { X: 48_500, O: 180_000 }, running: null });
 	});
 });

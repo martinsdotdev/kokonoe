@@ -5,7 +5,7 @@
  * carries its own `rules_version`; the database's version covers only its shape.
  */
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { BoardStatus, Cell, Player, Record } from '#lib/engine.js';
+import type { BoardStatus, Cell, Player, Record, TimeControl } from '#lib/engine.js';
 import type { SavedOpponent } from './launch.js';
 import { resultText, type End, type Stopped } from './result.js';
 import { rulesetCode, type Variant } from './rules.js';
@@ -25,6 +25,10 @@ export interface SavedGame {
 	resigned: Player | null;
 	/** The players agreed a draw, which a Record can't hold either. Absent from older games. */
 	agreed?: true;
+	/** Who ran out of time, in a timed Room. Absent from older games. */
+	flagged?: Player;
+	/** A timed Room's time control. Absent from untimed games. */
+	clock?: TimeControl;
 	/** When the game began and was last played, in epoch milliseconds. */
 	started: number;
 	updated: number;
@@ -41,9 +45,10 @@ export interface GameStore {
 	save(game: SavedGame): Promise<void>;
 }
 
-/** A store a game is also read back from. */
+/** A store a game is also read back from, and deleted from. */
 export interface ReadingStore extends GameStore {
 	load(id: string): Promise<SavedGame | undefined>;
+	delete(id: string): Promise<void>;
 }
 
 /** A game where it stands, as saved: what Home shows of it, worked out without the engine. */
@@ -57,6 +62,7 @@ export const savedGame = (game: {
 	toMove: Player | null;
 	end: End | null;
 	won: { X: number; O: number };
+	clock?: TimeControl | null;
 }): SavedGame => ({
 	id: game.id,
 	record: game.record,
@@ -64,6 +70,8 @@ export const savedGame = (game: {
 	opponent: game.opponent,
 	resigned: game.end && 'resigned' in game.end ? game.end.resigned : null,
 	...(game.end && 'agreed' in game.end ? { agreed: true as const } : {}),
+	...(game.end && 'flagged' in game.end ? { flagged: game.end.flagged } : {}),
+	...(game.clock ? { clock: game.clock } : {}),
 	started: game.started,
 	updated: Date.now(),
 	view: game.view,
@@ -72,8 +80,11 @@ export const savedGame = (game: {
 });
 
 /** How a saved game stopped, if it did before its rules ended it. */
-export const stoppedOf = (saved: SavedGame): Stopped | null =>
-	saved.resigned ? { resigned: saved.resigned } : saved.agreed ? { agreed: true } : null;
+export const stoppedOf = (saved: SavedGame): Stopped | null => {
+	if (saved.resigned) return { resigned: saved.resigned };
+	if (saved.agreed) return { agreed: true };
+	return saved.flagged ? { flagged: saved.flagged } : null;
+};
 
 interface Schema extends DBSchema {
 	games: { key: string; value: SavedGame; indexes: { updated: number } };
@@ -169,6 +180,10 @@ export const saveGame = async (game: SavedGame, name = DATABASE): Promise<void> 
 export const loadGame = async (id: string, name = DATABASE): Promise<SavedGame | undefined> =>
 	(await database(name)).get('games', id);
 
+export const deleteGame = async (id: string, name = DATABASE): Promise<void> => {
+	await (await database(name)).delete('games', id);
+};
+
 /** The games played most recently, newest first, as many as `keep` accepts up to `limit`. */
 const latest = async (
 	name: string,
@@ -200,5 +215,6 @@ export const savedVariant = (saved: SavedGame): Variant => ({
 
 export const browserStore: ReadingStore = {
 	save: (game) => saveGame(game),
-	load: (id) => loadGame(id)
+	load: (id) => loadGame(id),
+	delete: (id) => deleteGame(id)
 };

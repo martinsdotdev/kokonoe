@@ -193,7 +193,7 @@
 				<article class={card}>
 					<h3 class="m-0 font-display text-2xl font-semibold">Invite a friend</h3>
 					<p class="m-0 text-muted-foreground">
-						Send a link, and play on your own devices. Casual and untimed, online.
+						Send a link, and play on your own devices. Casual and online, untimed or on a clock.
 					</p>
 					<a
 						href={resolve('/new-game?vs=friend')}

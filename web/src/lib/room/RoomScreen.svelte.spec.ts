@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { CloseCode, loadEngine } from '#lib/engine.js';
+import { CloseCode, loadEngine, type Clocks } from '#lib/engine.js';
+import { TOP_ROW, cells } from '#lib/game/games.fixtures.js';
 import { FakeStore, ROOM, sockets, welcome } from './room.fixtures.js';
 import RoomScreen from './RoomScreen.svelte';
 import { SHELF } from '#lib/game/shelf.js';
@@ -121,5 +122,85 @@ describe('a Room’s page', () => {
 		await expect.element(screen.getByRole('button', { name: 'Reload' })).toBeVisible();
 		// Focus follows the page to its new view.
 		await expect.element(heading).toHaveFocus();
+	});
+
+	it('says the game was aborted, and who didn’t make a first move', async () => {
+		const fake = sockets();
+		const screen = render(RoomScreen, {
+			room: ROOM,
+			options: { fetch: seated, open: fake.open, store: new FakeStore() }
+		});
+		await expect.poll(() => fake.opened.length).toBe(1);
+		fake.last().say(welcome('X'));
+		fake.last().say({ type: 'Aborted', reason: 'FirstMoveTimeout' });
+		const heading = screen.getByRole('heading', { name: 'Game aborted' });
+		await expect.element(heading).toBeVisible();
+		await expect.element(heading).toHaveFocus();
+		await expect
+			.element(screen.getByText('You didn’t make a first move in time, so the game wasn’t kept.'))
+			.toBeVisible();
+		await expect.element(screen.getByRole('link', { name: 'Go to Home' })).toBeVisible();
+	});
+});
+
+describe('a timed Room’s page', () => {
+	const top = cells(TOP_ROW);
+
+	/** The page of a timed game this page plays as X, its clocks as the server read them now. */
+	const timed = async (moves: number[], clocks: Partial<Clocks>) => {
+		const fake = sockets();
+		const screen = render(RoomScreen, {
+			room: ROOM,
+			options: { fetch: seated, open: fake.open, store: new FakeStore() }
+		});
+		await expect.poll(() => fake.opened.length).toBe(1);
+		const now = Date.now();
+		const read = { x_ms: 180_000, o_ms: 180_000, running: null, at: now, aborts_at: null };
+		fake
+			.last()
+			.say(welcome('X', undefined, moves, { clock: '3+2', clocks: { ...read, ...clocks } }));
+		const spoken = () => document.querySelector('[data-spoken]')?.textContent;
+		return { screen, fake, spoken };
+	};
+
+	it('shows both clocks, and how long the first move has', async () => {
+		const { screen, spoken } = await timed([], { aborts_at: Date.now() + 30_000 });
+		await expect
+			.element(screen.getByText('Make your first move within 30 seconds, or the game is aborted.'))
+			.toBeVisible();
+		await expect
+			.poll(spoken)
+			.toBe('X: play anywhere. You have 30 seconds to make your first move.');
+		const clocks = screen.container.querySelectorAll('[data-clock]');
+		expect([...clocks].map((clock) => clock.textContent)).toEqual(['3:00', '3:00']);
+	});
+
+	it('says this page’s clock is running low as it falls past a cue, and again after a rise', async () => {
+		const { fake, spoken } = await timed(top.slice(0, 2), { x_ms: 30_300, running: 'X' });
+		await expect.poll(spoken, { timeout: 2_000 }).toBe('30 seconds left.');
+		const read = { o_ms: 180_000, aborts_at: null };
+		const rose = { ...read, x_ms: 32_000, running: 'O' as const, at: Date.now() };
+		fake.last().say({ type: 'Moved', ply: 2, cell: top[2], clocks: rose });
+		await expect.poll(spoken).toMatch(/^X played/);
+		const fell = { ...read, x_ms: 30_300, running: 'X' as const, at: Date.now() };
+		fake.last().say({ type: 'Moved', ply: 3, cell: top[3], clocks: fell });
+		await expect.poll(spoken).toMatch(/^O played/);
+		await expect.poll(spoken, { timeout: 2_000 }).toBe('30 seconds left.');
+	});
+
+	it('leaves a cue passed before the page opened unsaid, and says the next', async () => {
+		const { screen, spoken } = await timed(top.slice(0, 2), { x_ms: 10_400, running: 'X' });
+		await expect.poll(spoken).toMatch(/^O played/);
+		await expect.poll(spoken, { timeout: 2_000 }).toBe('10 seconds left.');
+		await expect.element(screen.getByText(/^0:09\.\d$/)).toBeVisible();
+		const low = screen.container.querySelector('[data-low]');
+		expect(low?.textContent).toMatch(/^0:0\d\.\d$/);
+	});
+
+	it('says nothing of the other player’s clock', async () => {
+		const { spoken } = await timed(top.slice(0, 3), { o_ms: 30_400, running: 'O' });
+		await expect.poll(spoken).toMatch(/^X played/);
+		await new Promise((done) => setTimeout(done, 800));
+		expect(spoken()).toMatch(/^X played/);
 	});
 });

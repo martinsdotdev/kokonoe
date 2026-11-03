@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { Game, loadEngine, parseRulesetCode, presets, type Ruleset } from '#lib/engine.js';
 import { DEALT, LINE_OF_MIDDLE_BOARDS, TOP_ROW, cells } from './games.fixtures.js';
 import { openFile } from './fileimport.js';
-import { FileProblem, parseFile, variantName } from './fileparse.js';
+import { FileProblem, fromFile, parseFile, variantName } from './fileparse.js';
 import { writeJson, writeUtt, type GameFile } from './gamefile.js';
 import { rulesetCode } from './rules.js';
 import { presetByCode } from './shelf.js';
@@ -58,14 +58,24 @@ describe('export then import', () => {
 		}
 	});
 
-	it('keeps a resignation or an agreed draw through the tags', () => {
+	it('keeps a resignation, an agreed draw or a loss on time through the tags', () => {
 		const game = new Game(presets()[0].ruleset, '00000000005eed00');
 		game.play(0, cells('42')[0]);
-		for (const end of [{ resigned: 'O' }, { agreed: true }] as const) {
+		for (const end of [{ resigned: 'O' }, { agreed: true }, { flagged: 'X' }] as const) {
 			const text = writeUtt({ ...fileOf(game), end });
 			expect(openFile(read(text))).toEqual({ stopped: end });
 		}
 		game.free();
+	});
+
+	it('keeps a time control Kokonoe offers, and reads any other as untimed', () => {
+		const game = new Game(presets()[0].ruleset, '00000000005eed00');
+		const text = writeUtt({ ...fileOf(game), clock: '3+2' });
+		game.free();
+		const clock = (text: string) => fromFile(read(text), 'Standard', null).clock;
+		expect(clock(text)).toBe('3+2');
+		expect(clock(text.replace('"3+2"', '"7+0"'))).toBeNull();
+		expect(clock(text.replace('"3+2"', '"-"'))).toBeNull();
 	});
 });
 
@@ -126,7 +136,7 @@ describe('a file the engine refuses', () => {
 		expect(refused(unfinished)).toThrow(new FileProblem('It says 1-0, but the game isn’t over.'));
 	});
 
-	it('refuses a resignation or an agreed draw after the game ended, or one that names no winner', () => {
+	it('refuses a stop after the game ended, or one that names no winner', () => {
 		const resigned = topRowFile().replace('[Termination "line"]', '[Termination "resign"]');
 		expect(refused(resigned)).toThrow(
 			new FileProblem('It says a player resigned after the game ended.')
@@ -140,6 +150,16 @@ describe('a file the engine refuses', () => {
 		const short = resigned.replace(/ 2\. .*$/s, ' *\n').replace('[Result "1-0"]', '[Result "*"]');
 		expect(refused(short)).toThrow(
 			new FileProblem('It says a player resigned, but its Result names no winner.')
+		);
+		const flagged = topRowFile().replace('[Termination "line"]', '[Termination "timeout"]');
+		expect(refused(flagged)).toThrow(
+			new FileProblem('It says a player ran out of time after the game ended.')
+		);
+		const timedDraw = flagged
+			.replace(/ 2\. .*$/s, ' *\n')
+			.replace('[Result "1-0"]', '[Result "*"]');
+		expect(refused(timedDraw)).toThrow(
+			new FileProblem('It says a player ran out of time, but its Result names no winner.')
 		);
 	});
 

@@ -45,6 +45,12 @@ describe('the turn', () => {
 		const screen = await card('X', 'FirstMove', null, { typed: '5·_' });
 		await expect.element(screen.getByText('Typing 5·_')).toBeVisible();
 	});
+
+	it('shows how long a first move has before the game is aborted', async () => {
+		const countdown = 'Make your first move within 27 seconds, or the game is aborted.';
+		const screen = render(TurnCard, { player: 'X', turn: turn('X', 'FirstMove', null), countdown });
+		await expect.element(screen.getByText(countdown)).toBeVisible();
+	});
 });
 
 describe('the turn in Deep', () => {

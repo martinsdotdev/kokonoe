@@ -36,7 +36,9 @@ it('reads every message the server sends', () => {
 		{ type: 'OfferAnswered', kind: 'Draw', accepted: false },
 		{ type: 'TookBack', to_ply: 2, clocks: null },
 		{ type: 'TookBack', to_ply: 2, clocks },
-		{ type: 'RematchRoom', room: 'b'.repeat(20) }
+		{ type: 'RematchRoom', room: 'b'.repeat(20) },
+		{ type: 'Aborted', reason: 'FirstMoveTimeout' },
+		{ type: 'Pong', t: 1_793_600_000_000, server_ms: 1_793_600_000_040 }
 	];
 	for (const message of messages) expect(read(message)).toEqual(message);
 });
@@ -67,6 +69,12 @@ it('reads a message of the wrong shape as nothing', () => {
 		{ type: 'Moved', ply: 2, cell: 40, clocks: { ...clocks, running: 'Z' } },
 		{ type: 'TookBack', to_ply: 2, clocks: { ...clocks, aborts_at: 'soon' } },
 		{ type: 'RematchRoom', room: '../r' },
+		{ type: 'Aborted', reason: 'Bored' },
+		{ type: 'Aborted' },
+		{ type: 'Pong', t: -1, server_ms: 0 },
+		{ type: 'Pong', t: 1.5, server_ms: 0 },
+		{ type: 'Pong', t: 0 },
+		{ type: 'Pong', t: 0, server_ms: 'now' },
 		{ type: 'Claim' }
 	];
 	for (const message of wrong) expect(read(message), JSON.stringify(message)).toBeNull();

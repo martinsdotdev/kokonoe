@@ -59,6 +59,15 @@ describe('a replayed game', () => {
 		replay.dispose();
 	});
 
+	it('keeps a timed Room’s control and a loss on time for its file', () => {
+		const timed = fromSaved({ ...saved(), flagged: 'O', clock: '3+2' });
+		expect(timed).toMatchObject({ stopped: { flagged: 'O' }, clock: '3+2' });
+		const replay = Replay.open(timed);
+		expect(replay.file.clock).toBe('3+2');
+		replay.dispose();
+		expect(fromSaved(saved()).clock, 'an untimed game, or one saved before clocks').toBeNull();
+	});
+
 	it('has a position for every ply, from the empty board to the end', () => {
 		const replay = Replay.open(fromSaved(saved()));
 		expect(replay.last).toBe(55);

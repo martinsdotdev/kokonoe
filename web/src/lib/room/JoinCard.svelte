@@ -31,7 +31,7 @@
 	<ul aria-label="The game" role="list" class="m-0 flex list-none flex-wrap gap-2 p-0">
 		<li class={chip}>{preset ? 'Preset' : 'Custom variant'}</li>
 		<li class={chip}>Casual</li>
-		<li class={chip}>Untimed</li>
+		<li class={chip}>{card.clock ? `${card.clock} clock` : 'Untimed'}</li>
 		<li class={chip} data-takebacks={card.takebacks}>
 			{card.takebacks ? 'Takebacks allowed' : 'No takebacks'}
 		</li>

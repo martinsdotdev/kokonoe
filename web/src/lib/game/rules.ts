@@ -1,10 +1,22 @@
-import type { Ruleset } from '#lib/engine.js';
+import type { Ruleset, TimeControl } from '#lib/engine.js';
 
 /** A Preset or Custom variant: the rules and what to call them. */
 export interface Variant {
 	name: string;
 	ruleset: Ruleset;
 }
+
+/**
+ * The time controls an invite Room may be played on (spec §10.1), listing every member of the
+ * union. They live here, beside the rules, since every page that names one already loads this.
+ */
+const CLOCKS: Record<TimeControl, true> = { '3+2': true, '5+3': true, '10+5': true, '15+5': true };
+
+/** The time controls, shortest first. */
+export const TIME_CONTROLS = Object.keys(CLOCKS) as TimeControl[];
+
+export const isClock = (value: unknown): value is TimeControl =>
+	typeof value === 'string' && Object.hasOwn(CLOCKS, value);
 
 /** The game counts won Boards, so the screen shows the count: under FirstTo or MostWon. */
 export const counted = (rules: Ruleset): boolean =>

@@ -1,7 +1,8 @@
 <!--
 	Where the player to move may play, and why: anywhere on the first move, the Sent target, or,
 	under the FREE MOVE stamp, anywhere open in the Board above a decided target. It also shows a
-	Cell being typed. The game screen's live line, not this card, says it to a screen reader.
+	Cell being typed, and in a timed Room how long a first move has before the game is aborted. The
+	game screen's live line, not this card, says it to a screen reader.
 -->
 <script lang="ts">
 	import type { Player } from '#lib/engine.js';
@@ -13,9 +14,11 @@
 		turn: Turn;
 		/** A Cell being typed, with a gap for each digit to come: `5·_`. */
 		typed?: string | null;
+		/** How long the player to move has to make their first move. */
+		countdown?: string | null;
 	}
 
-	let { player, turn, typed = null }: Props = $props();
+	let { player, turn, typed = null, countdown = null }: Props = $props();
 </script>
 
 <section
@@ -36,6 +39,9 @@
 	{/if}
 	<p class="m-0 font-semibold">{turn.line}</p>
 	<p class="m-0 text-sm text-muted-foreground">{turn.why}</p>
+	{#if countdown}
+		<p class="m-0 text-sm font-semibold" data-aborts>{countdown}</p>
+	{/if}
 	{#if typed}
 		<p class="m-0 font-mono text-sm" data-typed>Typing {typed}</p>
 	{/if}

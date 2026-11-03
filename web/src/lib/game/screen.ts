@@ -3,6 +3,7 @@
  * a Room's game on the server. Engine-free, so the screen imports no session's code.
  */
 import type { Cell, Player, Status } from '#lib/engine.js';
+import type { ClockView } from './clock.js';
 import type { GameFile } from './gamefile.js';
 import type { Move, Seat } from './moves.js';
 import type { PendingOffer } from './offers.js';
@@ -52,6 +53,8 @@ export interface GameSession {
 	answer(accept: boolean): void;
 	/** What came of this page's offer, when nothing else says. */
 	readonly notice: string | null;
+	/** A timed Room's clocks, or null for an untimed Room or a game on this device. */
+	readonly clocks: ClockView | null;
 	/** Offers a Room's rematch, once its game is over. */
 	readonly rematch?: Action;
 	/** The Room this game's rematch made, to follow. */

@@ -153,3 +153,57 @@ describe('following a Room’s link', () => {
 		await phase(stuck.visit).toBe('update');
 	});
 });
+
+describe('an aborted game', () => {
+	/** A visit to a game this page plays as `you`, its Welcome said, with `moves` made. */
+	const playing = async (you: 'X' | 'O', moves: number[], store = new FakeStore()) => {
+		const made = visit(server(card({ X: 'guest-4821', O: 'guest-1066' }, you)), undefined, store);
+		await expect.poll(() => made.fake.opened.length).toBe(1);
+		made.fake.last().accept();
+		made.fake.last().say(welcome(you, undefined, moves));
+		await phase(made.visit).toBe('playing');
+		return made;
+	};
+
+	it('says who didn’t make a first move, closes the socket and deletes this page’s copy', async () => {
+		const store = new FakeStore();
+		const { visit: made, fake } = await playing('O', [3], store);
+		await expect.poll(() => store.saves.length).toBe(1);
+		const socket = fake.last();
+		socket.say({ type: 'Aborted', reason: 'FirstMoveTimeout' });
+		expect(made.phase).toEqual({ kind: 'aborted', late: 'You' });
+		expect(socket.closed).toBe(true);
+		expect(store.deleted).toEqual([ROOM]);
+		socket.end(1011);
+		expect(fake.opened, 'the server’s close opens no socket').toHaveLength(1);
+
+		const theirs = await playing('X', [3]);
+		theirs.fake.last().say({ type: 'Aborted', reason: 'FirstMoveTimeout' });
+		expect(theirs.visit.phase).toEqual({ kind: 'aborted', late: 'guest-1066' });
+	});
+
+	it('reads a game gone while this page played it as aborted, unseen', async () => {
+		const store = new FakeStore();
+		const { visit: made, fake } = await playing('X', [], store);
+		fake.last().end(CloseCode.NoRoom);
+		await expect.poll(() => made.phase).toEqual({ kind: 'aborted', late: null });
+		expect(store.deleted).toEqual([ROOM]);
+	});
+
+	it('reads a missing Room this page left unfinished as aborted, and one it saw end as missing', async () => {
+		const store = new FakeStore();
+		const first = await playing('X', [3], store);
+		await expect.poll(() => store.saves.length).toBe(1);
+		const copy = store.last;
+		first.visit.dispose();
+		const later = visit(server(404), undefined, store);
+		await expect.poll(() => later.visit.phase).toEqual({ kind: 'aborted', late: null });
+		expect(store.deleted).toEqual([ROOM]);
+
+		const ended = new FakeStore();
+		await ended.save({ ...copy, toMove: null, result: 'X wins on a line' });
+		const gone = visit(server(404), undefined, ended);
+		await phase(gone.visit).toBe('missing');
+		expect(ended.deleted).toEqual([]);
+	});
+});

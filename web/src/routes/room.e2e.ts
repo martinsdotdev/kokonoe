@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { TOP_ROW, cells } from '../lib/game/games.fixtures.js';
-import { HOST, JOINER, NEXT, ROOM, fakeRoom } from './room.fixtures.js';
+import { HOST, JOINER, NEXT, ROOM, clocksNow, fakeRoom } from './room.fixtures.js';
 import {
 	cell,
 	focusBoard,
@@ -25,6 +25,7 @@ test('a host invites a friend from Home, and plays once they join', async ({ con
 	await expect(page.getByRole('radio', { name: /^A friend/ })).toBeChecked();
 	await expect(page.getByRole('radio', { name: 'Random' })).toBeChecked();
 	await expect(page.getByRole('checkbox', { name: 'Allow takebacks' })).not.toBeChecked();
+	await expect(page.getByRole('radio', { name: 'Untimed' })).toBeChecked();
 	await page.getByRole('button', { name: 'Create invite Room' }).click();
 
 	await expect(page).toHaveURL(`/r/${ROOM}`);
@@ -244,7 +245,9 @@ test('the server’s closes end the game as they should', async ({ page }) => {
 	await page.goto(`/r/${ROOM}`);
 	await expect(board(page)).toBeVisible();
 	room.close(4004);
-	await expect(page.getByRole('heading', { name: 'This game doesn’t exist' })).toBeVisible();
+	// Only an abort deletes a Room, so one gone while the page played it was aborted.
+	await expect(page.getByRole('heading', { name: 'Game aborted' })).toBeVisible();
+	await expect(page.getByText(/^A player didn’t make a first move/)).toBeVisible();
 
 	await page.goto(`/r/${ROOM}`);
 	await expect(board(page)).toBeVisible();
@@ -523,5 +526,159 @@ test.describe('a Room’s endings', () => {
 			`/r/${NEXT}`
 		);
 		await expect(page.getByRole('button', { name: 'Rematch' })).toHaveCount(0);
+	});
+});
+
+test.describe('a timed Room', () => {
+	const players = { X: HOST, O: JOINER };
+	const clock = (page: Page, player: 'X' | 'O') =>
+		page.locator('[data-clock]').nth(player === 'X' ? 0 : 1);
+	const spoken = (page: Page) => page.locator('[data-spoken]');
+
+	test('a host picks a clock from the sheet, and a joiner’s card names it', async ({ page }) => {
+		const room = await fakeRoom(page, { you: 'X', players: { X: HOST, O: null }, moves: [] });
+		await page.goto('/new-game?vs=friend');
+		await page.getByRole('radio', { name: '5+3' }).check();
+		await expect(
+			page.getByText('Casual, 5+3: 5 minutes each, plus 3 seconds a move')
+		).toBeVisible();
+		await page.getByRole('button', { name: 'Create invite Room' }).click();
+		await expect(page).toHaveURL(`/r/${ROOM}`);
+		expect(room.created).toEqual([
+			{ rules: 'std', seat: 'Random', takebacks: false, clock: '5+3' }
+		]);
+
+		await page.unrouteAll();
+		await fakeRoom(page, {
+			you: 'O',
+			players,
+			moves: [],
+			card: {
+				host: HOST,
+				variant: 'Standard',
+				rules: 'std',
+				players: { X: HOST, O: null },
+				you: null,
+				takebacks: false,
+				clock: '3+2'
+			}
+		});
+		await page.goto(`/r/${ROOM}`);
+		const chips = page.getByRole('list', { name: 'The game' }).getByRole('listitem');
+		await expect(chips).toHaveText(['Preset', 'Casual', '3+2 clock', 'No takebacks']);
+	});
+
+	test('the clocks wait for each first move, then run, and show time running low', async ({
+		page
+	}) => {
+		const room = await fakeRoom(page, {
+			you: 'X',
+			players,
+			moves: [],
+			snapshot: { clock: '3+2', clocks: clocksNow({ aborts_at: Date.now() + 30_000 }) }
+		});
+		await page.goto(`/r/${ROOM}`);
+		await expect(clock(page, 'X')).toHaveText('3:00');
+		await expect(clock(page, 'O')).toHaveText('3:00');
+		await expect(
+			page.getByText(/^Make your first move within \d+ seconds, or the game is aborted\.$/)
+		).toBeVisible();
+		await expect(spoken(page)).toHaveText(
+			'X: play anywhere. You have 30 seconds to make your first move.'
+		);
+
+		await cell(page, digits[0]).click();
+		room.moved(0, top[0], clocksNow({ aborts_at: Date.now() + 30_000 }));
+		await expect(
+			page.getByText(new RegExp(`^${JOINER} has \\d+ seconds to make a first move`))
+		).toBeVisible();
+
+		room.moved(1, top[1], clocksNow({ x_ms: 10_400, running: 'X' }));
+		await expect(clock(page, 'X')).toHaveText(/^0:0\d\.\d$/);
+		await expect(clock(page, 'X')).toHaveAttribute('data-low');
+		await expect(clock(page, 'O')).not.toHaveAttribute('data-low');
+		await expect(spoken(page)).toHaveText('10 seconds left.');
+		await expect(page.getByText(/to make a first move/)).toHaveCount(0);
+	});
+
+	test('a game lost on time says so, its clock run out', async ({ page }) => {
+		const room = await fakeRoom(page, {
+			you: 'X',
+			players,
+			moves: top.slice(0, 2),
+			snapshot: { clock: '3+2', clocks: clocksNow({ x_ms: 4_000, running: 'X' }) }
+		});
+		await page.goto(`/r/${ROOM}`);
+		await expect(clock(page, 'X')).toHaveText(/^0:0[0-3]\.\d$/);
+		room.say({ type: 'Ended', result: '0-1', termination: 'timeout' });
+		await expect(page.getByRole('heading', { name: 'X ran out of time. O wins.' })).toBeVisible();
+		await expect(clock(page, 'X')).toHaveText('0:00.0');
+		await expect(page.locator('[data-to-move]'), 'no turn once the game stops').toHaveCount(0);
+		expect(room.hellos(), 'the end agreed with the engine').toBe(1);
+	});
+
+	test('a reconnect shows the server’s clocks', async ({ page }) => {
+		const state = {
+			you: 'X' as const,
+			players,
+			moves: top.slice(0, 3),
+			snapshot: { clock: '3+2' as const, clocks: clocksNow({ running: 'O' }) }
+		};
+		const room = await fakeRoom(page, state);
+		await page.goto(`/r/${ROOM}`);
+		await expect(clock(page, 'O')).toHaveText(/^2:5\d$/);
+		state.snapshot.clocks = clocksNow({ o_ms: 95_000, x_ms: 171_000 });
+		room.close(1006);
+		await expect(clock(page, 'O')).toHaveText('1:35');
+		await expect(clock(page, 'X')).toHaveText('2:51');
+	});
+
+	test('an aborted game says so, and Home stops offering it', async ({ page }) => {
+		const snapshot = {
+			clock: '3+2' as const,
+			clocks: clocksNow({ aborts_at: Date.now() + 30_000 })
+		};
+		/** Whether this page still keeps the Room's game, read from IndexedDB itself. */
+		const kept = () =>
+			page.evaluate(
+				(id) =>
+					new Promise<boolean>((resolve, reject) => {
+						const open = indexedDB.open('kokonoe');
+						open.onerror = () => reject(open.error);
+						open.onsuccess = () => {
+							const read = open.result.transaction('games').objectStore('games').get(id);
+							read.onsuccess = () => {
+								open.result.close();
+								resolve(read.result !== undefined);
+							};
+						};
+					}),
+				ROOM
+			);
+		const room = await fakeRoom(page, { you: 'X', players, moves: [], snapshot });
+		await page.goto(`/r/${ROOM}`);
+		await expect(board(page)).toBeVisible();
+		room.moved(0, top[0], clocksNow({ aborts_at: Date.now() + 30_000 }));
+		await expect(marked(page)).toHaveCount(1);
+		await expect.poll(kept).toBe(true);
+		await page.goto('/');
+		const resume = page.getByRole('link', { name: new RegExp(`^Resume ?, vs ${JOINER}$`) });
+		await expect(resume).toBeVisible();
+
+		await resume.click();
+		await expect(marked(page)).toHaveCount(1);
+		room.say({ type: 'Aborted', reason: 'FirstMoveTimeout' });
+		await expect(page.getByRole('heading', { name: 'Game aborted' })).toBeVisible();
+		await expect(
+			page.getByText(`${JOINER} didn’t make a first move in time, so the game wasn’t kept.`)
+		).toBeVisible();
+		await expect.poll(kept, 'this page’s copy is deleted').toBe(false);
+		room.close(1011);
+		await page.waitForTimeout(500);
+		expect(room.hellos(), 'the server’s close isn’t a reason to reconnect').toBe(2);
+
+		await page.getByRole('link', { name: 'Go to Home' }).click();
+		await expect(page.getByRole('heading', { name: 'Invite a friend' })).toBeVisible();
+		await expect(resume).toHaveCount(0);
 	});
 });

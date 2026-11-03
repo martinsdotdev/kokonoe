@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs';
 import { brotliCompressSync, constants } from 'node:zlib';
 import { expect, test, type Page } from '@playwright/test';
-import { HOST, JOINER, ROOM, fakeRoom } from './room.fixtures.js';
+import { HOST, JOINER, ROOM, clocksNow, fakeRoom } from './room.fixtures.js';
 
 /**
  * The game screen at its heaviest: against the computer, which opens as X, so the page also loads
@@ -13,9 +13,14 @@ const GAME_SCREEN = '/play?vs=computer&level=1&seat=O';
 const SCREENS: { name: string; open: (page: Page) => Promise<unknown> }[] = [
 	{ name: 'Game screen', open: (page) => page.goto(GAME_SCREEN) },
 	{
+		// Timed, so whatever only a timed Room loads counts too.
 		name: 'Room',
 		open: async (page) => {
-			await fakeRoom(page, { you: 'X', players: { X: HOST, O: JOINER }, moves: [] });
+			const snapshot = {
+				clock: '3+2' as const,
+				clocks: clocksNow({ aborts_at: Date.now() + 30_000 })
+			};
+			await fakeRoom(page, { you: 'X', players: { X: HOST, O: JOINER }, moves: [], snapshot });
 			await page.goto(`/r/${ROOM}`);
 			await expect(page.getByRole('group', { name: 'The Global board' })).toBeVisible();
 		}

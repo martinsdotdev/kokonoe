@@ -7,7 +7,8 @@
 	board.
 
 	With keyboard focus on the board, a Cell can be typed as its Notation digits (spec §7.7). One
-	live line, mounted for the whole game, says each move, where the next goes, and the result.
+	live line, mounted for the whole game, says each move, where the next goes, and the result, and
+	in a timed Room this page's first-move window and its clock running low.
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
@@ -16,6 +17,7 @@
 	import { MediaQuery } from 'svelte/reactivity';
 	import { announcement, turn } from './announce.js';
 	import Board from './Board.svelte';
+	import { CUES, left } from './clock.js';
 	import GameControls from './GameControls.svelte';
 	import MoveList from './MoveList.svelte';
 	import OfferCard from './OfferCard.svelte';
@@ -27,7 +29,7 @@
 	import ScreenHeader from './ScreenHeader.svelte';
 	import SteppedBoard from './SteppedBoard.svelte';
 	import { shortcut, typed, typedSoFar } from './keys.js';
-	import { moves } from './listing.js';
+	import { moves, seconds } from './listing.js';
 	import { playedCount } from './moves.js';
 	import { notation } from './notation.js';
 	import { resultText, winner } from './result.js';
@@ -68,14 +70,80 @@
 	const offer = $derived(session.offer);
 	const answer = (accept: boolean) => session.answer(accept);
 
+	/** A timed Room's clocks, and the time they're read at, which ticks while one runs. */
+	const clocks = $derived(session.clocks);
 	/**
-	 * The game's one live line: what keeps the game from going on, or the last move, then the
-	 * result or where to play, then an offer waiting or what came of this page's.
+	 * The first move the player to move must make before the game is aborted: by when, and how
+	 * long they had when the clocks were read.
+	 */
+	const firstMove = $derived(
+		clocks && clocks.aborts !== null
+			? { by: clocks.aborts, within: clocks.aborts - clocks.at }
+			: null
+	);
+	let instant = $state(Date.now());
+	$effect(() => {
+		if (!clocks?.running && !firstMove) return;
+		instant = Date.now();
+		const ticking = setInterval(() => (instant = Date.now()), 100);
+		return () => clearInterval(ticking);
+	});
+
+	/** The seat this page plays, in a Room. */
+	const mine = $derived((['X', 'O'] as const).find((player) => session.seats[player].yours));
+
+	/** `ms` as whole seconds, rounded up. */
+	const inSeconds = (ms: number) => seconds(Math.max(0, Math.ceil(ms / 1000)));
+
+	/** How long the player to move has to make their first move, before the game is aborted. */
+	const countdown = $derived.by(() => {
+		const player = session.toMove;
+		if (!firstMove || !player) return null;
+		const time = inSeconds(firstMove.by - instant);
+		return player === mine
+			? `Make your first move within ${time}, or the game is aborted.`
+			: `${session.seats[player].name} has ${time} to make a first move, or the game is aborted.`;
+	});
+
+	/**
+	 * What follows the move on the live line: this page's first-move window as it opens, then an
+	 * offer waiting or what came of this page's.
+	 */
+	const after = $derived.by(() => {
+		const window =
+			firstMove && session.toMove === mine
+				? `You have ${inSeconds(firstMove.within)} to make your first move.`
+				: null;
+		return [window, offer ? offerText(offer) : session.notice].filter(Boolean).join(' ');
+	});
+
+	/** This page's clock running low, said until anything else is: a change to either clears it. */
+	let cue = $derived.by((): string | null => {
+		void said;
+		void after;
+		return null;
+	});
+	/**
+	 * The lowest of the `CUES` this page's clock was under when last read, which only the effect
+	 * reads. A cue is said each time the clock falls past it, as it can again after an increment,
+	 * but not for one it was already past when the page opened.
+	 */
+	let cued: number | undefined;
+	$effect(() => {
+		if (!clocks || !mine || session.end) return;
+		const ms = left(clocks, mine, instant);
+		const due = CUES.findLast((at) => ms <= at) ?? Infinity;
+		if (cued !== undefined && due < cued) cue = `${due / 1000} seconds left.`;
+		cued = due;
+	});
+
+	/**
+	 * The game's one live line: what keeps the game from going on, or this page's clock running
+	 * low, or the last move, then the result or where to play, then what follows it.
 	 */
 	const spoken = $derived.by(() => {
 		if (session.trouble) return session.trouble.message;
-		const after = offer ? offerText(offer) : session.notice;
-		return after ? `${said} ${after}`.trim() : said;
+		return cue ?? (after ? `${said} ${after}`.trim() : said);
 	});
 
 	let heading: HTMLElement | undefined = $state();
@@ -227,8 +295,9 @@
 		<PlayerBar
 			{player}
 			seat={session.seats[player]}
-			toMove={session.toMove === player}
+			toMove={!session.end && session.toMove === player}
 			doing={session.doing(player)}
+			clock={clocks && left(clocks, player, instant)}
 		/>
 	{/each}
 	{#if session.trouble}
@@ -257,6 +326,7 @@
 			player={session.toMove}
 			turn={now}
 			typed={digits ? typedSoFar(digits, depth) : null}
+			{countdown}
 		/>
 	{/if}
 {/snippet}

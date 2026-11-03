@@ -3,18 +3,20 @@
 	when the link is copied, and when the connection drops.
 -->
 <script lang="ts">
-	import type { Player } from '#lib/engine.js';
+	import type { Player, TimeControl } from '#lib/engine.js';
 
 	interface Props {
 		/** The Room's link, `/r/<room>` on this site. */
 		link: string;
 		variant: string;
 		you: Player;
+		/** A timed Room's time control. */
+		clock?: TimeControl | null;
 		/** What keeps the friend from joining now, such as a dropped connection. */
 		trouble: string | null;
 	}
 
-	let { link, variant, you, trouble }: Props = $props();
+	let { link, variant, you, clock = null, trouble }: Props = $props();
 
 	/** What Copy link just did, for a moment. */
 	let copied: string | null = $state(null);
@@ -42,7 +44,7 @@
 	class="flex flex-col gap-5 rounded-[10px] border-[1.5px] border-foreground bg-card p-6 shadow-[6px_6px_0_var(--muted)]"
 >
 	<span class="font-mono text-[13px] tracking-[0.08em] text-muted-foreground uppercase">
-		{variant} · You play {you}
+		{[variant, `You play ${you}`, clock].filter(Boolean).join(' · ')}
 	</span>
 	<h1 id="waiting" class="m-0 font-display text-4xl leading-[1.1] font-semibold" tabindex="-1">
 		Waiting for your friend

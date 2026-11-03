@@ -1,7 +1,10 @@
 import type { Outcome, Player, Ruleset, Status } from '#lib/engine.js';
 
-/** A game stopped before its rules ended it: a resignation or an agreed draw, which no Record says. */
-export type Stopped = { resigned: Player } | { agreed: true };
+/**
+ * A game stopped before its rules ended it: a resignation, an agreed draw or a player out of time,
+ * which no Record says.
+ */
+export type Stopped = { resigned: Player } | { agreed: true } | { flagged: Player };
 
 /** How a game ended: the engine's Outcome, or it stopped. */
 export type End = { outcome: Outcome } | Stopped;
@@ -11,16 +14,19 @@ export const endOf = (stopped: Stopped | null, status: Status): End | null =>
 	stopped ?? ('Over' in status ? { outcome: status.Over } : null);
 
 /**
- * How a game stopped, by spec §4.4's Result and Termination: an agreed draw, or a resignation by
- * the player who didn't win. Null for any other end, or a resignation that names no winner.
+ * How a game stopped, by spec §4.4's Result and Termination: an agreed draw, or a resignation or a
+ * loss on time by the player who didn't win. Null for any other end, or a stop that names no
+ * winner.
  */
 export const stoppedFrom = (
 	result: string | undefined,
 	termination: string | undefined
 ): Stopped | null => {
 	if (termination === 'agreed draw') return { agreed: true };
-	if (termination !== 'resign' || (result !== '1-0' && result !== '0-1')) return null;
-	return { resigned: result === '1-0' ? 'O' : 'X' };
+	const loser = result === '1-0' ? 'O' : result === '0-1' ? 'X' : null;
+	if (!loser) return null;
+	if (termination === 'resign') return { resigned: loser };
+	return termination === 'timeout' ? { flagged: loser } : null;
 };
 
 export const opponent = (player: Player): Player => (player === 'X' ? 'O' : 'X');
@@ -28,6 +34,7 @@ export const opponent = (player: Player): Player => (player === 'X' ? 'O' : 'X')
 export const winner = (end: End): Player | null => {
 	if ('agreed' in end) return null;
 	if ('resigned' in end) return opponent(end.resigned);
+	if ('flagged' in end) return opponent(end.flagged);
 	const { outcome } = end;
 	return outcome === 'Draw' ? null : 'Objective' in outcome ? outcome.Objective : outcome.MostWon;
 };
@@ -46,6 +53,7 @@ export const result = (end: End | null): '1-0' | '0-1' | '1/2-1/2' | '*' => {
 export const resultText = (end: End, ruleset: Ruleset, won: Record<Player, number>): string => {
 	if ('agreed' in end) return 'Draw agreed';
 	if ('resigned' in end) return `${end.resigned} resigned. ${opponent(end.resigned)} wins.`;
+	if ('flagged' in end) return `${end.flagged} ran out of time. ${opponent(end.flagged)} wins.`;
 	const player = winner(end);
 	if (player === null) return ruleset.fallback === 'MostWon' ? `Draw, ${won.X}–${won.O}` : 'Draw';
 	if (ruleset.objective === 'Line' && end.outcome !== 'Draw' && 'Objective' in end.outcome) {

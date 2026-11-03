@@ -389,11 +389,25 @@ async fn a_reconnect_gets_a_fresh_welcome_and_plays_on() {
     let cells = cells(TOP_ROW);
     play(&mut table, 0, &cells[..3]).await;
 
+    // Dropped first, as a page's connection is: the other player hears it go and come back.
+    table.o.close(None).await.unwrap();
+    assert!(matches!(
+        hear(&mut table.x).await,
+        ServerMsg::Presence {
+            player: Player::O,
+            away: Some(_)
+        }
+    ));
     table.o = world.enter(&table.joiner, &table.room).await;
     let (you, record, players) = welcomed(&mut table.o).await;
     assert_eq!(you, Player::O);
     assert_eq!(indices(&record), cells[..3]);
     assert_eq!(players, table.players);
+    let back = ServerMsg::Presence {
+        player: Player::O,
+        away: None,
+    };
+    assert_eq!(hear(&mut table.x).await, back);
     play(&mut table, 3, &cells[3..5]).await;
 }
 

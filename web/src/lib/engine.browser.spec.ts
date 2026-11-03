@@ -304,7 +304,7 @@ describe('values crossing the boundary', () => {
 
 describe('a Room’s socket', () => {
 	it('names the versions a Hello sends, and the codes the server closes with', () => {
-		expect([rulesVersion(), protocolVersion()]).toEqual([1, 2]);
+		expect([rulesVersion(), protocolVersion()]).toEqual([1, 3]);
 		expect(drawOffers(), 'Draws::MAX').toBe(3);
 		const names = every<keyof typeof CloseCode>()([
 			'Restarting',

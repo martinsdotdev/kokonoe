@@ -198,7 +198,7 @@ test('a joiner reads the card, and joins on Accept or leaves on Decline', async 
 	await expect(page.locator('main h1'), 'focus follows the page into the game').toBeFocused();
 	expect(room.said[0]).toEqual({
 		type: 'Hello',
-		protocol: 2,
+		protocol: 3,
 		rules_version: 1,
 		room: ROOM,
 		role: 'Player'

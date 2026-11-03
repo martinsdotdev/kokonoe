@@ -47,6 +47,20 @@ pub enum ClientMsg {
     /// Asks the server's time, to set the page's clocks by: `t` is the page's own, in whole ms,
     /// which the `Pong` returns.
     Ping { t: u64 },
+    /// Ends the game once the other player has been away long enough (spec §11: a minute, timed or
+    /// not): the claimant wins, or it's drawn.
+    Claim {
+        #[cfg_attr(feature = "serde", serde(rename = "as"))]
+        kind: ClaimKind,
+    },
+}
+
+/// What a player claims of a game the other has left.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClaimKind {
+    Win,
+    Draw,
 }
 
 /// What a socket comes to a Room as. Spectators join it with KOK-61.
@@ -76,9 +90,9 @@ pub enum ServerMsg {
     },
     /// The sender's message changed nothing.
     Rejected { reason: Rejection },
-    /// The game is over: after the move, resignation or agreed draw that ended it, or to a move
-    /// sent after. It withdraws a draw offer or takeback still waiting. Rating changes join it
-    /// with KOK-62.
+    /// The game is over: after the move, resignation, agreed draw, loss on time or Claim that
+    /// ended it, or to a move sent after. It withdraws a draw offer or takeback still waiting.
+    /// Rating changes join it with KOK-62.
     Ended(GameEnd),
     /// A player offered a draw, a takeback or a rematch, which the other answers.
     Offer(Offer),
@@ -93,6 +107,9 @@ pub enum ServerMsg {
     Aborted { reason: Abort },
     /// The answer to a `Ping`: its `t`, and the server's Unix time in ms.
     Pong { t: u64, server_ms: u64 },
+    /// A seated player's last socket left the Room (`away`), or their first came back (null). Only
+    /// the other player hears it; a seat filling is a `Welcome` instead.
+    Presence { player: Player, away: Option<Away> },
 }
 
 /// A Room as it stands.
@@ -117,6 +134,30 @@ pub struct Snapshot {
     pub clock: Option<TimeControl>,
     /// The clocks now, in a timed Room.
     pub clocks: Option<Clocks>,
+    /// Which players are away, and how long the other still waits to Claim the game.
+    pub presence: Presence,
+}
+
+/// A player with no socket in the Room.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Away {
+    /// When their last socket went, in the server's Unix ms.
+    pub since: u64,
+    /// Milliseconds left, as of this message, before the other player may Claim the game: 0 once
+    /// they may.
+    pub claims_in: u32,
+}
+
+/// Each seat's player while they're away: null while they have a socket in the Room, and for an
+/// empty seat.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Presence {
+    #[cfg_attr(feature = "serde", serde(rename = "X"))]
+    pub x: Option<Away>,
+    #[cfg_attr(feature = "serde", serde(rename = "O"))]
+    pub o: Option<Away>,
 }
 
 /// What a player offered, and how long it waits for its answer.
@@ -175,15 +216,22 @@ impl Draws {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GameEnd {
-    pub result: GameResult,
+    /// None only for an Abandoned game, which has no result.
+    pub result: Option<GameResult>,
     pub termination: Termination,
 }
 
 impl GameEnd {
+    /// A game both players left, which ends without a result (spec §11).
+    pub const ABANDONED: GameEnd = GameEnd {
+        result: None,
+        termination: Termination::Abandoned,
+    };
+
     /// The end the rules gave the game.
     pub fn of(outcome: Outcome, ruleset: &Ruleset) -> GameEnd {
         GameEnd {
-            result: GameResult::won_by(outcome.winner()),
+            result: Some(GameResult::won_by(outcome.winner())),
             termination: Termination::of(outcome, ruleset),
         }
     }
@@ -230,8 +278,7 @@ impl GameResult {
     }
 }
 
-/// Spec §4.4's Termination: how a game came to its end. Claims and abandonment arrive with
-/// presence.
+/// Spec §4.4's Termination: how a game came to its end.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Termination {
@@ -247,16 +294,22 @@ pub enum Termination {
     AgreedDraw,
     #[cfg_attr(feature = "serde", serde(rename = "timeout"))]
     Timeout,
+    #[cfg_attr(feature = "serde", serde(rename = "claim"))]
+    Claim,
+    #[cfg_attr(feature = "serde", serde(rename = "abandoned"))]
+    Abandoned,
 }
 
 impl Termination {
-    pub const ALL: [Termination; 6] = [
+    pub const ALL: [Termination; 8] = [
         Termination::Line,
         Termination::Count,
         Termination::Decided,
         Termination::Resign,
         Termination::AgreedDraw,
         Termination::Timeout,
+        Termination::Claim,
+        Termination::Abandoned,
     ];
 
     /// How the rules ended a game (spec §4.4's table).
@@ -280,6 +333,8 @@ impl Termination {
             Termination::Resign => "resign",
             Termination::AgreedDraw => "agreed draw",
             Termination::Timeout => "timeout",
+            Termination::Claim => "claim",
+            Termination::Abandoned => "abandoned",
         }
     }
 
@@ -320,7 +375,8 @@ pub enum Rejection {
     /// is behind, and reconnects for a fresh `Welcome`.
     OutOfOrder { want: u16 },
     /// It isn't this socket's to do now: the other seat's turn, the other seat still empty, a
-    /// finished game, an offer already waiting, or no such offer to answer.
+    /// finished game, an offer already waiting, no such offer to answer, or a Claim before the
+    /// other player has been away long enough.
     NotAllowed,
 }
 
@@ -391,6 +447,13 @@ mod tests {
             rematch: None,
             clock: Some(TimeControl::ThreePlusTwo),
             clocks: Some(clocks),
+            presence: Presence {
+                x: None,
+                o: Some(Away {
+                    since: 1_793_599_990_000,
+                    claims_in: 50_000,
+                }),
+            },
         };
         let untimed = Snapshot {
             clock: None,
@@ -417,7 +480,8 @@ mod tests {
                 r#""players":{"X":"guest-4821","O":null},"takebacks":true,"#,
                 r#""offer":{"kind":"Draw","by":"X","lapses_in":null},"draws":{"X":1,"O":0},"end":null,"rematch":null,"#,
                 r#""clock":"3+2","clocks":{"x_ms":180000,"o_ms":180000,"running":null,"#,
-                r#""at":1793600000000,"aborts_at":1793600030000}}}"#
+                r#""at":1793600000000,"aborts_at":1793600030000},"#,
+                r#""presence":{"X":null,"O":{"since":1793599990000,"claims_in":50000}}}}"#
             ),
         );
         pinned(
@@ -459,13 +523,53 @@ mod tests {
                 &alloc::format!(r#"{{"type":"Rejected","reason":{json}}}"#),
             );
         }
-        let ended = GameEnd {
-            result: GameResult::OWins,
-            termination: Termination::Resign,
-        };
+        let ends = [
+            (
+                GameResult::OWins,
+                Termination::Resign,
+                r#""0-1","termination":"resign""#,
+            ),
+            (
+                GameResult::XWins,
+                Termination::Claim,
+                r#""1-0","termination":"claim""#,
+            ),
+            (
+                GameResult::Draw,
+                Termination::Claim,
+                r#""1/2-1/2","termination":"claim""#,
+            ),
+        ];
+        for (result, termination, json) in ends {
+            let ended = GameEnd {
+                result: Some(result),
+                termination,
+            };
+            pinned(
+                &ServerMsg::Ended(ended),
+                &alloc::format!(r#"{{"type":"Ended","result":{json}}}"#),
+            );
+        }
         pinned(
-            &ServerMsg::Ended(ended),
-            r#"{"type":"Ended","result":"0-1","termination":"resign"}"#,
+            &ServerMsg::Ended(GameEnd::ABANDONED),
+            r#"{"type":"Ended","result":null,"termination":"abandoned"}"#,
+        );
+        pinned(
+            &ServerMsg::Presence {
+                player: Player::O,
+                away: Some(Away {
+                    since: 1_793_600_000_000,
+                    claims_in: 60_000,
+                }),
+            },
+            r#"{"type":"Presence","player":"O","away":{"since":1793600000000,"claims_in":60000}}"#,
+        );
+        pinned(
+            &ServerMsg::Presence {
+                player: Player::X,
+                away: None,
+            },
+            r#"{"type":"Presence","player":"X","away":null}"#,
         );
         pinned(
             &ServerMsg::Offer(Offer {
@@ -547,6 +651,18 @@ mod tests {
                 ClientMsg::Ping { t: 12_345 },
                 r#"{"type":"Ping","t":12345}"#,
             ),
+            (
+                ClientMsg::Claim {
+                    kind: ClaimKind::Win,
+                },
+                r#"{"type":"Claim","as":"Win"}"#,
+            ),
+            (
+                ClientMsg::Claim {
+                    kind: ClaimKind::Draw,
+                },
+                r#"{"type":"Claim","as":"Draw"}"#,
+            ),
         ];
         for (intent, json) in intents {
             pinned(&intent, json);
@@ -567,9 +683,13 @@ mod tests {
         ];
         for (outcome, ruleset, result, termination) in cases {
             let end = GameEnd::of(outcome, ruleset);
-            assert_eq!(end.result.as_str(), result, "{outcome:?}");
+            assert_eq!(
+                end.result.map(GameResult::as_str),
+                Some(result),
+                "{outcome:?}"
+            );
             assert_eq!(end.termination.as_str(), termination, "{outcome:?}");
-            assert_eq!(GameResult::parse(result), Some(end.result));
+            assert_eq!(GameResult::parse(result), end.result);
             assert_eq!(Termination::parse(termination), Some(end.termination));
         }
         for termination in Termination::ALL {
@@ -594,6 +714,8 @@ mod tests {
             r#"{"type":"Resigned"}"#,
             r#"{"ply":0,"cell":40}"#,
             r#"{"type":"Move","ply":-1,"cell":40}"#,
+            r#"{"type":"Claim"}"#,
+            r#"{"type":"Claim","as":"Loss"}"#,
         ] {
             assert!(serde_json::from_str::<ClientMsg>(json).is_err(), "{json}");
         }

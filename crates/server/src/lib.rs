@@ -58,13 +58,16 @@ struct AppState {
     /// The site's own origin, such as `https://kokonoe.app`: the one `Origin` that a request
     /// changing something, or opening the socket, may come from.
     origin: HeaderValue,
+    /// How often an open socket is pinged.
+    keepalive: Duration,
 }
 
 /// The app: the SPA from `web_root`, as adapter-static built it, precompressed. Every path that
 /// names no file gets the fallback page `200.html`, so deep links resolve; a missing file gets a
 /// 404, never the page in its place. `origin` is where the pages are served from, and `timing` how
-/// long things take in a Room: its offers' waits, a timed Room's first-move window, and its time
-/// controls' units.
+/// long things take in a Room: its offers' waits, a timed Room's first-move window and its time
+/// controls' units, the waits before a Claim and an abandonment, and how often sockets are pinged.
+/// It starts the sweep that abandons empty games, so it runs inside a Tokio runtime.
 pub fn app(
     pool: PgPool,
     web_root: &Path,
@@ -84,12 +87,15 @@ pub fn app(
         .precompressed_br()
         .precompressed_gzip()
         .fallback(pages.into_service());
+    let rooms = rooms::Rooms::new(pool.clone(), timing);
     let state = AppState {
-        rooms: rooms::Rooms::new(pool.clone(), timing),
+        rooms: rooms.clone(),
         pool,
         room_page,
         origin,
+        keepalive: timing.keepalive,
     };
+    tokio::spawn(rooms.sweep());
     Ok(Router::new()
         .route("/healthz", get(health))
         .route("/r/{room}", get(preview::room))

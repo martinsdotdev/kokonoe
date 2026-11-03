@@ -39,6 +39,18 @@ pub enum ClientMsg {
     Ping {
         t: u64,
     },
+    Claim {
+        #[serde(rename = "as")]
+        kind: ClaimKind,
+    },
+}
+
+/// What a player claims of a game the other has left.
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub enum ClaimKind {
+    Win,
+    Draw,
 }
 
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,7 +67,8 @@ pub enum Role {
 pub enum ServerMsg {
     Welcome {
         you: Player,
-        snapshot: Snapshot,
+        /// Boxed, being far larger than every other message.
+        snapshot: Box<Snapshot>,
     },
     Moved {
         ply: Ply,
@@ -87,11 +100,16 @@ pub enum ServerMsg {
         t: u64,
         server_ms: u64,
     },
+    Presence {
+        player: Player,
+        #[tsify(type = "Away | null")]
+        away: Option<Away>,
+    },
 }
 
 /// A Room as it stands. `end` says how a finished game ended, which a Record can't for a
 /// resignation; `offer` is the one waiting for an answer; `rematch` is the Room an accepted
-/// rematch made; `clock` and `clocks` are a timed Room's.
+/// rematch made; `clock` and `clocks` are a timed Room's; `presence` says who is away.
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub struct Snapshot {
@@ -109,6 +127,29 @@ pub struct Snapshot {
     pub clock: Option<TimeControl>,
     #[tsify(type = "Clocks | null")]
     pub clocks: Option<Clocks>,
+    pub presence: Presence,
+}
+
+/// A player with no socket in the Room: since when, in the server's Unix ms, and the ms left, as
+/// of the message, before the other player may Claim the game.
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub struct Away {
+    pub since: u64,
+    pub claims_in: u32,
+}
+
+/// Each seat's player while they're away: `null` while they're in the Room, and for an empty
+/// seat.
+#[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
+pub struct Presence {
+    #[serde(rename = "X")]
+    #[tsify(type = "Away | null")]
+    pub x: Option<Away>,
+    #[serde(rename = "O")]
+    #[tsify(type = "Away | null")]
+    pub o: Option<Away>,
 }
 
 /// A Fischer time control, spelled as a game file's `TimeControl` tag: a bank in minutes, plus
@@ -174,11 +215,12 @@ pub struct Draws {
     pub o: u8,
 }
 
-/// Spec §4.4's Result and Termination.
+/// Spec §4.4's Result and Termination. An Abandoned game has no result.
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub struct GameEnd {
-    pub result: GameResult,
+    #[tsify(type = "GameResult | null")]
+    pub result: Option<GameResult>,
     pub termination: Termination,
 }
 
@@ -208,6 +250,10 @@ pub enum Termination {
     AgreedDraw,
     #[serde(rename = "timeout")]
     Timeout,
+    #[serde(rename = "claim")]
+    Claim,
+    #[serde(rename = "abandoned")]
+    Abandoned,
 }
 
 /// Who holds each seat, by Handle: `null` while it waits for someone.

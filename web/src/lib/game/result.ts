@@ -19,7 +19,7 @@ export const endOf = (stopped: Stopped | null, status: Status): End | null =>
  * winner.
  */
 export const stoppedFrom = (
-	result: string | undefined,
+	result: string | null | undefined,
 	termination: string | undefined
 ): Stopped | null => {
 	if (termination === 'agreed draw') return { agreed: true };

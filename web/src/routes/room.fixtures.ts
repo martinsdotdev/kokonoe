@@ -76,6 +76,7 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 			rematch: null,
 			clock: null,
 			clocks: null,
+			presence: { X: null, O: null },
 			...room.snapshot
 		}
 	});

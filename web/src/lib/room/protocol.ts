@@ -41,6 +41,7 @@ export const readServerMsg = (data: unknown): ServerMsg | null => {
 				const end = field(snapshot, 'end');
 				const rematch = field(snapshot, 'rematch');
 				const draws = field(snapshot, 'draws');
+				const presence = field(snapshot, 'presence');
 				return (
 					isPlayer(field(body, 'you')) &&
 					readPlayers(field(snapshot, 'players')) !== undefined &&
@@ -53,7 +54,9 @@ export const readServerMsg = (data: unknown): ServerMsg | null => {
 					(end === null || isEnd(end)) &&
 					(rematch === null || isRoomId(rematch)) &&
 					nullOr(isClock, field(snapshot, 'clock')) &&
-					nullOr(isClocks, field(snapshot, 'clocks'))
+					nullOr(isClocks, field(snapshot, 'clocks')) &&
+					nullOr(isAway, field(presence, 'X')) &&
+					nullOr(isAway, field(presence, 'O'))
 				);
 			}
 			case 'Moved':
@@ -78,6 +81,8 @@ export const readServerMsg = (data: unknown): ServerMsg | null => {
 				return field(body, 'reason') === 'FirstMoveTimeout';
 			case 'Pong':
 				return count(field(body, 't')) && count(field(body, 'server_ms'));
+			case 'Presence':
+				return isPlayer(field(body, 'player')) && nullOr(isAway, field(body, 'away'));
 			default:
 				return false;
 		}
@@ -99,7 +104,9 @@ const TERMINATIONS: Record<Termination, true> = {
 	decided: true,
 	resign: true,
 	'agreed draw': true,
-	timeout: true
+	timeout: true,
+	claim: true,
+	abandoned: true
 };
 
 const isKind = (kind: unknown): boolean => among(KINDS, kind);
@@ -113,11 +120,22 @@ const isOffer = (offer: unknown): boolean => {
 	);
 };
 
-const isEnd = (end: unknown): boolean =>
-	among(RESULTS, field(end, 'result')) && among(TERMINATIONS, field(end, 'termination'));
+/** An end with its Result, but for an abandoned game, which has none. */
+const isEnd = (end: unknown): boolean => {
+	const termination = field(end, 'termination');
+	const result = field(end, 'result');
+	return (
+		among(TERMINATIONS, termination) &&
+		(termination === 'abandoned' ? result === null : among(RESULTS, result))
+	);
+};
 
 const nullOr = (is: (value: unknown) => boolean, value: unknown): boolean =>
 	value === null || is(value);
+
+/** A player away from the Room: since when, and how long until the other may Claim the game. */
+const isAway = (away: unknown): boolean =>
+	count(field(away, 'since')) && count(field(away, 'claims_in'));
 
 /** A timed Room's clocks: each player's ms left, whose runs, and the server's times. */
 const isClocks = (clocks: unknown): boolean =>

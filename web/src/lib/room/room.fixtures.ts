@@ -33,6 +33,7 @@ export const welcome = (
 		rematch: null,
 		clock: null,
 		clocks: null,
+		presence: { X: null, O: null },
 		...snapshot
 	}
 });

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use axum::http::StatusCode;
 use common::table::*;
-use common::{Server, closed, guest, hear, open, say, session_id};
+use common::{Server, closed, eventually, guest, hear, open, say, session_id};
 use futures_util::{SinkExt, StreamExt};
 use kokonoe_engine::{Depth, Player, Preset, RULES_VERSION};
 use kokonoe_protocol::{
@@ -206,7 +206,7 @@ async fn two_players_play_a_whole_game() {
     let ply = rest.len() as u16;
     step(&mut table.x, ply, *last).await;
     let ended = ServerMsg::Ended(GameEnd {
-        result: GameResult::XWins,
+        result: Some(GameResult::XWins),
         termination: Termination::Line,
     });
     for socket in [&mut table.x, &mut table.o] {
@@ -349,7 +349,7 @@ async fn a_frame_that_is_not_a_message_closes_the_socket() {
     let mut table = world.table("std").await;
     table.x.send(Message::text("40 please")).await.unwrap();
     assert_eq!(closed(&mut table.x).await, 1007, "not JSON");
-    let unknown = r#"{"type":"Claim"}"#;
+    let unknown = r#"{"type":"Resigned"}"#;
     table.o.send(Message::text(unknown)).await.unwrap();
     assert_eq!(closed(&mut table.o).await, 1007, "an unknown type");
 
@@ -413,19 +413,13 @@ async fn a_room_no_one_is_in_is_loaded_again() {
         .await
         .unwrap();
 
-    let reloaded = async {
-        loop {
-            let mut x = world.enter(&host, &room).await;
-            let (_, record, _) = welcomed(&mut x).await;
-            if indices(&record) == cells[..1] {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(5), reloaded)
-        .await
-        .expect("the empty Room stopped, and was loaded from Postgres again");
+    let reloaded = "the empty Room stopped, and was loaded from Postgres again";
+    eventually(Duration::from_secs(5), reloaded, async || {
+        let mut x = world.enter(&host, &room).await;
+        let (_, record, _) = welcomed(&mut x).await;
+        (indices(&record) == cells[..1]).then_some(())
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -446,6 +440,12 @@ async fn a_restart_rebuilds_every_room_from_postgres() {
         assert_eq!(players, table.players);
         assert_eq!(indices(&record), cells[..8]);
     }
+    // X came back first, to O away since the restart, and hears O come back.
+    let back = ServerMsg::Presence {
+        player: Player::O,
+        away: None,
+    };
+    assert_eq!(hear(&mut table.x).await, back);
     let (last, rest) = cells.split_last().unwrap();
     play(&mut table, 8, &rest[8..]).await;
     let ply = rest.len() as u16;

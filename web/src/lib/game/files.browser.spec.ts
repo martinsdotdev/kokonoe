@@ -58,10 +58,18 @@ describe('export then import', () => {
 		}
 	});
 
-	it('keeps a resignation, an agreed draw or a loss on time through the tags', () => {
+	it('keeps a resignation, an agreed draw, a loss on time, a Claim or an abandonment through the tags', () => {
 		const game = new Game(presets()[0].ruleset, '00000000005eed00');
 		game.play(0, cells('42')[0]);
-		for (const end of [{ resigned: 'O' }, { agreed: true }, { flagged: 'X' }] as const) {
+		const ends = [
+			{ resigned: 'O' },
+			{ agreed: true },
+			{ flagged: 'X' },
+			{ claimed: 'X' },
+			{ claimedDraw: true },
+			{ abandoned: true }
+		] as const;
+		for (const end of ends) {
 			const text = writeUtt({ ...fileOf(game), end });
 			expect(openFile(read(text))).toEqual({ stopped: end });
 		}
@@ -161,6 +169,29 @@ describe('a file the engine refuses', () => {
 		expect(refused(timedDraw)).toThrow(
 			new FileProblem('It says a player ran out of time, but its Result names no winner.')
 		);
+	});
+
+	it('refuses a Claim or an abandonment after the game ended, or with the wrong Result', () => {
+		const claimed = topRowFile().replace('[Termination "line"]', '[Termination "claim"]');
+		expect(refused(claimed)).toThrow(
+			new FileProblem('It says a player claimed the game after the game ended.')
+		);
+		const short = claimed.replace(/ 2\. .*$/s, ' *\n').replace('[Result "1-0"]', '[Result "*"]');
+		expect(refused(short)).toThrow(
+			new FileProblem(
+				'It says a player claimed the game, but its Result names neither a winner nor a draw.'
+			)
+		);
+		const abandoned = topRowFile().replace('[Termination "line"]', '[Termination "abandoned"]');
+		expect(refused(abandoned)).toThrow(
+			new FileProblem('It says both players left after the game ended.')
+		);
+		const won = abandoned.replace(/ 2\. .*$/s, ' 1-0\n');
+		expect(refused(won), 'an abandoned game has no result').toThrow(
+			new FileProblem('It says 1-0, but Game abandoned.')
+		);
+		const crafted = topRowFile().replace('[Termination "line"]', '[Termination "constructor"]');
+		expect(openFile(read(crafted)), 'no Termination that stops a game').toEqual({ stopped: null });
 	});
 
 	it('says why a Record from another rules version can’t be read', () => {

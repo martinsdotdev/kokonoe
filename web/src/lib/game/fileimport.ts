@@ -8,18 +8,23 @@ import { playerAt } from './moves.js';
 import { notation } from './notation.js';
 import { endOf, result, resultText, stoppedFrom, type Stopped } from './result.js';
 
-/** What each Termination that stops a game says happened, for a refusal to quote. */
-const STOPS: Record<string, string> = {
-	resign: 'a player resigned',
-	'agreed draw': 'the players agreed a draw',
-	timeout: 'a player ran out of time'
-};
+/**
+ * What each Termination that stops a game says happened, for a refusal to quote. A Map, so a tag
+ * such as `constructor` finds nothing.
+ */
+const STOPS = new Map([
+	['resign', 'a player resigned'],
+	['agreed draw', 'the players agreed a draw'],
+	['timeout', 'a player ran out of time'],
+	['claim', 'a player claimed the game'],
+	['abandoned', 'both players left']
+]);
 
 /**
  * Checks a game file with the engine, and with the tags it has: every move legal, the plies it
  * writes as dealt the ones its Seed deals, and its Result how the moves end. Returns how it
- * stopped, a resignation, an agreed draw or a loss on time, which only a `.utt` file's tags can
- * say. Throws a FileProblem.
+ * stopped, a resignation, an agreed draw, a loss on time, a Claim or an abandonment, which only a
+ * `.utt` file's tags can say. Throws a FileProblem.
  */
 export const openFile = (parsed: ParsedFile): { stopped: Stopped | null } => {
 	const { record, tags } = parsed;
@@ -46,13 +51,14 @@ export const openFile = (parsed: ParsedFile): { stopped: Stopped | null } => {
 		const status = game.status();
 		const said = tags.get('Result');
 		const termination = tags.get('Termination');
-		const stop = termination === undefined ? undefined : STOPS[termination];
+		const stop = termination === undefined ? undefined : STOPS.get(termination);
 		if (stop && 'Over' in status) {
 			throw new FileProblem(`It says ${stop} after the game ended.`);
 		}
 		const stopped = stoppedFrom(said, termination);
 		if (stop && !stopped) {
-			throw new FileProblem(`It says ${stop}, but its Result names no winner.`);
+			const names = termination === 'claim' ? 'neither a winner nor a draw' : 'no winner';
+			throw new FileProblem(`It says ${stop}, but its Result names ${names}.`);
 		}
 		const end = endOf(stopped, status);
 		if (said !== undefined && said !== result(end)) {

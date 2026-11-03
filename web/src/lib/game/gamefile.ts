@@ -46,6 +46,8 @@ export const termination = (end: End | null, rules: Ruleset): string => {
 	if ('agreed' in end) return 'agreed draw';
 	if ('resigned' in end) return 'resign';
 	if ('flagged' in end) return 'timeout';
+	if ('claimed' in end || 'claimedDraw' in end) return 'claim';
+	if ('abandoned' in end) return 'abandoned';
 	const { outcome } = end;
 	if (outcome === 'Draw') return rules.fallback === 'MostWon' ? 'count' : 'decided';
 	return 'Objective' in outcome && rules.objective === 'Line' ? 'line' : 'count';

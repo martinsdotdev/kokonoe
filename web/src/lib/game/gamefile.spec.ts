@@ -106,7 +106,10 @@ describe('the Result and Termination', () => {
 			[{ outcome: 'Draw' }, rules({ fallback: 'MostWon' }), '1/2-1/2', 'count'],
 			[{ outcome: 'Draw' }, STANDARD, '1/2-1/2', 'decided'],
 			[{ resigned: 'X' }, STANDARD, '0-1', 'resign'],
-			[{ flagged: 'O' }, STANDARD, '1-0', 'timeout']
+			[{ flagged: 'O' }, STANDARD, '1-0', 'timeout'],
+			[{ claimed: 'O' }, STANDARD, '0-1', 'claim'],
+			[{ claimedDraw: true }, STANDARD, '1/2-1/2', 'claim'],
+			[{ abandoned: true }, STANDARD, '*', 'abandoned']
 		];
 		for (const [end, ruleset, said, how] of cases) {
 			expect([result(end), termination(end, ruleset)]).toEqual([said, how]);

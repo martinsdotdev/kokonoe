@@ -27,6 +27,12 @@ export interface SavedGame {
 	agreed?: true;
 	/** Who ran out of time, in a timed Room. Absent from older games. */
 	flagged?: Player;
+	/** Who claimed the win against a player who left the Room. Absent from older games. */
+	claimed?: Player;
+	/** A draw was claimed against a player who left the Room. Absent from older games. */
+	claimedDraw?: true;
+	/** Both players left the Room, and it ended with no result. Absent from older games. */
+	abandoned?: true;
 	/** A timed Room's time control. Absent from untimed games. */
 	clock?: TimeControl;
 	/** When the game began and was last played, in epoch milliseconds. */
@@ -63,27 +69,33 @@ export const savedGame = (game: {
 	end: End | null;
 	won: { X: number; O: number };
 	clock?: TimeControl | null;
-}): SavedGame => ({
-	id: game.id,
-	record: game.record,
-	variant: { name: game.variant.name, code: rulesetCode(game.variant.ruleset) },
-	opponent: game.opponent,
-	resigned: game.end && 'resigned' in game.end ? game.end.resigned : null,
-	...(game.end && 'agreed' in game.end ? { agreed: true as const } : {}),
-	...(game.end && 'flagged' in game.end ? { flagged: game.end.flagged } : {}),
-	...(game.clock ? { clock: game.clock } : {}),
-	started: game.started,
-	updated: Date.now(),
-	view: game.view,
-	toMove: game.end ? null : game.toMove,
-	result: game.end ? resultText(game.end, game.variant.ruleset, game.won) : null
-});
+}): SavedGame => {
+	// Each way a game stops is one field, named as its key.
+	const stopped = game.end && !('outcome' in game.end) ? game.end : null;
+	return {
+		id: game.id,
+		record: game.record,
+		variant: { name: game.variant.name, code: rulesetCode(game.variant.ruleset) },
+		opponent: game.opponent,
+		resigned: null,
+		...stopped,
+		...(game.clock ? { clock: game.clock } : {}),
+		started: game.started,
+		updated: Date.now(),
+		view: game.view,
+		toMove: game.end ? null : game.toMove,
+		result: game.end ? resultText(game.end, game.variant.ruleset, game.won) : null
+	};
+};
 
 /** How a saved game stopped, if it did before its rules ended it. */
 export const stoppedOf = (saved: SavedGame): Stopped | null => {
 	if (saved.resigned) return { resigned: saved.resigned };
 	if (saved.agreed) return { agreed: true };
-	return saved.flagged ? { flagged: saved.flagged } : null;
+	if (saved.flagged) return { flagged: saved.flagged };
+	if (saved.claimed) return { claimed: saved.claimed };
+	if (saved.claimedDraw) return { claimedDraw: true };
+	return saved.abandoned ? { abandoned: true } : null;
 };
 
 interface Schema extends DBSchema {

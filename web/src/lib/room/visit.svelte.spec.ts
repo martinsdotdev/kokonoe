@@ -49,7 +49,7 @@ describe('following a Room’s link', () => {
 		await expect.poll(() => fake.opened.length).toBe(1);
 		fake.last().accept();
 		expect(fake.last().sent).toEqual([
-			{ type: 'Hello', protocol: 2, rules_version: 1, room: ROOM, role: 'Player' }
+			{ type: 'Hello', protocol: 3, rules_version: 1, room: ROOM, role: 'Player' }
 		]);
 		fake.last().say(welcome('O'));
 		await phase(made).toBe('playing');

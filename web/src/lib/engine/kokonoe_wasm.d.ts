@@ -26,7 +26,7 @@ export type TimeControl = "3+2" | "5+3" | "10+5" | "15+5";
 /**
  * A Room as it stands. `end` says how a finished game ended, which a Record can't for a
  * resignation; `offer` is the one waiting for an answer; `rematch` is the Room an accepted
- * rematch made; `clock` and `clocks` are a timed Room's.
+ * rematch made; `clock` and `clocks` are a timed Room's; `presence` says who is away.
  */
 export interface Snapshot {
     record: Record;
@@ -38,6 +38,7 @@ export interface Snapshot {
     rematch: string | null;
     clock: TimeControl | null;
     clocks: Clocks | null;
+    presence: Presence;
 }
 
 /**
@@ -58,6 +59,15 @@ export interface Record {
 }
 
 /**
+ * A player with no socket in the Room: since when, in the server's Unix ms, and the ms left, as
+ * of the message, before the other player may Claim the game.
+ */
+export interface Away {
+    since: number;
+    claims_in: number;
+}
+
+/**
  * A timed game's clocks as they stood at `at`, the server's Unix ms: each player's time left,
  * whose runs, and when the game aborts unless the player to move makes their first move.
  */
@@ -67,6 +77,15 @@ export interface Clocks {
     running: Player | null;
     at: number;
     aborts_at: number | null;
+}
+
+/**
+ * Each seat's player while they're away: `null` while they're in the Room, and for an empty
+ * seat.
+ */
+export interface Presence {
+    X: Away | null;
+    O: Away | null;
 }
 
 /**
@@ -91,10 +110,10 @@ export interface Visit {
 }
 
 /**
- * Spec §4.4's Result and Termination.
+ * Spec §4.4's Result and Termination. An Abandoned game has no result.
  */
 export interface GameEnd {
-    result: GameResult;
+    result: GameResult | null;
     termination: Termination;
 }
 
@@ -161,7 +180,12 @@ export type PlayResult = { Now: Status } | "Already" | { Illegal: IllegalMove } 
 /**
  * What a client says on a Room's socket.
  */
-export type ClientMsg = { type: "Hello"; protocol: number; rules_version: number; room: string; role: Role } | { type: "Move"; ply: Ply; cell: Cell } | { type: "Resign" } | { type: "OfferDraw" } | { type: "AnswerDraw"; accept: boolean } | { type: "AskTakeback" } | { type: "AnswerTakeback"; accept: boolean } | { type: "OfferRematch" } | { type: "AnswerRematch"; accept: boolean } | { type: "Ping"; t: number };
+export type ClientMsg = { type: "Hello"; protocol: number; rules_version: number; room: string; role: Role } | { type: "Move"; ply: Ply; cell: Cell } | { type: "Resign" } | { type: "OfferDraw" } | { type: "AnswerDraw"; accept: boolean } | { type: "AskTakeback" } | { type: "AnswerTakeback"; accept: boolean } | { type: "OfferRematch" } | { type: "AnswerRematch"; accept: boolean } | { type: "Ping"; t: number } | { type: "Claim"; as: ClaimKind };
+
+/**
+ * What a player claims of a game the other has left.
+ */
+export type ClaimKind = "Win" | "Draw";
 
 /**
  * What one search from a root found: a move the tactics force, or the visits of every root move
@@ -173,7 +197,7 @@ export type Searched = { Forced: Cell } | { Visits: Visit[] };
  * What the server says on a Room's socket. A `Welcome` comes after `Hello`, and again to every
  * socket when a seat fills; it replaces everything the page knew.
  */
-export type ServerMsg = { type: "Welcome"; you: Player; snapshot: Snapshot } | { type: "Moved"; ply: Ply; cell: Cell; clocks: Clocks | null } | { type: "Rejected"; reason: Rejection } | ({ type: "Ended" } & GameEnd) | ({ type: "Offer" } & Offer) | { type: "OfferAnswered"; kind: OfferKind; accepted: boolean } | { type: "TookBack"; to_ply: Ply; clocks: Clocks | null } | { type: "RematchRoom"; room: string } | { type: "Aborted"; reason: Abort } | { type: "Pong"; t: number; server_ms: number };
+export type ServerMsg = { type: "Welcome"; you: Player; snapshot: Snapshot } | { type: "Moved"; ply: Ply; cell: Cell; clocks: Clocks | null } | { type: "Rejected"; reason: Rejection } | ({ type: "Ended" } & GameEnd) | ({ type: "Offer" } & Offer) | { type: "OfferAnswered"; kind: OfferKind; accepted: boolean } | { type: "TookBack"; to_ply: Ply; clocks: Clocks | null } | { type: "RematchRoom"; room: string } | { type: "Aborted"; reason: Abort } | { type: "Pong"; t: number; server_ms: number } | { type: "Presence"; player: Player; away: Away | null };
 
 /**
  * Who holds each seat, by Handle: `null` while it waits for someone.
@@ -245,7 +269,7 @@ export type Role = "Player";
 
 export type SeatChoice = "X" | "O" | "Random";
 
-export type Termination = "line" | "count" | "decided" | "resign" | "agreed draw" | "timeout";
+export type Termination = "line" | "count" | "decided" | "resign" | "agreed draw" | "timeout" | "claim" | "abandoned";
 
 
 /**

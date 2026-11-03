@@ -12,10 +12,9 @@ use common::table::*;
 use common::{Server, Socket, closed, hear, say};
 use kokonoe_engine::Player;
 use kokonoe_protocol::{
-    Abort, ClientMsg, Clocks, CloseCode, GameEnd, GameResult, OfferKind, ServerMsg, Snapshot,
-    Termination, TimeControl,
+    Abort, ClientMsg, Clocks, CloseCode, GameResult, OfferKind, ServerMsg, Snapshot, Termination,
+    TimeControl,
 };
-use sqlx::PgPool;
 use tokio::time::{Instant, sleep};
 
 const BANK: u32 = 600;
@@ -42,25 +41,6 @@ fn now_ms() -> u64 {
     u64::try_from(since.as_millis()).unwrap()
 }
 
-/// `cell` played at `ply` by the side to move, and the clocks both sockets heard with it.
-async fn timed_step(table: &mut Table, ply: u16, cell: u16) -> Clocks {
-    let mover = table.socket(kokonoe_engine::Ply::new(ply).player());
-    step(mover, ply, cell).await;
-    let mut heard = Vec::new();
-    for socket in [&mut table.x, &mut table.o] {
-        match hear(socket).await {
-            ServerMsg::Moved {
-                ply: at,
-                cell: played,
-                clocks: Some(clocks),
-            } if (at, played) == (ply, cell) => heard.push(clocks),
-            other => panic!("not ply {ply}'s move with its clocks: {other:?}"),
-        }
-    }
-    assert_eq!(heard[0], heard[1], "both sockets hear the same clocks");
-    heard[0]
-}
-
 /// Both sockets hear `message` next.
 async fn both_hear(table: &mut Table, message: &ServerMsg) {
     for socket in [&mut table.x, &mut table.o] {
@@ -68,29 +48,13 @@ async fn both_hear(table: &mut Table, message: &ServerMsg) {
     }
 }
 
-fn ended(result: GameResult, termination: Termination) -> ServerMsg {
-    ServerMsg::Ended(GameEnd {
-        result,
-        termination,
-    })
-}
-
 const ABORTED: ServerMsg = ServerMsg::Aborted {
     reason: Abort::FirstMoveTimeout,
 };
 
-async fn games(pool: &PgPool, room: &str) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM games WHERE room = $1")
-        .bind(room)
-        .fetch_one(pool)
-        .await
-        .unwrap()
-}
-
 /// A fresh `Welcome` to `token`'s new socket in `room`, and its clocks.
 async fn rejoined(world: &World, token: &str, room: &str) -> (Socket, Snapshot, Clocks) {
-    let mut socket = world.enter(token, room).await;
-    let (_, snapshot) = welcome(&mut socket).await;
+    let (socket, snapshot) = world.rejoin(token, room).await;
     let clocks = snapshot.clocks.expect("a timed Room has clocks");
     (socket, snapshot, clocks)
 }
@@ -99,7 +63,7 @@ async fn rejoined(world: &World, token: &str, room: &str) -> (Socket, Snapshot, 
 async fn restart(world: &mut World, down: Duration) {
     world.server.kill();
     sleep(down).await;
-    world.server = Server::start(&world.url).await;
+    world.server = Server::start_with(&world.url, world.timing).await;
 }
 
 #[tokio::test]
@@ -384,7 +348,7 @@ async fn a_room_loaded_past_its_flag_ends_on_time() {
     let (_, snapshot, clocks) = rejoined(&world, &table.joiner, &table.room).await;
     assert_eq!(
         snapshot.end.map(|end| (end.result, end.termination)),
-        Some((GameResult::OWins, Termination::Timeout))
+        Some((Some(GameResult::OWins), Termination::Timeout))
     );
     assert_eq!((clocks.x_ms, clocks.running), (0, None));
 }

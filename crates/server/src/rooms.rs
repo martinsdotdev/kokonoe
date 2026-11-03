@@ -11,7 +11,8 @@ use axum::response::{IntoResponse, Response};
 use kokonoe_engine::{Game, Player, Preset, Ruleset, Seed};
 use kokonoe_protocol::{CreatedRoom, NewRoom, RoomCard, SeatChoice, ServerMsg};
 use sqlx::PgPool;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{OnceCell, mpsc, oneshot};
+use tokio::time::{Instant, MissedTickBehavior};
 
 use crate::random::bytes;
 use crate::room::{self, Command, Conn, Join, RoomId, Timing};
@@ -27,12 +28,14 @@ const ATTEMPTS: usize = 3;
 type Slot = Arc<tokio::sync::Mutex<Option<mpsc::Sender<Command>>>>;
 
 /// The Rooms being played. A Room's slot stays once it has loaded, a few bytes, while its task
-/// stops when its last socket leaves.
+/// stops when its last socket leaves. One server plays a database's Rooms.
 #[derive(Clone)]
 pub struct Rooms {
     pool: PgPool,
     timing: Timing,
     slots: Arc<Mutex<HashMap<RoomId, Slot>>>,
+    /// Set once the table holds no one in a Room from before this server started.
+    recovered: Arc<OnceCell<()>>,
 }
 
 /// A socket's place in a Room.
@@ -56,7 +59,57 @@ impl Rooms {
             pool,
             timing,
             slots: Arc::default(),
+            recovered: Arc::default(),
         }
+    }
+
+    /// Marks away everyone the table holds in a Room, once: no socket outlives a server, and
+    /// that's as long ago as anyone can tell. Done before any Room loads, so it never marks away
+    /// someone who has since come back.
+    async fn recover(&self) -> Result<(), sqlx::Error> {
+        self.recovered
+            .get_or_try_init(|| async {
+                let marked = games::recover(&self.pool).await?;
+                if marked > 0 {
+                    tracing::info!(marked, "games whose players this server never saw leave");
+                }
+                Ok::<(), sqlx::Error>(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Settles whatever is due in the Room `id`: loaded, if no task plays it, only to see. A live
+    /// Room has someone in it, and is left alone.
+    async fn wake(&self, id: &RoomId) -> Result<(), Refused> {
+        let room = self.find(id).await?;
+        let _ = room.send(Command::Wake).await;
+        Ok(())
+    }
+
+    /// Ends the games both players left `Timing::abandon` ago, looking every `Timing::sweep` for
+    /// as long as the server runs. A timed game's clock ends it first, on time or aborted.
+    pub async fn sweep(self) {
+        let every = self.timing.sweep;
+        let mut ticks = tokio::time::interval_at(Instant::now() + every, every);
+        ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            ticks.tick().await;
+            if let Err(error) = self.sweep_once().await {
+                tracing::warn!(%error, "the abandonment sweep couldn't reach the database");
+            }
+        }
+    }
+
+    /// Wakes every Room whose game both players left `Timing::abandon` ago, which ends it.
+    async fn sweep_once(&self) -> Result<(), sqlx::Error> {
+        self.recover().await?;
+        for room in games::abandoned(&self.pool, self.timing.abandon).await? {
+            if let Err(refused) = self.wake(&room).await {
+                tracing::warn!(?refused, %room, "an abandoned Room couldn't be settled");
+            }
+        }
+        Ok(())
     }
 
     /// Seats `account` in the Room `id`: the seat it already holds, or an empty one. Its messages
@@ -91,6 +144,10 @@ impl Rooms {
 
     /// The task playing the Room `id`, started from Postgres if none is.
     async fn find(&self, id: &RoomId) -> Result<mpsc::Sender<Command>, Refused> {
+        if let Err(error) = self.recover().await {
+            tracing::warn!(%error, room = %id, "a Room couldn't be loaded");
+            return Err(Refused::Unavailable);
+        }
         let slot = {
             let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
             slots.entry(id.clone()).or_default().clone()

@@ -38,7 +38,15 @@ it('reads every message the server sends', () => {
 		{ type: 'TookBack', to_ply: 2, clocks },
 		{ type: 'RematchRoom', room: 'b'.repeat(20) },
 		{ type: 'Aborted', reason: 'FirstMoveTimeout' },
-		{ type: 'Pong', t: 1_793_600_000_000, server_ms: 1_793_600_000_040 }
+		{ type: 'Pong', t: 1_793_600_000_000, server_ms: 1_793_600_000_040 },
+		welcome('X', undefined, [], {
+			presence: { X: null, O: { since: 1_793_599_990_000, claims_in: 50_000 } }
+		}),
+		{ type: 'Presence', player: 'O', away: { since: 1_793_600_000_000, claims_in: 60_000 } },
+		{ type: 'Presence', player: 'X', away: null },
+		{ type: 'Ended', result: '1-0', termination: 'claim' },
+		{ type: 'Ended', result: '1/2-1/2', termination: 'claim' },
+		{ type: 'Ended', result: null, termination: 'abandoned' }
 	];
 	for (const message of messages) expect(read(message)).toEqual(message);
 });
@@ -75,6 +83,15 @@ it('reads a message of the wrong shape as nothing', () => {
 		{ type: 'Pong', t: 1.5, server_ms: 0 },
 		{ type: 'Pong', t: 0 },
 		{ type: 'Pong', t: 0, server_ms: 'now' },
+		{ ...welcome('X'), snapshot: { ...snapshot, presence: undefined } },
+		{
+			...welcome('X'),
+			snapshot: { ...snapshot, presence: { X: { since: -1, claims_in: 0 }, O: null } }
+		},
+		{ type: 'Presence', player: 'Z', away: null },
+		{ type: 'Presence', player: 'X' },
+		{ type: 'Presence', player: 'X', away: { since: 1_793_600_000_000 } },
+		{ type: 'Ended', result: null, termination: 'resign' },
 		{ type: 'Claim' }
 	];
 	for (const message of wrong) expect(read(message), JSON.stringify(message)).toBeNull();

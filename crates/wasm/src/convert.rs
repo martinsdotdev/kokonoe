@@ -344,9 +344,9 @@ impl From<protocol::CloseCode> for crate::CloseCode {
 mod wire {
     use super::*;
     use crate::wire::{
-        Abort, ClientMsg, Clocks, CreatedRoom, Draws, GameEnd, GameResult, NewRoom, Offer,
-        OfferKind, Players, Rejection, Role, RoomCard, SeatChoice, ServerMsg, Snapshot,
-        Termination, TimeControl,
+        Abort, Away, ClaimKind, ClientMsg, Clocks, CreatedRoom, Draws, GameEnd, GameResult,
+        NewRoom, Offer, OfferKind, Players, Presence, Rejection, Role, RoomCard, SeatChoice,
+        ServerMsg, Snapshot, Termination, TimeControl,
     };
 
     impl From<protocol::ClientMsg> for ClientMsg {
@@ -379,6 +379,16 @@ mod wire {
                     ClientMsg::AnswerRematch { accept }
                 }
                 protocol::ClientMsg::Ping { t } => ClientMsg::Ping { t },
+                protocol::ClientMsg::Claim { kind } => ClientMsg::Claim { kind: kind.into() },
+            }
+        }
+    }
+
+    impl From<protocol::ClaimKind> for ClaimKind {
+        fn from(kind: protocol::ClaimKind) -> ClaimKind {
+            match kind {
+                protocol::ClaimKind::Win => ClaimKind::Win,
+                protocol::ClaimKind::Draw => ClaimKind::Draw,
             }
         }
     }
@@ -396,7 +406,7 @@ mod wire {
             match message {
                 protocol::ServerMsg::Welcome { you, snapshot } => ServerMsg::Welcome {
                     you: you.into(),
-                    snapshot: snapshot.into(),
+                    snapshot: Box::new(snapshot.into()),
                 },
                 protocol::ServerMsg::Moved { ply, cell, clocks } => ServerMsg::Moved {
                     ply: Ply(ply.into()),
@@ -421,6 +431,28 @@ mod wire {
                     reason: reason.into(),
                 },
                 protocol::ServerMsg::Pong { t, server_ms } => ServerMsg::Pong { t, server_ms },
+                protocol::ServerMsg::Presence { player, away } => ServerMsg::Presence {
+                    player: player.into(),
+                    away: away.map(Away::from),
+                },
+            }
+        }
+    }
+
+    impl From<protocol::Away> for Away {
+        fn from(away: protocol::Away) -> Away {
+            Away {
+                since: away.since,
+                claims_in: away.claims_in,
+            }
+        }
+    }
+
+    impl From<protocol::Presence> for Presence {
+        fn from(presence: protocol::Presence) -> Presence {
+            Presence {
+                x: presence.x.map(Away::from),
+                o: presence.o.map(Away::from),
             }
         }
     }
@@ -437,6 +469,7 @@ mod wire {
                 rematch: snapshot.rematch,
                 clock: snapshot.clock.map(TimeControl::from),
                 clocks: snapshot.clocks.map(Clocks::from),
+                presence: snapshot.presence.into(),
             }
         }
     }
@@ -504,7 +537,7 @@ mod wire {
     impl From<protocol::GameEnd> for GameEnd {
         fn from(end: protocol::GameEnd) -> GameEnd {
             GameEnd {
-                result: end.result.into(),
+                result: end.result.map(GameResult::from),
                 termination: end.termination.into(),
             }
         }
@@ -529,6 +562,8 @@ mod wire {
                 protocol::Termination::Resign => Termination::Resign,
                 protocol::Termination::AgreedDraw => Termination::AgreedDraw,
                 protocol::Termination::Timeout => Termination::Timeout,
+                protocol::Termination::Claim => Termination::Claim,
+                protocol::Termination::Abandoned => Termination::Abandoned,
             }
         }
     }
@@ -828,6 +863,12 @@ mod tests {
                 protocol::ClientMsg::OfferRematch,
                 protocol::ClientMsg::AnswerRematch { accept: true },
                 protocol::ClientMsg::Ping { t: 12_345 },
+                protocol::ClientMsg::Claim {
+                    kind: protocol::ClaimKind::Win,
+                },
+                protocol::ClientMsg::Claim {
+                    kind: protocol::ClaimKind::Draw,
+                },
             ];
             assert_eq!(every::<_, ClientMsg>(client), declared::<ClientMsg>());
 
@@ -836,11 +877,15 @@ mod tests {
             let cell = engine::Cell::from_index(engine::Depth::Three, 364).unwrap();
             game.play(game.state().ply(), cell).unwrap();
             let rejected = |reason| protocol::ServerMsg::Rejected { reason };
-            let ended = |result, termination| {
+            let ended = |result: Option<protocol::GameResult>, termination| {
                 protocol::ServerMsg::Ended(protocol::GameEnd {
                     result,
                     termination,
                 })
+            };
+            let away = protocol::Away {
+                since: 1_793_599_990_000,
+                claims_in: 50_000,
             };
             let offer = |kind, by, lapses_in| protocol::Offer {
                 kind,
@@ -872,6 +917,7 @@ mod tests {
                         rematch: None,
                         clock: None,
                         clocks: None,
+                        presence: protocol::Presence::default(),
                     },
                 },
                 protocol::ServerMsg::Welcome {
@@ -887,12 +933,16 @@ mod tests {
                         )),
                         draws: protocol::Draws { x: 3, o: 1 },
                         end: Some(protocol::GameEnd {
-                            result: protocol::GameResult::Draw,
+                            result: Some(protocol::GameResult::Draw),
                             termination: protocol::Termination::AgreedDraw,
                         }),
                         rematch: Some("0123456789abcdef0123".into()),
                         clock: protocol::TimeControl::parse("5+3"),
                         clocks: Some(starting),
+                        presence: protocol::Presence {
+                            x: None,
+                            o: Some(away),
+                        },
                     },
                 },
                 protocol::ServerMsg::Moved {
@@ -908,15 +958,39 @@ mod tests {
                 rejected(protocol::Rejection::IllegalMove),
                 rejected(protocol::Rejection::OutOfOrder { want: 5 }),
                 rejected(protocol::Rejection::NotAllowed),
-                ended(protocol::GameResult::XWins, protocol::Termination::Line),
-                ended(protocol::GameResult::OWins, protocol::Termination::Count),
-                ended(protocol::GameResult::Draw, protocol::Termination::Decided),
-                ended(protocol::GameResult::OWins, protocol::Termination::Resign),
                 ended(
-                    protocol::GameResult::Draw,
+                    Some(protocol::GameResult::XWins),
+                    protocol::Termination::Line,
+                ),
+                ended(
+                    Some(protocol::GameResult::OWins),
+                    protocol::Termination::Count,
+                ),
+                ended(
+                    Some(protocol::GameResult::Draw),
+                    protocol::Termination::Decided,
+                ),
+                ended(
+                    Some(protocol::GameResult::OWins),
+                    protocol::Termination::Resign,
+                ),
+                ended(
+                    Some(protocol::GameResult::Draw),
                     protocol::Termination::AgreedDraw,
                 ),
-                ended(protocol::GameResult::XWins, protocol::Termination::Timeout),
+                ended(
+                    Some(protocol::GameResult::XWins),
+                    protocol::Termination::Timeout,
+                ),
+                ended(
+                    Some(protocol::GameResult::XWins),
+                    protocol::Termination::Claim,
+                ),
+                ended(
+                    Some(protocol::GameResult::Draw),
+                    protocol::Termination::Claim,
+                ),
+                ended(None, protocol::Termination::Abandoned),
                 protocol::ServerMsg::Offer(offer(
                     protocol::OfferKind::Draw,
                     engine::Player::X,
@@ -948,6 +1022,14 @@ mod tests {
                 protocol::ServerMsg::Pong {
                     t: 12_345,
                     server_ms: 1_793_600_000_000,
+                },
+                protocol::ServerMsg::Presence {
+                    player: engine::Player::O,
+                    away: Some(away),
+                },
+                protocol::ServerMsg::Presence {
+                    player: engine::Player::X,
+                    away: None,
                 },
             ];
             assert_eq!(every::<_, ServerMsg>(server), declared::<ServerMsg>());

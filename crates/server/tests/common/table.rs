@@ -6,13 +6,17 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
 use kokonoe_engine::{Cell, Player, RULES_VERSION, Record};
-use kokonoe_protocol::{ClientMsg, PROTOCOL, Players, Rejection, Role, ServerMsg, Snapshot};
+use kokonoe_protocol::{
+    ClientMsg, Clocks, GameEnd, GameResult, PROTOCOL, Players, Rejection, Role, ServerMsg,
+    Snapshot, Termination,
+};
+use kokonoe_server::Timing;
 use sqlx::PgPool;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
 use super::{
-    Container, ORIGIN, Server, Socket, cookie, database, guest, hear, open, say, session_id,
+    Container, ORIGIN, Server, Socket, TIMING, cookie, database, guest, hear, open, say, session_id,
 };
 
 /// X takes Local boards 0, 1 and 2, each with a row, while O sends X wherever it needs to go:
@@ -40,13 +44,20 @@ pub struct World {
     pub app: Router,
     pub _root: TempDir,
     pub server: Server,
+    /// How long things take on its server.
+    pub timing: Timing,
 }
 
 pub async fn world() -> World {
+    world_with(TIMING).await
+}
+
+/// A world whose server takes `timing`.
+pub async fn world_with(timing: Timing) -> World {
     let (container, url) = database().await;
     let pool = kokonoe_server::connect(&url).await.unwrap();
     let (app, root) = super::app(pool.clone());
-    let server = Server::start(&url).await;
+    let server = Server::start_with(&url, timing).await;
     World {
         _container: container,
         url,
@@ -54,6 +65,7 @@ pub async fn world() -> World {
         app,
         _root: root,
         server,
+        timing,
     }
 }
 
@@ -101,6 +113,13 @@ impl World {
         let mut socket = open(self.server.address, token).await;
         say(&mut socket, &hello(room)).await;
         socket
+    }
+
+    /// A new socket of `token`'s in `room`, and the Room as its `Welcome` tells it.
+    pub async fn rejoin(&self, token: &str, room: &str) -> (Socket, Snapshot) {
+        let mut socket = self.enter(token, room).await;
+        let (_, snapshot) = welcome(&mut socket).await;
+        (socket, snapshot)
     }
 }
 
@@ -190,6 +209,15 @@ pub async fn stored(pool: &PgPool, room: &str) -> Vec<i32> {
         .unwrap()
 }
 
+/// How many rows the table holds for `room`: none once it's aborted.
+pub async fn games(pool: &PgPool, room: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM games WHERE room = $1")
+        .bind(room)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 pub fn hello(room: &str) -> ClientMsg {
     ClientMsg::Hello {
         protocol: PROTOCOL,
@@ -234,6 +262,14 @@ pub fn rejected(reason: Rejection) -> ServerMsg {
     ServerMsg::Rejected { reason }
 }
 
+/// A game ended with `result`.
+pub fn ended(result: GameResult, termination: Termination) -> ServerMsg {
+    ServerMsg::Ended(GameEnd {
+        result: Some(result),
+        termination,
+    })
+}
+
 impl Table {
     /// The socket of the player in `seat`.
     pub fn socket(&mut self, seat: Player) -> &mut Socket {
@@ -251,6 +287,33 @@ pub async fn play(table: &mut Table, ply: u16, cells: &[u16]) {
         step(mover, ply, cell).await;
         assert_eq!(hear(&mut table.x).await, moved(ply, cell));
         assert_eq!(hear(&mut table.o).await, moved(ply, cell));
+    }
+}
+
+/// `cell` played at `ply` in a timed Room by the side to move, and the clocks both sockets heard
+/// with it.
+pub async fn timed_step(table: &mut Table, ply: u16, cell: u16) -> Clocks {
+    let mover = table.socket(kokonoe_engine::Ply::new(ply).player());
+    step(mover, ply, cell).await;
+    let mut heard = Vec::new();
+    for socket in [&mut table.x, &mut table.o] {
+        match hear(socket).await {
+            ServerMsg::Moved {
+                ply: at,
+                cell: played,
+                clocks: Some(clocks),
+            } if (at, played) == (ply, cell) => heard.push(clocks),
+            other => panic!("not ply {ply}'s move with its clocks: {other:?}"),
+        }
+    }
+    assert_eq!(heard[0], heard[1], "both sockets hear the same clocks");
+    heard[0]
+}
+
+/// [`play`], in a timed Room.
+pub async fn timed_play(table: &mut Table, ply: u16, cells: &[u16]) {
+    for (ply, &cell) in (ply..).zip(cells) {
+        timed_step(table, ply, cell).await;
     }
 }
 

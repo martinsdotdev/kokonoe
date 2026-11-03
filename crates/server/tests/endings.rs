@@ -45,13 +45,6 @@ fn answered(kind: OfferKind, accepted: bool) -> ServerMsg {
     ServerMsg::OfferAnswered { kind, accepted }
 }
 
-fn ended(result: GameResult, termination: Termination) -> ServerMsg {
-    ServerMsg::Ended(GameEnd {
-        result,
-        termination,
-    })
-}
-
 /// `player` says `message`, and both sockets hear `heard`, in order.
 async fn both_hear(
     table: &mut Table,
@@ -136,7 +129,7 @@ async fn resigning_ends_the_game_for_the_other_player() {
     assert_eq!(
         snapshot.end,
         Some(GameEnd {
-            result: GameResult::XWins,
+            result: Some(GameResult::XWins),
             termination: Termination::Resign
         }),
         "a reconnect is told how it ended"

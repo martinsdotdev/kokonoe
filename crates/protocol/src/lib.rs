@@ -15,8 +15,8 @@ pub use api::{CreatedRoom, NewRoom, RoomCard, SeatChoice};
 pub use clock::{Abort, Clocks, TimeControl};
 pub use close::CloseCode;
 pub use socket::{
-    ClientMsg, Draws, GameEnd, GameResult, Offer, OfferKind, Players, Rejection, Role, ServerMsg,
-    Snapshot, Termination,
+    Away, ClaimKind, ClientMsg, Draws, GameEnd, GameResult, Offer, OfferKind, Players, Presence,
+    Rejection, Role, ServerMsg, Snapshot, Termination,
 };
 
 /// The version of the socket's messages, sent in every `Hello`. Bumped whenever a message changes

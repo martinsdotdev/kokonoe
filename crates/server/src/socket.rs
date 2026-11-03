@@ -20,10 +20,6 @@ use crate::{AppState, Unavailable, from_here, not_from_here};
 /// How long a socket has to say `Hello`.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How often the server pings an open socket, so proxies and phones don't drop it as idle while
-/// a player thinks.
-const KEEPALIVE: Duration = Duration::from_secs(30);
-
 /// How many messages wait for a slow socket before its Room drops it.
 const QUEUE: usize = 32;
 
@@ -73,7 +69,7 @@ async fn serve(socket: &mut WebSocket, state: &AppState, session: &Session) -> E
         Ok(joined) => joined,
         Err(ending) => return ending,
     };
-    let ending = relay(socket, &mut inbox, conn, &room).await;
+    let ending = relay(socket, &mut inbox, conn, &room, state.keepalive).await;
     let _ = room.send(Command::Leave { conn }).await;
     ending
 }
@@ -120,59 +116,99 @@ async fn hello(
 }
 
 /// Carries the socket's moves to its Room, as `conn`, and the Room's messages from `inbox` back,
-/// until either side ends it.
+/// until either side ends it. It pings the socket every `keepalive`, so proxies and phones don't
+/// drop it as idle while a player thinks, and closes one that answers nothing to two pings in a
+/// row: a phone asleep with its socket still open, whose player is then away.
 async fn relay(
     socket: &mut WebSocket,
     inbox: &mut mpsc::Receiver<ServerMsg>,
     conn: Conn,
     room: &mpsc::Sender<Command>,
+    keepalive: Duration,
 ) -> Ending {
-    let start = tokio::time::Instant::now() + KEEPALIVE;
-    let mut keepalive = tokio::time::interval_at(start, KEEPALIVE);
+    let start = tokio::time::Instant::now() + keepalive;
+    let mut pings = tokio::time::interval_at(start, keepalive);
+    // A relay held up by a slow send mustn't fire its missed pings at once.
+    pings.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut unanswered = Unanswered::default();
     loop {
-        tokio::select! {
-            received = socket.recv() => match received {
-                Some(Ok(Message::Text(text))) => match serde_json::from_str(&text) {
-                    // Answered here, so the server's time isn't held up behind the Room's work.
-                    Ok(ClientMsg::Ping { t }) => {
-                        let pong = ServerMsg::Pong { t, server_ms: time::unix_ms() };
-                        let text = serde_json::to_string(&pong).expect("a message is always JSON");
+        let received = tokio::select! {
+            received = socket.recv() => received,
+            sent = inbox.recv() => {
+                match sent {
+                    Some(message) => {
+                        let text =
+                            serde_json::to_string(&message).expect("a message is always JSON");
                         if socket.send(Message::Text(text.into())).await.is_err() {
                             return GONE;
                         }
                     }
-                    Ok(message) => match Act::of(message) {
-                        Some(act) => {
-                            if room.send(Command::Act { conn, act }).await.is_err() {
-                                return (close_code::ERROR, "the Room stopped");
-                            }
-                        }
-                        None => return (CloseCode::Forbidden.into(), "hello again"),
-                    },
-                    Err(_) => return (close_code::INVALID, "not a message"),
-                },
-                Some(Ok(Message::Binary(_))) => return (close_code::UNSUPPORTED, "text only"),
-                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
-                Some(Err(_)) => return UNREADABLE,
-                Some(Ok(Message::Close(_))) | None => return GONE,
-            },
-            sent = inbox.recv() => match sent {
-                Some(message) => {
-                    let text = serde_json::to_string(&message).expect("a message is always JSON");
+                    // The Room dropped this socket, or stopped: the page reconnects for a fresh
+                    // Welcome.
+                    None => return (close_code::ERROR, "reconnect"),
+                }
+                continue;
+            }
+            _ = pings.tick() => {
+                if !unanswered.ping() {
+                    return SILENT;
+                }
+                if socket.send(Message::Ping(Default::default())).await.is_err() {
+                    return GONE;
+                }
+                continue;
+            }
+        };
+        // Whatever it sends, a page that talks is there.
+        if let Some(Ok(_)) = received {
+            unanswered = Unanswered::default();
+        }
+        match received {
+            Some(Ok(Message::Text(text))) => match serde_json::from_str(&text) {
+                // Answered here, so the server's time isn't held up behind the Room's work.
+                Ok(ClientMsg::Ping { t }) => {
+                    let pong = ServerMsg::Pong {
+                        t,
+                        server_ms: time::unix_ms(),
+                    };
+                    let text = serde_json::to_string(&pong).expect("a message is always JSON");
                     if socket.send(Message::Text(text.into())).await.is_err() {
                         return GONE;
                     }
                 }
-                // The Room dropped this socket, or stopped: the page reconnects for a fresh
-                // Welcome.
-                None => return (close_code::ERROR, "reconnect"),
+                Ok(message) => match Act::of(message) {
+                    Some(act) => {
+                        if room.send(Command::Act { conn, act }).await.is_err() {
+                            return (close_code::ERROR, "the Room stopped");
+                        }
+                    }
+                    None => return (CloseCode::Forbidden.into(), "hello again"),
+                },
+                Err(_) => return (close_code::INVALID, "not a message"),
             },
-            _ = keepalive.tick() => {
-                if socket.send(Message::Ping(Default::default())).await.is_err() {
-                    return GONE;
-                }
-            }
+            Some(Ok(Message::Binary(_))) => return (close_code::UNSUPPORTED, "text only"),
+            Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+            Some(Err(_)) => return UNREADABLE,
+            Some(Ok(Message::Close(_))) | None => return GONE,
         }
+    }
+}
+
+/// A socket that answered neither of two pings in a row: a page asleep, or a network gone quiet.
+const SILENT: Ending = (close_code::POLICY, "no answer");
+
+/// How many pings in a row a socket has answered nothing to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Unanswered(u8);
+
+impl Unanswered {
+    /// One more ping is due: false once two in a row went unanswered, and the socket is closed.
+    fn ping(&mut self) -> bool {
+        if self.0 >= 2 {
+            return false;
+        }
+        self.0 += 1;
+        true
     }
 }
 
@@ -184,5 +220,25 @@ async fn next_message(socket: &mut WebSocket) -> Option<Result<Message, axum::Er
             Ok(Message::Ping(_) | Message::Pong(_)) => {}
             read => return Some(read),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_unanswered_pings_close_a_socket() {
+        let mut unanswered = Unanswered::default();
+        assert!(unanswered.ping(), "the first ping goes out");
+        assert!(unanswered.ping(), "and a second, the first unanswered");
+        assert!(!unanswered.ping(), "neither answered: the socket closes");
+        let mut answered = Unanswered::default();
+        answered.ping();
+        answered = Unanswered::default();
+        assert!(
+            answered.ping() && answered.ping(),
+            "an answer starts the count again"
+        );
     }
 }

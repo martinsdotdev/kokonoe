@@ -15,3 +15,8 @@ pub fn unix_ms() -> u64 {
 pub fn ms(duration: Duration) -> u32 {
     u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
 }
+
+/// `duration` in whole ms, for adding to Unix ms.
+pub fn long_ms(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}

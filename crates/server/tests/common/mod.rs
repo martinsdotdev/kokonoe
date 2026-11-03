@@ -52,7 +52,12 @@ pub fn web_root(files: &[(&str, &[u8])]) -> TempDir {
 /// The app over `pool` and a build with only the fallback page, served from [`ORIGIN`].
 pub fn app(pool: PgPool) -> (axum::Router, TempDir) {
     let root = web_root(&[]);
-    let app = kokonoe_server::app(pool, root.path(), origin(), Timing::default()).unwrap();
+    // Its own sweep never runs: a test's Rooms are the server's, which sweeps on its own time.
+    let timing = Timing {
+        sweep: Duration::from_secs(3600),
+        ..Timing::default()
+    };
+    let app = kokonoe_server::app(pool, root.path(), origin(), timing).unwrap();
     (app, root)
 }
 
@@ -105,13 +110,21 @@ pub async fn guest(app: &Router) -> String {
 /// How long things take on a test server. Its offers wait long enough to answer, short enough to
 /// watch lapse, and apart, so a takeback can't wait as a rematch does. Its time controls run in
 /// a fifth of a second a minute and 40 ms a second, so 3+2 is a 600 ms bank and an 80 ms
-/// increment, and a timed Room's first move has 500 ms.
+/// increment, and a timed Room's first move has 500 ms. A Claim waits 700 ms, past the abort and
+/// 3+2's bank, so an absent player's missing first move aborts and a 3+2 clock runs out before
+/// one comes due, while 15+5's 3 s bank lets it. A game both players left ends Abandoned 1.5 s on,
+/// longer than any restart here takes, and the sweep looks every 100 ms. Sockets are pinged as a
+/// deployed server pings them, so none a test leaves unread is closed.
 pub const TIMING: Timing = Timing {
     takeback: Duration::from_millis(400),
     rematch: Duration::from_millis(900),
     abort: Duration::from_millis(500),
     minute: Duration::from_millis(200),
     second: Duration::from_millis(40),
+    claim: Duration::from_millis(700),
+    abandon: Duration::from_millis(1_500),
+    sweep: Duration::from_millis(100),
+    keepalive: Duration::from_secs(30),
 };
 
 /// The server, listening on its own runtime as a deployed one would, so [`Server::kill`] can stop
@@ -124,6 +137,10 @@ pub struct Server {
 
 impl Server {
     pub async fn start(url: &str) -> Server {
+        Server::start_with(url, TIMING).await
+    }
+
+    pub async fn start_with(url: &str, timing: Timing) -> Server {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -134,7 +151,7 @@ impl Server {
         let address = runtime
             .spawn(async move {
                 let pool = kokonoe_server::connect(&url).await.unwrap();
-                let app = kokonoe_server::app(pool, &path, origin(), TIMING).unwrap();
+                let app = kokonoe_server::app(pool, &path, origin(), timing).unwrap();
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let address = listener.local_addr().unwrap();
                 tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -229,6 +246,22 @@ pub async fn hear(socket: &mut Socket) -> ServerMsg {
     match frame(socket).await {
         Message::Text(text) => serde_json::from_str(&text).unwrap(),
         other => panic!("not a message: {other:?}"),
+    }
+}
+
+/// What `check` finds, asking every 50 ms until it finds something, for up to `within`.
+pub async fn eventually<T>(
+    within: Duration,
+    what: &str,
+    mut check: impl AsyncFnMut() -> Option<T>,
+) -> T {
+    let started = tokio::time::Instant::now();
+    loop {
+        if let Some(found) = check().await {
+            return found;
+        }
+        assert!(started.elapsed() < within, "{what}, within {within:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 

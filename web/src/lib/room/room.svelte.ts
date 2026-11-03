@@ -1,6 +1,7 @@
 import {
 	drawOffers,
 	Game,
+	type Away,
 	type Cell,
 	type ClientMsg,
 	type Clocks,
@@ -23,6 +24,7 @@ import { dealtMoves, gameFile, playedMove, seats, type Move, type Seat } from '#
 import { openRecord } from '#lib/game/record.js';
 import { Refusals } from '#lib/game/refusal.svelte.js';
 import { unansweredText, type PendingOffer } from '#lib/game/offers.js';
+import { backText, leftText, type Claim } from '#lib/game/presence.js';
 import { endOf, opponent, result, stoppedFrom, type End, type Stopped } from '#lib/game/result.js';
 import { rulesetCode, type Variant } from '#lib/game/rules.js';
 import { browserStore, savedGame, type GameStore, type SavedGame } from '#lib/game/saved.js';
@@ -68,8 +70,18 @@ const waiting = ({ kind, by, lapses_in }: Offer): Waiting => ({
 });
 
 /**
- * How many `Ping`s a timed Room's page sends after each `Welcome`, each after the last one's
- * `Pong`. The shortest round trip measures the server's time best.
+ * A player away, as this page holds it: since when, in the server's time, and from when the other
+ * player may Claim, in epoch milliseconds.
+ */
+type Gone = { since: number; claims: number };
+
+/** An absence the server sent, its Claim counted down from now. */
+const gone = (away: Away | null): Gone | null =>
+	away && { since: away.since, claims: Date.now() + away.claims_in };
+
+/**
+ * How many `Ping`s a page sends after each `Welcome`, each after the last one's `Pong`. The
+ * shortest round trip measures the server's time best.
  */
 const PINGS = 3;
 
@@ -111,9 +123,10 @@ const replay = (record: GameRecord): { game: Game; moves: Move[] } => {
  * answer, and shows what the server says came of it. Its own offer shows at once, since a refusal
  * resyncs.
  *
- * A timed Room's clocks (spec §11) come with every `Welcome`, `Moved` and `TookBack`, stamped in
- * the server's Unix milliseconds, which a few `Ping`s after each `Welcome` measure against the
- * page's (spec §10.3).
+ * A timed Room's clocks (spec §11) come with every `Welcome`, `Moved` and `TookBack`, and an
+ * absent player's time away with every `Welcome` and `Presence`, stamped in the server's Unix
+ * milliseconds, which a few `Ping`s after each `Welcome` measure against the page's (spec §10.3).
+ * Once the other player has been away long enough, this page may Claim the game.
  */
 export class RoomGame implements GameSession {
 	readonly variant: Variant;
@@ -126,7 +139,10 @@ export class RoomGame implements GameSession {
 	moves: Move[];
 	won: Record<Player, number>;
 	replied = $state.raw(false);
-	/** This page's offer came to nothing: the other player declined it, or let it lapse. */
+	/**
+	 * This page's offer came to nothing, the other player declined it or let it lapse, or the other
+	 * player left or came back.
+	 */
 	notice: string | null = $state.raw(null);
 	/** A timed Room's time control, or null for an untimed one. */
 	readonly clock: TimeControl | null;
@@ -143,6 +159,10 @@ export class RoomGame implements GameSession {
 	#offer: Waiting | null = $state.raw(null);
 	#stopped: Stopped | null = $state.raw(null);
 	#rematch: string | null = $state.raw(null);
+	/** Each player away from the Room, by the server's word. */
+	#away: Record<Player, Gone | null> = $state.raw({ X: null, O: null });
+	/** This page sent a Claim, which the server hasn't answered yet. */
+	#claimed = $state.raw(false);
 	#onrematch: ((room: string) => void) | undefined;
 	#connected = $state.raw(true);
 	#pending: { ply: number; cell: Cell } | null = $state.raw(null);
@@ -220,6 +240,8 @@ export class RoomGame implements GameSession {
 				return this.#answered(message.kind, message.accepted);
 			case 'TookBack':
 				return this.#tookBack(message.to_ply, message.clocks);
+			case 'Presence':
+				return this.#presence(message.player, message.away);
 			case 'Pong':
 				return this.#pong(message.t, message.server_ms);
 			case 'RematchRoom':
@@ -244,6 +266,33 @@ export class RoomGame implements GameSession {
 				aborts: clocks.aborts_at === null ? null : clocks.aborts_at - offset
 			}
 		);
+	}
+
+	/** Since when each player has been away, in this page's time. */
+	get away(): Record<Player, number | null> {
+		const since = (player: Player) => {
+			const away = this.#away[player];
+			// Once the game is over no one is kept waiting, however long ago they left.
+			if (player === this.you || !away || this.end !== null) return null;
+			return away.since - this.#offset;
+		};
+		return { X: since('X'), O: since('O') };
+	}
+
+	/** The Claim against the other player while they're away and the game goes on. */
+	get claim(): Claim | null {
+		const away = this.#away[opponent(this.you)];
+		if (!away || !this.seated || this.end !== null) return null;
+		const enabled = this.#connected && !this.#claimed;
+		return {
+			other: this.#other,
+			due: away.claims,
+			enabled,
+			run: (kind) => {
+				if (!enabled || Date.now() < away.claims) return;
+				if (this.#link.send({ type: 'Claim', as: kind })) this.#claimed = true;
+			}
+		};
 	}
 
 	/** The move sent and not yet heard back, which the board waits for. */
@@ -431,6 +480,19 @@ export class RoomGame implements GameSession {
 		this.#save();
 	}
 
+	/**
+	 * The other player left the Room, or came back, which goes unsaid once the game is over: a
+	 * return is said only after a leaving was.
+	 */
+	#presence(player: Player, away: Away | null) {
+		if (player === this.you) return;
+		const was = this.#away[player];
+		this.#away = { ...this.#away, [player]: gone(away) };
+		if (this.end !== null) return;
+		if (away) this.notice = leftText(this.#other);
+		else if (was) this.notice = backText(this.#other);
+	}
+
 	#offered(offer: Offer) {
 		if (offer.kind === 'Draw') {
 			this.#draws = { ...this.#draws, [offer.by]: this.#draws[offer.by] + 1 };
@@ -498,10 +560,12 @@ export class RoomGame implements GameSession {
 		this.#stopped = snapshot.end && stoppedFrom(snapshot.end.result, snapshot.end.termination);
 		this.#rematch = snapshot.rematch;
 		this.notice = null;
+		this.#away = { X: gone(snapshot.presence.X), O: gone(snapshot.presence.O) };
+		this.#claimed = false;
 		this.#clocks = snapshot.clocks;
-		if (!snapshot.clocks) return;
-		// Until a `Pong` measures it, the time the clocks were read stands for the server's now.
-		if (this.#rtt === Infinity) this.#offset = snapshot.clocks.at - Date.now();
+		// Until a `Pong` measures it, the time a timed Room's clocks were read stands for the
+		// server's now.
+		if (snapshot.clocks && this.#rtt === Infinity) this.#offset = snapshot.clocks.at - Date.now();
 		this.#pongs = 0;
 		this.#ping();
 	}

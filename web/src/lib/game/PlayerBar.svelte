@@ -1,7 +1,10 @@
-<!-- One player's bar: their mark, who they are, whether it's their move, and in a timed Room their clock. -->
+<!--
+	One player's bar: their mark, who they are, whether it's their move, in a timed Room their clock,
+	and in any Room how long they've been away.
+-->
 <script lang="ts">
 	import type { Player } from '#lib/engine.js';
-	import { clockText, clockWords, LOW_MS } from './clock.js';
+	import { clockText, clockWords, elapsedText, LOW_MS } from './clock.js';
 	import Mark from './Mark.svelte';
 	import type { Seat } from './moves.js';
 
@@ -13,9 +16,15 @@
 		doing?: string | null;
 		/** A timed Room's time left on this player's clock, in milliseconds. */
 		clock?: number | null;
+		/** How long this player has been away from the Room, in milliseconds. */
+		away?: number | null;
 	}
 
-	let { player, seat, toMove, doing = null, clock = null }: Props = $props();
+	let { player, seat, toMove, doing = null, clock = null, away = null }: Props = $props();
+
+	/** Whose move it is, or that this player waits for the other's, unless they're away. */
+	const turn = $derived(toMove ? (doing ?? 'To move') : away === null ? 'Waiting' : null);
+	const status = $derived([seat.detail ?? (seat.yours ? 'You' : null), turn].filter(Boolean));
 
 	const ink = $derived(player === 'X' ? 'var(--x)' : 'var(--o-text)');
 </script>
@@ -34,9 +43,14 @@
 			style:color={toMove ? ink : 'var(--muted-foreground)'}
 			style:font-weight={toMove ? 600 : 400}
 		>
-			{[seat.detail ?? (seat.yours ? 'You' : null), toMove ? (doing ?? 'To move') : 'Waiting']
-				.filter(Boolean)
-				.join(' · ')}
+			{status.join(' · ')}
+			{#if away !== null}
+				<!-- Read in words, since a screen reader reads 1:05 as a ratio or a time of day. -->
+				{status.length ? ' · ' : ''}<span aria-hidden="true" data-away
+					>Away {elapsedText(away)}</span
+				>
+				<span class="sr-only">Away for {clockWords(away)}</span>
+			{/if}
 		</div>
 	</div>
 	<!-- The mark is hidden from screen readers, so its letter stays for them beside a clock. -->

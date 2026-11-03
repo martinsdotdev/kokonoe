@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import type { Player } from '#lib/engine.js';
+	import type { GameResult } from '#lib/engine.js';
 	import type { GameFile } from './gamefile.js';
 	import { replayQuery } from './launch.js';
 	import OfferCard from './OfferCard.svelte';
@@ -14,7 +14,8 @@
 	interface Props {
 		headline: string;
 		detail: string;
-		winner: Player | null;
+		/** The game file's Result, which the disc shows: the winner, a draw, or no result. */
+		result: GameResult | '*';
 		/** The saved game's id, for a link to its Replay. */
 		game?: string;
 		/** Starts a new game; without it the banner has no button. */
@@ -30,10 +31,13 @@
 		};
 	}
 
-	let { headline, detail, winner, game, onrestart, file, rematch }: Props = $props();
+	let { headline, detail, result, game, onrestart, file, rematch }: Props = $props();
 
+	/** The disc's mark for each Result: an abandoned game's has none, so it isn't a draw's. */
+	const DISCS = { '1-0': 'X', '0-1': 'O', '1/2-1/2': '=', '*': '–' } as const;
+	const disc = $derived(DISCS[result]);
 	const ink = $derived(
-		winner === 'X' ? 'var(--x)' : winner === 'O' ? 'var(--o-text)' : 'var(--foreground)'
+		disc === 'X' ? 'var(--x)' : disc === 'O' ? 'var(--o-text)' : 'var(--foreground)'
 	);
 </script>
 
@@ -47,7 +51,8 @@
 			class="flex size-16 flex-none items-center justify-center rounded-full border-2 font-display text-3xl font-bold"
 			style:border-color={ink}
 			style:color={ink}
-			aria-hidden="true">{winner ?? '='}</span
+			aria-hidden="true"
+			data-disc>{disc}</span
 		>
 		<div class="min-w-0">
 			<!-- Not a live region: one that appears already filled may go unread. The game screen's

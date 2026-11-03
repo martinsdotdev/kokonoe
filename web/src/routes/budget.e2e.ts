@@ -27,8 +27,11 @@ const SCREENS: { name: string; open: (page: Page) => Promise<unknown> }[] = [
 	}
 ];
 
-/** ADR-0001's startup budget for the game screen's JS plus WASM, in brotli bytes. */
-const BUDGET = 100_000;
+/**
+ * The startup budget for a game screen's JS plus WASM, in brotli bytes: ADR-0001's 100 KB, raised
+ * to 110 KB for networked play (spec §5.2 and §16).
+ */
+const BUDGET = 110_000;
 
 const brotli = (body: Buffer) =>
 	brotliCompressSync(body, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).length;

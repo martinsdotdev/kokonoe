@@ -22,7 +22,7 @@
 	import MoveList from './MoveList.svelte';
 	import PlayerBar from './PlayerBar.svelte';
 	import type { Replay } from './replay.svelte.js';
-	import { resultText, winner } from './result.js';
+	import { result, resultText } from './result.js';
 	import ResultBanner from './ResultBanner.svelte';
 	import { counted } from './rules.js';
 	import RulesCard from './RulesCard.svelte';
@@ -78,7 +78,7 @@
 			<ResultBanner
 				headline={resultText(replay.end, variant.ruleset, replay.won)}
 				detail={`After ${moves(played)}.`}
-				winner={winner(replay.end)}
+				result={result(replay.end)}
 			/>
 		{/if}
 		{#if phone.current}

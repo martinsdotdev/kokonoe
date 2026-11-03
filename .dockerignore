@@ -1,0 +1,15 @@
+# What the image builds from: the sources, not what a checkout builds or keeps beside them.
+.git
+.github
+.scratch
+.remember
+reports
+research_notes
+target
+deploy
+web/node_modules
+web/build
+web/.svelte-kit
+web/test-results
+web/playwright-report
+web/src/lib/engine/*.wasm

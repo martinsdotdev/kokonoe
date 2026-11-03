@@ -1,0 +1,60 @@
+# Kokonoe on one server (KOK-51): the app, its Postgres, and Caddy in front of them for HTTPS. The
+# deploy job copies this folder to /opt/kokonoe. The .env there holds DOMAIN and
+# POSTGRES_PASSWORD, written once when the server was made, and IMAGE, which deploy.sh sets.
+name: kokonoe
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  app:
+    image: ${IMAGE:?deploy.sh sets IMAGE}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://kokonoe:${POSTGRES_PASSWORD:?}@db/kokonoe
+      ORIGIN: https://${DOMAIN:?}
+    depends_on:
+      db:
+        condition: service_healthy
+    # How long a deploy gives the server to close its sockets (spec §8) before it's killed.
+    stop_grace_period: 30s
+    logging: *logging
+
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kokonoe
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: kokonoe
+    volumes:
+      - db:/var/lib/postgresql
+    healthcheck:
+      test: [CMD, pg_isready, -U, kokonoe, -d, kokonoe]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443
+      - 443:443/udp
+    environment:
+      DOMAIN: ${DOMAIN:?}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    logging: *logging
+
+volumes:
+  db:
+  caddy-data:
+  caddy-config:

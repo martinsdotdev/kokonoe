@@ -8,7 +8,8 @@
 
 	With keyboard focus on the board, a Cell can be typed as its Notation digits (spec §7.7). One
 	live line, mounted for the whole game, says each move, where the next goes, and the result, and
-	in a timed Room this page's first-move window and its clock running low.
+	in a timed Room this page's first-move window and its clock running low. In a Room it says the
+	other player leaving and coming back, and the Claim once it's due.
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
@@ -17,12 +18,14 @@
 	import { MediaQuery } from 'svelte/reactivity';
 	import { announcement, turn } from './announce.js';
 	import Board from './Board.svelte';
+	import ClaimCard from './ClaimCard.svelte';
 	import { CUES, left } from './clock.js';
 	import GameControls from './GameControls.svelte';
 	import MoveList from './MoveList.svelte';
 	import OfferCard from './OfferCard.svelte';
-	import { offerText, type PendingOffer } from './offers.js';
+	import { offerText } from './offers.js';
 	import PlayerBar from './PlayerBar.svelte';
+	import { claimText } from './presence.js';
 	import ResultBanner from './ResultBanner.svelte';
 	import RulesCard from './RulesCard.svelte';
 	import Scoreboard from './Scoreboard.svelte';
@@ -32,7 +35,7 @@
 	import { moves, seconds } from './listing.js';
 	import { playedCount } from './moves.js';
 	import { notation } from './notation.js';
-	import { resultText, winner } from './result.js';
+	import { result, resultText } from './result.js';
 	import { counted } from './rules.js';
 	import type { GameSession } from './screen.js';
 	import TurnCard from './TurnCard.svelte';
@@ -70,7 +73,14 @@
 	const offer = $derived(session.offer);
 	const answer = (accept: boolean) => session.answer(accept);
 
-	/** A timed Room's clocks, and the time they're read at, which ticks while one runs. */
+	/** Since when each player has been away from the Room. */
+	const away = $derived(session.away);
+	const absent = $derived(away.X !== null || away.O !== null);
+
+	/**
+	 * A timed Room's clocks, and the time now, which ticks while one runs, a first move is awaited
+	 * or a player is away.
+	 */
 	const clocks = $derived(session.clocks);
 	/**
 	 * The first move the player to move must make before the game is aborted: by when, and how
@@ -83,11 +93,20 @@
 	);
 	let instant = $state(Date.now());
 	$effect(() => {
-		if (!clocks?.running && !firstMove) return;
+		if (!clocks?.running && !firstMove && !absent) return;
 		instant = Date.now();
 		const ticking = setInterval(() => (instant = Date.now()), 100);
 		return () => clearInterval(ticking);
 	});
+
+	/**
+	 * The Claim against a player who left, once it's due: a card by the controls, said once. The
+	 * same Claim from one tick to the next, so nothing that reads it changes every tick.
+	 */
+	const claim = $derived(session.claim);
+	const due = $derived(claim && instant >= claim.due ? claim : null);
+	/** What came of an offer or of the other player's presence, unless the Claim's card says it. */
+	const notice = $derived(due ? null : session.notice);
 
 	/** The seat this page plays, in a Room. */
 	const mine = $derived((['X', 'O'] as const).find((player) => session.seats[player].yours));
@@ -106,15 +125,17 @@
 	});
 
 	/**
-	 * What follows the move on the live line: this page's first-move window as it opens, then an
-	 * offer waiting or what came of this page's.
+	 * What follows the move on the live line: this page's first-move window as it opens, then a
+	 * Claim that's due, an offer waiting, and what came of this page's offer or of the other
+	 * player's presence.
 	 */
 	const after = $derived.by(() => {
 		const window =
 			firstMove && session.toMove === mine
 				? `You have ${inSeconds(firstMove.within)} to make your first move.`
 				: null;
-		return [window, offer ? offerText(offer) : session.notice].filter(Boolean).join(' ');
+		const claimed = due && claimText(due.other);
+		return [window, claimed, offer && offerText(offer), notice].filter(Boolean).join(' ');
 	});
 
 	/** This page's clock running low, said until anything else is: a change to either clears it. */
@@ -148,19 +169,24 @@
 
 	let heading: HTMLElement | undefined = $state();
 	/**
-	 * An offer's card goes once it's answered, lapses or is withdrawn, and takes focus with it if
-	 * it held it: focus goes to the game, as when the page swaps one view for another.
+	 * A card goes, an offer's once it's answered, lapses or is withdrawn, and a Claim's once it's
+	 * made or the other player is back, and takes focus with it if it held it: focus goes to the
+	 * game, as when the page swaps one view for another.
 	 */
-	let shown: PendingOffer | null = null;
-	$effect(() => {
-		const now = offer;
-		if (shown && !now) {
-			tick().then(() => {
-				if (document.activeElement === document.body) heading?.focus();
-			});
-		}
-		shown = now;
-	});
+	const refocusWhenGone = (shown: () => boolean) => {
+		let was = false;
+		$effect(() => {
+			const now = shown();
+			if (was && !now) {
+				tick().then(() => {
+					if (document.activeElement === document.body) heading?.focus();
+				});
+			}
+			was = now;
+		});
+	};
+	refocusWhenGone(() => offer !== null);
+	refocusWhenGone(() => due !== null);
 
 	/** The last move, then the result or where to play. */
 	const said = $derived.by(() => {
@@ -215,7 +241,7 @@
 			<ResultBanner
 				headline={resultText(session.end, variant.ruleset, session.won)}
 				detail={`After ${moves(played)}.`}
-				winner={winner(session.end)}
+				result={result(session.end)}
 				game={session.replay}
 				file={session.file}
 				onrestart={session.restart && (() => session.restart?.())}
@@ -292,12 +318,14 @@
 
 {#snippet players()}
 	{#each ['X', 'O'] as const as player (player)}
+		{@const since = away[player]}
 		<PlayerBar
 			{player}
 			seat={session.seats[player]}
 			toMove={!session.end && session.toMove === player}
 			doing={session.doing(player)}
 			clock={clocks && left(clocks, player, instant)}
+			away={since === null ? null : Math.max(0, instant - since)}
 		/>
 	{/each}
 	{#if session.trouble}
@@ -332,11 +360,14 @@
 {/snippet}
 
 {#snippet offers()}
+	{#if due}
+		<ClaimCard claim={due} />
+	{/if}
 	{#if offer && offer.kind !== 'Rematch'}
 		<OfferCard {offer} onanswer={answer} />
 	{/if}
-	{#if session.notice}
-		<p class="m-0 text-sm" data-notice>{session.notice}</p>
+	{#if notice}
+		<p class="m-0 text-sm" data-notice>{notice}</p>
 	{/if}
 {/snippet}
 

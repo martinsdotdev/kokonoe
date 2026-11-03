@@ -7,6 +7,7 @@ import type { ClockView } from './clock.js';
 import type { GameFile } from './gamefile.js';
 import type { Move, Seat } from './moves.js';
 import type { PendingOffer } from './offers.js';
+import type { Claim } from './presence.js';
 import type { Flash, Refusal } from './refusal.svelte.js';
 import type { End } from './result.js';
 import type { Variant } from './rules.js';
@@ -51,10 +52,20 @@ export interface GameSession {
 	readonly offer: PendingOffer | null;
 	/** Answers the other player's offer. */
 	answer(accept: boolean): void;
-	/** What came of this page's offer, when nothing else says. */
+	/**
+	 * What came of this page's offer, or that the other player left or came back, when nothing else
+	 * says.
+	 */
 	readonly notice: string | null;
 	/** A timed Room's clocks, or null for an untimed Room or a game on this device. */
 	readonly clocks: ClockView | null;
+	/**
+	 * Since when each player has been away from the Room, in `Date.now()`'s time: null while
+	 * they're here, for an empty seat, for this page's own player, and on this device.
+	 */
+	readonly away: Record<Player, number | null>;
+	/** The Claim this page may make against a player who left, while the game goes on. */
+	readonly claim: Claim | null;
 	/** Offers a Room's rematch, once its game is over. */
 	readonly rematch?: Action;
 	/** The Room this game's rematch made, to follow. */

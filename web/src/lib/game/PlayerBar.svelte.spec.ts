@@ -25,4 +25,19 @@ describe('a player’s bar', () => {
 		expect(clock(19_999)?.hasAttribute('data-low')).toBe(true);
 		expect(clock(0)?.textContent).toBe('0:00.0');
 	});
+
+	it('says how long a player has been away, in words for screen readers', async () => {
+		const other = { name: 'guest-1066', detail: null, yours: false };
+		const away = render(PlayerBar, { player: 'O', seat: other, toMove: false, away: 65_000 });
+		await expect.element(away.getByText('Away 1:05')).toBeVisible();
+		await expect.element(away.getByText('Away for 1 minute 5 seconds')).toHaveClass('sr-only');
+		expect(away.container.textContent, 'away, not waiting').not.toContain('Waiting');
+
+		const long = render(PlayerBar, { player: 'O', seat: other, toMove: true, away: 3_723_000 });
+		await expect.element(long.getByText('To move')).toBeVisible();
+		await expect.element(long.getByText('Away 1:02:03')).toBeVisible();
+
+		const here = render(PlayerBar, { player: 'O', seat: other, toMove: false });
+		expect(here.container.querySelector('[data-away]')).toBeNull();
+	});
 });

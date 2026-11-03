@@ -204,3 +204,33 @@ describe('a timed Room’s page', () => {
 		expect(spoken()).toMatch(/^X played/);
 	});
 });
+
+describe('a Room’s page with the other player away', () => {
+	const top = cells(TOP_ROW);
+
+	it('says they left, then the Claim once it’s due, then that they’re back', async () => {
+		const fake = sockets();
+		const screen = render(RoomScreen, {
+			room: ROOM,
+			options: { fetch: seated, open: fake.open, store: new FakeStore() }
+		});
+		await expect.poll(() => fake.opened.length).toBe(1);
+		fake.last().say(welcome('X', undefined, top.slice(0, 2)));
+		const spoken = () => document.querySelector('[data-spoken]')?.textContent ?? '';
+		await expect.poll(spoken).toMatch(/^O played/);
+
+		const away = { since: Date.now(), claims_in: 300 };
+		fake.last().say({ type: 'Presence', player: 'O', away });
+		await expect.poll(spoken).toMatch(/guest-1066 left the game\.$/);
+		const claim = 'guest-1066 left the game. You can claim the win or a draw, or keep waiting.';
+		await expect.poll(() => spoken().endsWith(claim), { timeout: 2_000 }).toBe(true);
+		expect(spoken().match(/left the game/g), 'said once').toHaveLength(1);
+		expect(document.querySelector('[data-notice]'), 'the card says it').toBeNull();
+
+		const win = screen.getByRole('button', { name: 'Claim the win' });
+		(win.element() as HTMLElement).focus();
+		fake.last().say({ type: 'Presence', player: 'O', away: null });
+		await expect.poll(spoken).toMatch(/guest-1066 is back\.$/);
+		await expect.poll(() => document.activeElement?.tagName).toBe('H1');
+	});
+});

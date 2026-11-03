@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadEngine, type ClientMsg, type Clocks } from '#lib/engine.js';
+import { loadEngine, type Away, type ClientMsg, type Clocks } from '#lib/engine.js';
 import { TOP_ROW, cells } from '#lib/game/games.fixtures.js';
 import { UnplayableGame } from '#lib/game/record.js';
 import { RoomGame } from './room.svelte.js';
@@ -9,17 +9,25 @@ beforeAll(() => loadEngine());
 
 const top = cells(TOP_ROW);
 
-/** A Room's game whose link the test watches. */
+/**
+ * A Room's game whose link the test watches: what it sent, and apart from that the time of each
+ * Ping, which every Welcome sends.
+ */
 const game = (...args: Parameters<typeof welcome>) => {
 	const sent: ClientMsg[] = [];
+	const pings: number[] = [];
 	const link = {
-		send: vi.fn((message: ClientMsg) => (sent.push(message), true)),
+		send: vi.fn((message: ClientMsg) => {
+			if (message.type === 'Ping') pings.push(message.t);
+			else sent.push(message);
+			return true;
+		}),
 		resync: vi.fn()
 	};
 	const store = new FakeStore();
 	const onrematch = vi.fn();
 	const room = new RoomGame(welcome(...args), link, { room: ROOM, store, onrematch });
-	return { room, sent, link, store, onrematch };
+	return { room, sent, pings, link, store, onrematch };
 };
 
 const NEXT = 'b'.repeat(20);
@@ -372,9 +380,9 @@ describe('a timed Room’s game', () => {
 	});
 
 	it('measures the server’s time with three Pings after each Welcome, keeping the quickest', () => {
-		const { room, sent } = timed();
+		const { room, pings } = timed();
 		const pong = (wait: number, server: number) => {
-			const { t } = sent.at(-1) as { t: number };
+			const t = pings.at(-1) ?? 0;
 			vi.advanceTimersByTime(wait);
 			room.receive({ type: 'Pong', t, server_ms: server });
 		};
@@ -386,20 +394,10 @@ describe('a timed Room’s game', () => {
 		expect(room.clocks?.at, 'over 300 ms, which is kept for nothing').toBe(T + 10);
 		room.receive({ type: 'Pong', t: Date.now() + 1_000, server_ms: T });
 		expect(room.clocks?.at, 'over a round trip this page’s clock ran back through').toBe(T + 10);
-		expect(sent).toEqual([
-			{ type: 'Ping', t: T },
-			{ type: 'Ping', t: T + 100 },
-			{ type: 'Ping', t: T + 140 }
-		]);
+		expect(pings).toEqual([T, T + 100, T + 140]);
 		room.welcome(welcome('X', undefined, [], { clock: '3+2', clocks: clocks() }));
-		expect(sent.at(-1), 'a Welcome measures it again').toEqual({ type: 'Ping', t: T + 440 });
+		expect(pings.at(-1), 'a Welcome measures it again').toBe(T + 440);
 		expect(room.clocks?.at, 'keeping what was measured').toBe(T + 10);
-	});
-
-	it('sends no Ping in an untimed Room', () => {
-		const { room, sent } = game('X');
-		expect(sent).toEqual([]);
-		expect([room.clock, room.clocks]).toEqual([null, null]);
 	});
 
 	it('takes the clocks from each move and takeback, and none from a move it has', () => {
@@ -436,5 +434,133 @@ describe('a timed Room’s game', () => {
 		vi.advanceTimersByTime(1_500);
 		room.receive({ type: 'Ended', result: '0-1', termination: 'resign' });
 		expect(room.clocks).toMatchObject({ ms: { X: 48_500, O: 180_000 }, running: null });
+	});
+});
+
+describe('a player away from the Room', () => {
+	/** This page's time when each test begins. */
+	const T = 1_793_600_000_000;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(T);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	const players = { X: 'guest-4821', O: 'guest-1066' };
+
+	/** Away `ago` ms before this page's now, by a server 5 s ahead, with `claimsIn` left to wait. */
+	const gone = (ago: number, claimsIn = 60_000): Away => ({
+		since: T + 5_000 - ago,
+		claims_in: claimsIn
+	});
+
+	/** A game this page plays as X, with O away as the Welcome says. */
+	const left = (away: Away) =>
+		game('X', players, top.slice(0, 2), { presence: { X: null, O: away } });
+
+	it('measures the server’s time in an untimed Room too, for how long a player has been away', () => {
+		const { room, pings } = left(gone(10_000));
+		expect(pings).toEqual([T]);
+		expect(room.clocks).toBeNull();
+		expect(room.away, 'the server’s time taken for the page’s').toEqual({ X: null, O: T - 5_000 });
+		vi.advanceTimersByTime(100);
+		room.receive({ type: 'Pong', t: T, server_ms: T + 5_050 });
+		expect(room.away.O, 'measured: 10 s before the Welcome').toBe(T - 10_000);
+	});
+
+	it('hears the other player leave and come back', () => {
+		const { room } = game('X', players);
+		room.receive({ type: 'Presence', player: 'O', away: gone(0) });
+		expect(room.away.O).not.toBeNull();
+		expect(room.notice).toBe('guest-1066 left the game.');
+		expect(room.claim).toMatchObject({ other: 'guest-1066', due: T + 60_000, enabled: true });
+		room.receive({ type: 'Presence', player: 'O', away: null });
+		expect(room.away.O).toBeNull();
+		expect(room.claim).toBeNull();
+		expect(room.notice).toBe('guest-1066 is back.');
+	});
+
+	it('says no one is back that it didn’t see leave, and nothing of its own seat', () => {
+		const { room } = game('X', players, [], { presence: { X: gone(0), O: null } });
+		expect(room.away.X, 'this page’s own seat').toBeNull();
+		room.receive({ type: 'Presence', player: 'O', away: null });
+		room.receive({ type: 'Presence', player: 'X', away: gone(0) });
+		expect(room.notice).toBeNull();
+		expect(room.away).toEqual({ X: null, O: null });
+		expect(room.claim).toBeNull();
+	});
+
+	it('claims the win once it’s due, only once, and ends without resyncing', async () => {
+		const { room, sent, link, store } = left(gone(0, 1_000));
+		room.claim?.run('Win');
+		expect(sent, 'not yet due').toEqual([]);
+		vi.advanceTimersByTime(1_000);
+		room.claim?.run('Win');
+		room.claim?.run('Win');
+		expect(sent).toEqual([{ type: 'Claim', as: 'Win' }]);
+		expect(room.claim?.enabled, 'waiting for the server').toBe(false);
+		room.receive({ type: 'Ended', result: '1-0', termination: 'claim' });
+		expect(room.end).toEqual({ claimed: 'X' });
+		expect(link.resync).not.toHaveBeenCalled();
+		expect(room.claim, 'once the game is over').toBeNull();
+		expect(room.away.O, 'no one is kept waiting once it’s over').toBeNull();
+		room.receive({ type: 'Presence', player: 'O', away: null });
+		room.receive({ type: 'Presence', player: 'O', away: gone(0) });
+		expect(room.notice, 'nothing said of it after the end').toBeNull();
+		await expect.poll(() => store.last?.result).toBe('O left the game. X claimed the win.');
+		expect(store.last).toMatchObject({ claimed: 'X' });
+		expect(room.file.end).toEqual({ claimed: 'X' });
+	});
+
+	it('claims a draw', async () => {
+		const { room, sent, store } = game('O', players, top.slice(0, 2), {
+			presence: { X: gone(65_000, 0), O: null }
+		});
+		room.claim?.run('Draw');
+		expect(sent).toEqual([{ type: 'Claim', as: 'Draw' }]);
+		room.receive({ type: 'Ended', result: '1/2-1/2', termination: 'claim' });
+		expect(room.end).toEqual({ claimedDraw: true });
+		await expect.poll(() => store.last?.result).toBe('Draw claimed');
+		expect(store.last).toMatchObject({ claimedDraw: true });
+	});
+
+	it('offers no Claim before both seats are filled, after the game, or while the connection is down', () => {
+		const presence = { X: null, O: gone(0, 0) };
+		const waiting = game('X', { X: 'guest-4821', O: null }, [], { presence });
+		expect(waiting.room.claim).toBeNull();
+		const end = { result: '1-0', termination: 'resign' } as const;
+		const over = game('X', players, top.slice(0, 2), { presence, end });
+		expect(over.room.claim).toBeNull();
+		const { room, sent } = left(gone(0, 0));
+		room.dropped();
+		expect(room.claim?.enabled).toBe(false);
+		room.claim?.run('Win');
+		expect(sent).toEqual([]);
+	});
+
+	it('resyncs when the server refuses a Claim, and may claim again after', () => {
+		const { room, link } = left(gone(0, 0));
+		room.claim?.run('Win');
+		room.receive({ type: 'Rejected', reason: 'NotAllowed' });
+		expect(link.resync).toHaveBeenCalled();
+		const presence = { X: null, O: gone(0, 0) };
+		room.welcome(welcome('X', players, top.slice(0, 2), { presence }));
+		expect(room.claim?.enabled).toBe(true);
+	});
+
+	it('ends a game both players left as abandoned, as a Welcome says', async () => {
+		const { room, store } = game('X', players, top.slice(0, 2));
+		await expect.poll(() => store.last?.result).toBeNull();
+		const end = { result: null, termination: 'abandoned' } as const;
+		room.welcome(welcome('X', players, top.slice(0, 2), { end }));
+		expect(room.end).toEqual({ abandoned: true });
+		await expect.poll(() => store.last?.result).toBe('Game abandoned');
+		expect(store.last).toMatchObject({ abandoned: true, toMove: null });
+		expect(room.file.end).toEqual({ abandoned: true });
+		expect(room.rematch.enabled, 'both may still play again').toBe(true);
 	});
 });

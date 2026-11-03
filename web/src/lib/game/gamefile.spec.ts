@@ -105,11 +105,17 @@ describe('the Result and Termination', () => {
 			[{ outcome: { MostWon: 'X' } }, rules({ fallback: 'MostWon' }), '1-0', 'count'],
 			[{ outcome: 'Draw' }, rules({ fallback: 'MostWon' }), '1/2-1/2', 'count'],
 			[{ outcome: 'Draw' }, STANDARD, '1/2-1/2', 'decided'],
-			[{ resigned: 'X' }, STANDARD, '0-1', 'resign']
+			[{ resigned: 'X' }, STANDARD, '0-1', 'resign'],
+			[{ flagged: 'O' }, STANDARD, '1-0', 'timeout']
 		];
 		for (const [end, ruleset, said, how] of cases) {
 			expect([result(end), termination(end, ruleset)]).toEqual([said, how]);
 		}
+	});
+
+	it('names a timed Room’s control, and an untimed game’s as `-`', () => {
+		expect(writeUtt({ ...topRow, clock: '5+3' })).toContain('\n[TimeControl "5+3"]\n');
+		expect(writeUtt({ ...topRow, clock: null })).toContain('\n[TimeControl "-"]\n');
 	});
 });
 

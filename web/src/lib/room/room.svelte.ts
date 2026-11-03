@@ -3,6 +3,7 @@ import {
 	Game,
 	type Cell,
 	type ClientMsg,
+	type Clocks,
 	type Draws,
 	type GameEnd,
 	type Offer,
@@ -11,8 +12,10 @@ import {
 	type Players,
 	type Record as GameRecord,
 	type ServerMsg,
-	type Status
+	type Status,
+	type TimeControl
 } from '#lib/engine.js';
+import { left, type ClockView } from '#lib/game/clock.js';
 import type { GameFile } from '#lib/game/gamefile.js';
 import { dayOf } from '#lib/game/listing.js';
 import { againstLabel, type RoomOpponent } from '#lib/game/launch.js';
@@ -64,6 +67,12 @@ const waiting = ({ kind, by, lapses_in }: Offer): Waiting => ({
 	lapses: lapses_in === null ? null : Date.now() + lapses_in
 });
 
+/**
+ * How many `Ping`s a timed Room's page sends after each `Welcome`, each after the last one's
+ * `Pong`. The shortest round trip measures the server's time best.
+ */
+const PINGS = 3;
+
 /** What a page sends to make an offer of each kind, and to answer one. */
 const OFFER = { Draw: 'OfferDraw', Takeback: 'AskTakeback', Rematch: 'OfferRematch' } as const;
 const ANSWER = {
@@ -101,6 +110,10 @@ const replay = (record: GameRecord): { game: Game; moves: Move[] } => {
  * The Room's policies are the server's (spec §10.2): this page sends a resignation, an offer or an
  * answer, and shows what the server says came of it. Its own offer shows at once, since a refusal
  * resyncs.
+ *
+ * A timed Room's clocks (spec §11) come with every `Welcome`, `Moved` and `TookBack`, stamped in
+ * the server's Unix milliseconds, which a few `Ping`s after each `Welcome` measure against the
+ * page's (spec §10.3).
  */
 export class RoomGame implements GameSession {
 	readonly variant: Variant;
@@ -115,6 +128,16 @@ export class RoomGame implements GameSession {
 	replied = $state.raw(false);
 	/** This page's offer came to nothing: the other player declined it, or let it lapse. */
 	notice: string | null = $state.raw(null);
+	/** A timed Room's time control, or null for an untimed one. */
+	readonly clock: TimeControl | null;
+	/** A timed Room's clocks, in the server's time. */
+	#clocks: Clocks | null = $state.raw(null);
+	/** The server's clock less the page's, in milliseconds. */
+	#offset = $state.raw(0);
+	/** The round trip `#offset` was measured over: none yet, until a `Pong`. */
+	#rtt = Infinity;
+	/** How many `Pong`s came since the last `Welcome`. */
+	#pongs = 0;
 	#takebacks = $state.raw(false);
 	#draws: Draws = $state.raw({ X: 0, O: 0 });
 	#offer: Waiting | null = $state.raw(null);
@@ -142,6 +165,7 @@ export class RoomGame implements GameSession {
 		this.#room = options.room;
 		this.#store = options.store ?? browserStore;
 		this.#onrematch = options.onrematch;
+		this.clock = welcome.snapshot.clock;
 		this.#started = options.saved?.started ?? Date.now();
 		this.#kept = options.saved ? kept(options.saved) : null;
 		this.#stored = options.saved !== undefined;
@@ -180,11 +204,11 @@ export class RoomGame implements GameSession {
 		this.#connected = false;
 	}
 
-	/** What the server said, other than a `Welcome`. */
-	receive(message: Exclude<ServerMsg, Welcome>) {
+	/** What the server said, other than a `Welcome`, or an `Aborted`, which ends the visit. */
+	receive(message: Exclude<ServerMsg, { type: 'Welcome' | 'Aborted' }>) {
 		switch (message.type) {
 			case 'Moved':
-				return this.#moved(message.ply, message.cell);
+				return this.#moved(message.ply, message.cell, message.clocks);
 			case 'Rejected':
 				// The page's engine allowed what the server's refused: they disagree.
 				return this.#resync();
@@ -195,7 +219,9 @@ export class RoomGame implements GameSession {
 			case 'OfferAnswered':
 				return this.#answered(message.kind, message.accepted);
 			case 'TookBack':
-				return this.#tookBack(message.to_ply);
+				return this.#tookBack(message.to_ply, message.clocks);
+			case 'Pong':
+				return this.#pong(message.t, message.server_ms);
 			case 'RematchRoom':
 				this.#rematch = message.room;
 				this.#onrematch?.(message.room);
@@ -204,6 +230,20 @@ export class RoomGame implements GameSession {
 
 	get connected(): boolean {
 		return this.#connected;
+	}
+
+	/** A timed Room's clocks, in this page's time. */
+	get clocks(): ClockView | null {
+		const clocks = this.#clocks;
+		const offset = this.#offset;
+		return (
+			clocks && {
+				ms: { X: clocks.x_ms, O: clocks.o_ms },
+				running: clocks.running,
+				at: clocks.at - offset,
+				aborts: clocks.aborts_at === null ? null : clocks.aborts_at - offset
+			}
+		);
 	}
 
 	/** The move sent and not yet heard back, which the board waits for. */
@@ -318,7 +358,8 @@ export class RoomGame implements GameSession {
 			seats: this.seats,
 			date: dayOf(this.#started),
 			opening: this.#game.opening(),
-			end: this.end
+			end: this.end,
+			clock: this.clock
 		});
 	}
 
@@ -340,7 +381,7 @@ export class RoomGame implements GameSession {
 		this.#game.free();
 	}
 
-	#moved(ply: number, cell: Cell) {
+	#moved(ply: number, cell: Cell, clocks: Clocks | null) {
 		const at = this.#game.ply();
 		if (ply < at) return;
 		if (ply > at) return this.#resync();
@@ -349,6 +390,7 @@ export class RoomGame implements GameSession {
 		const result = this.#game.play(at, cell);
 		if (typeof result === 'string' || !('Now' in result)) return this.#resync();
 		this.#pending = null;
+		this.#clocks = clocks;
 		// The server withdraws a takeback with any move, and a draw offer with its player's, saying
 		// so after the move: dropped here, the offer's `OfferAnswered` doesn't read as declined.
 		const offer = this.#offer;
@@ -376,6 +418,7 @@ export class RoomGame implements GameSession {
 	#ended(end: GameEnd) {
 		this.#settle();
 		const stopped = stoppedFrom(end.result, end.termination);
+		this.#halt(stopped && 'flagged' in stopped ? stopped.flagged : null);
 		if (!stopped) {
 			// The rules' end, which the engine must have reached too.
 			if (result(this.end) !== end.result) this.#resync();
@@ -407,13 +450,27 @@ export class RoomGame implements GameSession {
 		if (!accepted && offer.by === this.you) this.notice = unansweredText(kind, this.#other);
 	}
 
+	/**
+	 * The clocks stop as the game ends, where they stand, a player who ran out of time at 0. A
+	 * `Welcome` after it says each player's time as their last move left it.
+	 */
+	#halt(flagged: Player | null) {
+		const clocks = this.clocks;
+		if (!clocks) return;
+		const now = Date.now();
+		const ms = (player: Player) => (player === flagged ? 0 : left(clocks, player, now));
+		const at = clocks.at + this.#offset;
+		this.#clocks = { x_ms: ms('X'), o_ms: ms('O'), running: null, at, aborts_at: null };
+	}
+
 	/** Both players agreed to take the game back to before ply `to`. */
-	#tookBack(to: number) {
+	#tookBack(to: number, clocks: Clocks | null) {
 		this.#settle();
 		if (to > this.#game.ply()) return this.#resync();
 		while (this.#game.ply() > to) {
 			if (this.#game.undo() === undefined) return this.#resync();
 		}
+		this.#clocks = clocks;
 		this.moves = this.moves.slice(0, to);
 		this.#pending = null;
 		this.#refresh();
@@ -441,6 +498,30 @@ export class RoomGame implements GameSession {
 		this.#stopped = snapshot.end && stoppedFrom(snapshot.end.result, snapshot.end.termination);
 		this.#rematch = snapshot.rematch;
 		this.notice = null;
+		this.#clocks = snapshot.clocks;
+		if (!snapshot.clocks) return;
+		// Until a `Pong` measures it, the time the clocks were read stands for the server's now.
+		if (this.#rtt === Infinity) this.#offset = snapshot.clocks.at - Date.now();
+		this.#pongs = 0;
+		this.#ping();
+	}
+
+	/**
+	 * The server's answer to this page's `Ping` at `t`. Its time is taken as halfway through the
+	 * round trip, which is closest over the shortest round trip, so only a shorter one is kept.
+	 */
+	#pong(t: number, server: number) {
+		const rtt = Date.now() - t;
+		if (rtt >= 0 && rtt < this.#rtt) {
+			this.#rtt = rtt;
+			this.#offset = server - t - rtt / 2;
+		}
+		if (++this.#pongs < PINGS) this.#ping();
+	}
+
+	/** Asks the server its time. */
+	#ping() {
+		this.#link.send({ type: 'Ping', t: Date.now() });
 	}
 
 	/** The Room as a saved game's opponent, naming an empty seat `empty`. */
@@ -471,7 +552,8 @@ export class RoomGame implements GameSession {
 			view: this.view,
 			toMove: this.toMove,
 			end: this.end,
-			won: this.won
+			won: this.won,
+			clock: this.clock
 		});
 		const holds = kept(saved);
 		if (holds === this.#kept) return;

@@ -24,6 +24,11 @@ export type Phase =
 	| { kind: 'connecting' }
 	/** Welcomed: waiting for the other player, playing, or reconnecting. */
 	| { kind: 'playing'; game: RoomGame }
+	/**
+	 * Nobody made a first move in time, and the server forgot the game: `late` didn't, "You" or the
+	 * other player's Handle, or null when this page didn't see the abort.
+	 */
+	| { kind: 'aborted'; late: string | null }
 	/** The server plays a newer build, which couldn't be installed. */
 	| { kind: 'update' }
 	| { kind: 'problem'; message: string };
@@ -48,6 +53,7 @@ export class RoomVisit {
 	phase: Phase = $state.raw({ kind: 'loading' });
 	readonly room: string;
 	#options: VisitOptions;
+	#store: ReadingStore;
 	#window: Window;
 	#link: Link | null = null;
 	#game: RoomGame | null = null;
@@ -61,10 +67,11 @@ export class RoomVisit {
 		this.room = room;
 		this.#options = options;
 		this.#window = options.window ?? window;
+		this.#store = options.store ?? browserStore;
 		this.#window.addEventListener('online', this.#online);
 		// A store that never answers, such as one waiting on an older tab, mustn't keep the Room shut.
 		const unread = new Promise<undefined>((resolve) => setTimeout(resolve, SAVED_MS));
-		const saved = (options.store ?? browserStore).load(room).catch(() => undefined);
+		const saved = this.#store.load(room).catch(() => undefined);
 		this.#saved = Promise.race([saved, unread]);
 		this.#start();
 	}
@@ -98,7 +105,7 @@ export class RoomVisit {
 		const card = me && (await roomCard(this.room, fetch));
 		if (this.#disposed) return;
 		if (card === undefined) this.phase = { kind: 'offline', saved: await this.#saved };
-		else if (card === 'missing') this.phase = { kind: 'missing' };
+		else if (card === 'missing') await this.#missing();
 		else if (card.you) this.#connect();
 		else if (full(card.players)) this.phase = { kind: 'full', players: card.players };
 		else this.phase = { kind: 'join', card };
@@ -127,13 +134,14 @@ export class RoomVisit {
 	#heard(message: ServerMsg) {
 		const link = this.#link;
 		if (!link) return;
+		if (message.type === 'Aborted') return this.#aborted(this.#late());
 		if (message.type !== 'Welcome') return this.#game?.receive(message);
 		try {
 			if (this.#game) this.#game.welcome(message);
 			else {
 				const options = {
 					room: this.room,
-					store: this.#options.store,
+					store: this.#store,
 					saved: this.#kept,
 					onrematch: this.#options.follow
 				};
@@ -152,7 +160,7 @@ export class RoomVisit {
 
 	async #ended(code: number) {
 		this.#game?.dropped();
-		if (code === CloseCode.NoRoom) this.phase = { kind: 'missing' };
+		if (code === CloseCode.NoRoom) await this.#missing();
 		else if (code === CloseCode.UpdateRequired) await this.#update();
 		else await this.#refused();
 	}
@@ -175,6 +183,39 @@ export class RoomVisit {
 			card && card !== 'missing' && !card.you && full(card.players)
 				? { kind: 'full', players: card.players }
 				: { kind: 'problem', message: 'Kokonoe’s server didn’t let this page into the game.' };
+	}
+
+	/**
+	 * There's no such Room. Only an abort deletes one, so a game this page played and didn't see
+	 * finish was aborted while it wasn't looking.
+	 */
+	async #missing() {
+		const game = this.#game;
+		const unfinished = game ? !game.end : (await this.#saved)?.result === null;
+		if (this.#disposed) return;
+		if (unfinished) this.#aborted(null);
+		else this.phase = { kind: 'missing' };
+	}
+
+	/** Who didn't make their first move: whoever was to move when the game aborted. */
+	#late(): string | null {
+		const game = this.#game;
+		const player = game?.toMove;
+		if (!game || !player) return null;
+		return player === game.you ? 'You' : game.players[player];
+	}
+
+	/**
+	 * The game was aborted and the server has forgotten it. The socket goes first, before the
+	 * server's close can reconnect into its 4004, and this page's copy goes too, so Home doesn't
+	 * offer it again.
+	 */
+	#aborted(late: string | null) {
+		this.#link?.dispose();
+		this.#store
+			.delete(this.room)
+			.catch((error: unknown) => console.error('The aborted game couldn’t be deleted.', error));
+		this.phase = { kind: 'aborted', late };
 	}
 
 	#online = () => this.retry();

@@ -1,10 +1,19 @@
 /**
  * A Room's server, faked for the e2e tests: the session, the Room's routes, and its socket, which
- * answers each `Hello` with a `Welcome` and keeps everything the page sends. Every Room id gets
- * the same card and `Welcome`, so a test changes the `FakeRoom` before the page follows a rematch.
+ * answers each `Hello` with a `Welcome` and each `Ping` with a `Pong`, and keeps everything else
+ * the page sends. Every Room id gets the same card and `Welcome`, so a test changes the `FakeRoom`
+ * before the page follows a rematch.
  */
 import type { Page, WebSocketRoute } from '@playwright/test';
-import type { ClientMsg, NewRoom, Players, RoomCard, ServerMsg, Snapshot } from '../lib/engine.js';
+import type {
+	ClientMsg,
+	Clocks,
+	NewRoom,
+	Players,
+	RoomCard,
+	ServerMsg,
+	Snapshot
+} from '../lib/engine.js';
 import { SHELF } from '../lib/game/shelf.js';
 
 export const ROOM = '6f1c0a9b3e2d4c5a7b8e';
@@ -13,6 +22,16 @@ export const NEXT = 'b'.repeat(20);
 
 export const HOST = 'guest-4821';
 export const JOINER = 'guest-1066';
+
+/** A timed Room's clocks as the server reads them now: both at 3+2's bank, until edited. */
+export const clocksNow = (edit: Partial<Clocks> = {}): Clocks => ({
+	x_ms: 180_000,
+	o_ms: 180_000,
+	running: null,
+	at: Date.now(),
+	aborts_at: null,
+	...edit
+});
 
 export interface FakeRoom {
 	/** The page's seat, its Room's players, and the moves the Room holds: what a Welcome says. */
@@ -70,6 +89,10 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 		sockets.push(socket);
 		socket.onMessage((data) => {
 			const message: ClientMsg = JSON.parse(String(data));
+			if (message.type === 'Ping') {
+				const pong = { type: 'Pong', t: message.t, server_ms: Date.now() };
+				return socket.send(JSON.stringify(pong));
+			}
 			said.push(message);
 			if (message.type === 'Hello') socket.send(JSON.stringify(welcome()));
 		});
@@ -92,10 +115,10 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 				room.players.X === null ? { ...room.players, X: handle } : { ...room.players, O: handle };
 			last().send(JSON.stringify(welcome()));
 		},
-		/** A move the Room accepts, told on the newest socket. */
-		moved: (ply: number, cell: number) => {
+		/** A move the Room accepts, told on the newest socket, with a timed Room's clocks after it. */
+		moved: (ply: number, cell: number, clocks: Clocks | null = null) => {
 			room.moves = [...room.moves, cell];
-			last().send(JSON.stringify({ type: 'Moved', ply, cell, clocks: null }));
+			last().send(JSON.stringify({ type: 'Moved', ply, cell, clocks }));
 		},
 		close: (code: number) => last().close({ code }),
 		sockets

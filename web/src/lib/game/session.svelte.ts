@@ -200,10 +200,11 @@ export class OfflineGame implements GameSession {
 		return this.stored ? this.id : undefined;
 	}
 
-	/** Offers are a Room's. */
+	/** Offers and clocks are a Room's. */
 	readonly offer = null;
 	readonly notice = null;
 	readonly rematchRoom = null;
+	readonly clocks = null;
 	answer() {}
 
 	/** Undo and Resign are the game's own. */

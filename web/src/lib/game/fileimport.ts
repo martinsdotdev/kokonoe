@@ -8,11 +8,18 @@ import { playerAt } from './moves.js';
 import { notation } from './notation.js';
 import { endOf, result, resultText, stoppedFrom, type Stopped } from './result.js';
 
+/** What each Termination that stops a game says happened, for a refusal to quote. */
+const STOPS: Record<string, string> = {
+	resign: 'a player resigned',
+	'agreed draw': 'the players agreed a draw',
+	timeout: 'a player ran out of time'
+};
+
 /**
  * Checks a game file with the engine, and with the tags it has: every move legal, the plies it
  * writes as dealt the ones its Seed deals, and its Result how the moves end. Returns how it
- * stopped, a resignation or an agreed draw, which only a `.utt` file's tags can say. Throws a
- * FileProblem.
+ * stopped, a resignation, an agreed draw or a loss on time, which only a `.utt` file's tags can
+ * say. Throws a FileProblem.
  */
 export const openFile = (parsed: ParsedFile): { stopped: Stopped | null } => {
 	const { record, tags } = parsed;
@@ -39,15 +46,13 @@ export const openFile = (parsed: ParsedFile): { stopped: Stopped | null } => {
 		const status = game.status();
 		const said = tags.get('Result');
 		const termination = tags.get('Termination');
-		if (termination === 'resign' && 'Over' in status) {
-			throw new FileProblem('It says a player resigned after the game ended.');
-		}
-		if (termination === 'agreed draw' && 'Over' in status) {
-			throw new FileProblem('It says the players agreed a draw after the game ended.');
+		const stop = termination === undefined ? undefined : STOPS[termination];
+		if (stop && 'Over' in status) {
+			throw new FileProblem(`It says ${stop} after the game ended.`);
 		}
 		const stopped = stoppedFrom(said, termination);
-		if (termination === 'resign' && !stopped) {
-			throw new FileProblem('It says a player resigned, but its Result names no winner.');
+		if (stop && !stopped) {
+			throw new FileProblem(`It says ${stop}, but its Result names no winner.`);
 		}
 		const end = endOf(stopped, status);
 		if (said !== undefined && said !== result(end)) {

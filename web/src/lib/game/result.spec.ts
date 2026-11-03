@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Ruleset } from '#lib/engine.js';
-import { resultText, winner } from './result.js';
+import { resultText, stoppedFrom, winner } from './result.js';
 
 const STANDARD: Ruleset = {
 	depth: 2,
@@ -31,5 +31,26 @@ describe('the result in words', () => {
 		expect(resultText({ resigned: 'X' }, STANDARD, { X: 0, O: 0 })).toBe('X resigned. O wins.');
 		expect(winner({ resigned: 'X' })).toBe('O');
 		expect(winner({ outcome: 'Draw' })).toBeNull();
+	});
+
+	it('names a loss on time and its winner', () => {
+		expect(resultText({ flagged: 'X' }, STANDARD, { X: 0, O: 0 })).toBe(
+			'X ran out of time. O wins.'
+		);
+		expect(winner({ flagged: 'O' })).toBe('X');
+	});
+});
+
+describe('a stop, from its Result and Termination', () => {
+	it('reads a resignation, an agreed draw and a loss on time', () => {
+		expect(stoppedFrom('0-1', 'resign')).toEqual({ resigned: 'X' });
+		expect(stoppedFrom('1-0', 'timeout')).toEqual({ flagged: 'O' });
+		expect(stoppedFrom('1/2-1/2', 'agreed draw')).toEqual({ agreed: true });
+	});
+
+	it('reads no stop from the rules’ ends, or from one that names no winner', () => {
+		expect(stoppedFrom('1-0', 'line')).toBeNull();
+		expect(stoppedFrom('1/2-1/2', 'timeout')).toBeNull();
+		expect(stoppedFrom('*', 'resign')).toBeNull();
 	});
 });

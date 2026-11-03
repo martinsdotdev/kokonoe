@@ -8,7 +8,8 @@ import {
 	type ServerMsg,
 	type Termination
 } from '#lib/engine.js';
-import { field, isClock, isPlayer, isRoomId, readPlayers } from './api.js';
+import { isClock } from '#lib/game/rules.js';
+import { field, isPlayer, isRoomId, readPlayers } from './api.js';
 
 /** The `Hello` that opens every socket, naming this build. Needs the engine loaded. */
 export const hello = (room: string): ClientMsg => ({
@@ -73,6 +74,10 @@ export const readServerMsg = (data: unknown): ServerMsg | null => {
 				return count(field(body, 'to_ply')) && nullOr(isClocks, field(body, 'clocks'));
 			case 'RematchRoom':
 				return isRoomId(field(body, 'room'));
+			case 'Aborted':
+				return field(body, 'reason') === 'FirstMoveTimeout';
+			case 'Pong':
+				return count(field(body, 't')) && count(field(body, 'server_ms'));
 			default:
 				return false;
 		}

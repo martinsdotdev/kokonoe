@@ -8,7 +8,7 @@ import { parseNotation } from './notation.js';
 import { Problem } from './problem.js';
 import type { ReplaySource } from './replay.svelte.js';
 import type { Stopped } from './result.js';
-import { rulesetCode } from './rules.js';
+import { isClock, rulesetCode } from './rules.js';
 import { presetByCode } from './shelf.js';
 
 /** A file Kokonoe can't read, with what's wrong in words for the player. */
@@ -131,12 +131,15 @@ export const fromFile = (
 		detail: null
 	});
 	const date = parsed.tags.get('Date') ?? '';
+	const clock = parsed.tags.get('TimeControl');
 	return {
 		record: parsed.record,
 		variant,
 		seats: { X: seat('X', 'Player 1'), O: seat('O', 'Player 2') },
 		against: 'Imported',
 		stopped,
-		date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ''
+		date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '',
+		// A control Kokonoe doesn't offer is left out, as `-` is: it changes nothing on the board.
+		clock: isClock(clock) ? clock : null
 	};
 };

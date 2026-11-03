@@ -3,7 +3,7 @@
  * Notation, and the Record as JSON, written here without the engine. `fileparse.ts` reads them
  * back, in a module of its own, so the game screen doesn't load the reader.
  */
-import type { Cell, Player, Record as GameRecord, Ruleset } from '#lib/engine.js';
+import type { Cell, Player, Record as GameRecord, Ruleset, TimeControl } from '#lib/engine.js';
 import { notation } from './notation.js';
 import { result, type End } from './result.js';
 import { rulesetCode } from './rules.js';
@@ -22,6 +22,8 @@ export interface GameFile {
 	opening: Cell[];
 	/** How it ended, or null while it goes on. */
 	end: End | null;
+	/** A timed Room's time control; untimed when absent. */
+	clock?: TimeControl | null;
 }
 
 /** The tags of a `.utt` file, in the order it writes them. */
@@ -43,6 +45,7 @@ export const termination = (end: End | null, rules: Ruleset): string => {
 	if (end === null) return '-';
 	if ('agreed' in end) return 'agreed draw';
 	if ('resigned' in end) return 'resign';
+	if ('flagged' in end) return 'timeout';
 	const { outcome } = end;
 	if (outcome === 'Draw') return rules.fallback === 'MostWon' ? 'count' : 'decided';
 	return 'Objective' in outcome && rules.objective === 'Line' ? 'line' : 'count';
@@ -83,7 +86,7 @@ export const writeUtt = (game: GameFile): string => {
 		X: game.seats.X,
 		O: game.seats.O,
 		Date: game.date || '-',
-		TimeControl: '-',
+		TimeControl: game.clock ?? '-',
 		Result: result(game.end),
 		Termination: termination(game.end, record.ruleset)
 	};

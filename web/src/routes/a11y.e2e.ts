@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { INTO_A_WON_BOARD, TOP_ROW, cells } from '../lib/game/games.fixtures.js';
-import { HOST, JOINER, ROOM, fakeRoom } from './room.fixtures.js';
+import { HOST, JOINER, ROOM, clocksNow, fakeRoom } from './room.fixtures.js';
 import { focusBoard, play, typeMoves } from './steps.js';
 
 /** WCAG 2.2 AA (spec §7.7), with the A and AA rules of every version before it. */
@@ -138,6 +138,37 @@ for (const colorScheme of ['light', 'dark'] as const) {
 			await page.goto(`/r/${ROOM}`);
 			await expect(page.getByRole('link', { name: 'Play the rematch' })).toBeVisible();
 			await scan(page, 'the rematch made');
+		});
+
+		test('a timed Room: its clocks running low, a loss on time, and an abort', async ({ page }) => {
+			const top = cells(TOP_ROW);
+			const players = { X: HOST, O: JOINER };
+			const room = await fakeRoom(page, {
+				you: 'X',
+				players,
+				moves: top.slice(0, 2),
+				snapshot: { clock: '3+2', clocks: clocksNow({ x_ms: 15_000, o_ms: 12_000, running: 'X' }) }
+			});
+			await page.goto(`/r/${ROOM}`);
+			await expect(page.locator('[data-low]')).toHaveCount(2);
+			await scan(page, 'the clocks running low');
+			room.say({ type: 'Ended', result: '0-1', termination: 'timeout' });
+			await expect(page.getByRole('heading', { name: 'X ran out of time. O wins.' })).toBeVisible();
+			await scan(page, 'a loss on time');
+
+			await page.unrouteAll();
+			const aborting = await fakeRoom(page, {
+				you: 'X',
+				players,
+				moves: [],
+				snapshot: { clock: '3+2', clocks: clocksNow({ aborts_at: Date.now() + 30_000 }) }
+			});
+			await page.goto(`/r/${ROOM}`);
+			await expect(page.locator('[data-aborts]')).toBeVisible();
+			await scan(page, 'a first move awaited');
+			aborting.say({ type: 'Aborted', reason: 'FirstMoveTimeout' });
+			await expect(page.getByRole('heading', { name: 'Game aborted' })).toBeVisible();
+			await scan(page, 'the game aborted');
 		});
 
 		test('the game screen in Deep', async ({ page }) => {

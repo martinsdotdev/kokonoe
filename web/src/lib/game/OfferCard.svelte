@@ -3,6 +3,7 @@
 	or that it waits for the one who made it, and how long a takeback has left.
 -->
 <script lang="ts">
+	import { seconds } from './listing.js';
 	import { offerText, type PendingOffer } from './offers.js';
 
 	interface Props {
@@ -34,7 +35,7 @@
 	<p class="m-0 font-semibold">{offerText(offer)}</p>
 	{#if left !== null}
 		<p class="m-0 text-sm text-muted-foreground" data-left>
-			{left === 1 ? '1 second' : `${left} seconds`} left to answer
+			{seconds(left)} left to answer
 		</p>
 	{/if}
 	{#if !offer.mine && onanswer}

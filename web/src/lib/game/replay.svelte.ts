@@ -4,7 +4,7 @@
  * so a step only picks one, and no engine Game is held while the page shows them. The game
  * comes from this device's saved games or from an imported file.
  */
-import type { Cell, Game, Player, Record as GameRecord, Status } from '#lib/engine.js';
+import type { Cell, Game, Player, Record as GameRecord, Status, TimeControl } from '#lib/engine.js';
 import type { GameFile } from './gamefile.js';
 import { againstLabel } from './launch.js';
 import { dayOf } from './listing.js';
@@ -36,6 +36,8 @@ export interface ReplaySource {
 	stopped: Stopped | null;
 	/** The day it began, `2026-10-28`, or '' when no one knows. */
 	date: string;
+	/** A timed Room's time control. Absent from what an older build kept in a page's history. */
+	clock?: TimeControl | null;
 }
 
 /** A game saved on this device, to replay. */
@@ -45,7 +47,8 @@ export const fromSaved = (saved: SavedGame): ReplaySource => ({
 	seats: seats(saved.opponent),
 	against: againstLabel(saved.opponent),
 	stopped: stoppedOf(saved),
-	date: dayOf(saved.started)
+	date: dayOf(saved.started),
+	clock: saved.clock ?? null
 });
 
 export class Replay {
@@ -123,7 +126,8 @@ export class Replay {
 			seats: this.seats,
 			date: this.source.date,
 			opening: this.opening,
-			end: this.end
+			end: this.end,
+			clock: this.source.clock
 		});
 	}
 

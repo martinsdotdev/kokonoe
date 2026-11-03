@@ -7,11 +7,11 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import type { Player } from '#lib/engine.js';
+	import type { Player, TimeControl } from '#lib/engine.js';
 	import { startSession } from '#lib/account.js';
 	import Brand from '#lib/components/Brand.svelte';
 	import { DEFAULT_LEVEL, LEVELS, playQuery, type Level, type Opponent } from '#lib/game/launch.js';
-	import { describeRules, rulesetCode } from '#lib/game/rules.js';
+	import { describeRules, rulesetCode, TIME_CONTROLS } from '#lib/game/rules.js';
 	import { SHELF, presetByCode } from '#lib/game/shelf.js';
 	import { createRoom } from '#lib/room/api.js';
 
@@ -51,6 +51,13 @@
 	const seat = $derived(seats[seatOf]);
 	/** An invite Room lets its players take back a move, off unless chosen (spec §10.2). */
 	let takebacks = $state(false);
+	/** An invite Room's time control, untimed unless chosen (spec §10.1). */
+	let clock: TimeControl | null = $state(null);
+	/** "3 minutes each, plus 2 seconds a move". */
+	const controlText = (control: TimeControl) => {
+		const [minutes, seconds] = control.split('+');
+		return `${minutes} minutes each, plus ${seconds} seconds a move`;
+	};
 	let chosen = $state(prefill?.name ?? 'Standard');
 	/** An invite Room is being made, or why it couldn't be. */
 	let creating = $state(false);
@@ -74,7 +81,10 @@
 				]),
 		...(kind === 'friend'
 			? [
-					{ label: 'Game', value: 'Casual, untimed' },
+					{
+						label: 'Game',
+						value: clock ? `Casual, ${clock}: ${controlText(clock)}` : 'Casual, untimed'
+					},
 					{
 						label: 'Takebacks',
 						value: takebacks ? 'Allowed, if the other player agrees' : 'Not allowed'
@@ -91,7 +101,7 @@
 		failure = null;
 		const room =
 			(await startSession()) &&
-			(await createRoom({ rules: rulesetCode(preset.ruleset), seat, takebacks, clock: null }));
+			(await createRoom({ rules: rulesetCode(preset.ruleset), seat, takebacks, clock }));
 		// Still creating while the page goes to the Room, so a second press makes no second Room.
 		if (room) return goto(resolve('/r/[room]', { room }));
 		creating = false;
@@ -191,6 +201,26 @@
 								<input type="checkbox" bind:checked={takebacks} class="size-5 accent-foreground" />
 								Allow takebacks
 							</label>
+							<fieldset class="m-0 flex flex-wrap items-center gap-2 border-0 p-0">
+								<legend class="float-left mr-3 p-0 text-sm font-medium">
+									Clock<span class="sr-only">: minutes each, plus seconds a move</span>
+								</legend>
+								{#each [null, ...TIME_CONTROLS] as option (option ?? 'untimed')}
+									<label
+										class="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-md border-[1.5px] border-pencil px-3 has-checked:border-foreground has-checked:bg-card"
+									>
+										<input
+											type="radio"
+											name="clock"
+											value={option ?? 'untimed'}
+											checked={clock === option}
+											onchange={() => (clock = option)}
+											class="accent-foreground"
+										/>
+										{option ?? 'Untimed'}
+									</label>
+								{/each}
+							</fieldset>
 						{/if}
 					</div>
 				{/if}

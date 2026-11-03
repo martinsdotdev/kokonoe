@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { openDB } from 'idb';
 import {
+	deleteGame,
 	fromVersion1,
 	latestUnfinished,
 	loadGame,
 	recentGames,
 	saveGame,
+	savedGame,
+	stoppedOf,
 	type SavedGame,
 	type ViewVersion1
 } from './saved.js';
@@ -43,6 +46,38 @@ describe('saved games in IndexedDB', () => {
 		await saveGame(game('a', 2, 'X wins on a line'), db);
 		expect(await loadGame('a', db)).toEqual(game('a', 2, 'X wins on a line'));
 		expect(await recentGames(10, db)).toHaveLength(1);
+	});
+
+	it('deletes a game, and a game it doesn’t hold', async () => {
+		const db = fresh();
+		await saveGame(game('a', 1), db);
+		await saveGame(game('b', 2), db);
+		await deleteGame('a', db);
+		await deleteGame('nothing', db);
+		expect(await loadGame('a', db)).toBeUndefined();
+		expect((await recentGames(10, db)).map((saved) => saved.id)).toEqual(['b']);
+	});
+
+	it('keeps a timed Room’s control, and who ran out of time', () => {
+		const { id, record, opponent, started, view } = game('a', 1);
+		const playing = {
+			id,
+			record,
+			variant: SHELF[0],
+			opponent,
+			started,
+			view,
+			toMove: 'O' as const
+		};
+		const won = { X: 0, O: 0 };
+		const timed = savedGame({ ...playing, end: { flagged: 'O' }, won, clock: '5+3' });
+		expect(timed).toMatchObject({ clock: '5+3', flagged: 'O', resigned: null, toMove: null });
+		expect(timed.result).toBe('O ran out of time. X wins.');
+		expect(stoppedOf(timed)).toEqual({ flagged: 'O' });
+		const untimed = savedGame({ ...playing, end: null, won, clock: null });
+		expect(untimed).not.toHaveProperty('clock');
+		expect(untimed).not.toHaveProperty('flagged');
+		expect(stoppedOf(untimed)).toBeNull();
 	});
 
 	it('lists the most recently played first, up to the limit', async () => {

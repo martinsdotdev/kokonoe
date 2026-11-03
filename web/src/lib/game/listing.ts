@@ -36,6 +36,8 @@ export const dayOf = (time: number): string => {
 /** "1 move" or "12 moves": the moves players made, as the result banner counts them. */
 export const moves = (n: number): string => `${n} ${n === 1 ? 'move' : 'moves'}`;
 
+export const seconds = (n: number): string => `${n} ${n === 1 ? 'second' : 'seconds'}`;
+
 /** Whose move an unfinished game waits for: "Your move against the computer". */
 export const turnLine = ({ opponent, toMove }: SavedGame): string => {
 	if (opponent.kind === 'hotseat') return `${toMove} to move · pass and play`;

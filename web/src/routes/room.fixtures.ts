@@ -6,6 +6,7 @@
  */
 import type { Page, WebSocketRoute } from '@playwright/test';
 import type {
+	Away,
 	ClientMsg,
 	Clocks,
 	NewRoom,
@@ -14,6 +15,7 @@ import type {
 	ServerMsg,
 	Snapshot
 } from '../lib/engine.js';
+import type { SavedGame } from '../lib/game/saved.js';
 import { SHELF } from '../lib/game/shelf.js';
 
 export const ROOM = '6f1c0a9b3e2d4c5a7b8e';
@@ -32,6 +34,30 @@ export const clocksNow = (edit: Partial<Clocks> = {}): Clocks => ({
 	aborts_at: null,
 	...edit
 });
+
+/** A player away `ago` ms before now, as the server says it, `claimsIn` ms before a Claim. */
+export const awayNow = (ago = 0, claimsIn = 60_000): Away => ({
+	since: Date.now() - ago,
+	claims_in: claimsIn
+});
+
+/** The game this page keeps as `id`, read from IndexedDB itself. */
+export const keptGame = (page: Page, id: string): Promise<SavedGame | undefined> =>
+	page.evaluate(
+		(id) =>
+			new Promise<SavedGame | undefined>((resolve, reject) => {
+				const open = indexedDB.open('kokonoe');
+				open.onerror = () => reject(open.error);
+				open.onsuccess = () => {
+					const read = open.result.transaction('games').objectStore('games').get(id);
+					read.onsuccess = () => {
+						open.result.close();
+						resolve(read.result);
+					};
+				};
+			}),
+		id
+	);
 
 export interface FakeRoom {
 	/** The page's seat, its Room's players, and the moves the Room holds: what a Welcome says. */

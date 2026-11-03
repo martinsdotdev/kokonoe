@@ -1,6 +1,16 @@
 import { expect, test, type Page } from '@playwright/test';
 import { TOP_ROW, cells } from '../lib/game/games.fixtures.js';
-import { HOST, JOINER, NEXT, ROOM, clocksNow, fakeRoom } from './room.fixtures.js';
+import {
+	HOST,
+	JOINER,
+	NEXT,
+	ROOM,
+	awayNow,
+	clocksNow,
+	fakeRoom,
+	keptGame,
+	type FakeRoom
+} from './room.fixtures.js';
 import {
 	cell,
 	focusBoard,
@@ -638,23 +648,8 @@ test.describe('a timed Room', () => {
 			clock: '3+2' as const,
 			clocks: clocksNow({ aborts_at: Date.now() + 30_000 })
 		};
-		/** Whether this page still keeps the Room's game, read from IndexedDB itself. */
-		const kept = () =>
-			page.evaluate(
-				(id) =>
-					new Promise<boolean>((resolve, reject) => {
-						const open = indexedDB.open('kokonoe');
-						open.onerror = () => reject(open.error);
-						open.onsuccess = () => {
-							const read = open.result.transaction('games').objectStore('games').get(id);
-							read.onsuccess = () => {
-								open.result.close();
-								resolve(read.result !== undefined);
-							};
-						};
-					}),
-				ROOM
-			);
+		/** Whether this page still keeps the Room's game. */
+		const kept = async () => (await keptGame(page, ROOM)) !== undefined;
 		const room = await fakeRoom(page, { you: 'X', players, moves: [], snapshot });
 		await page.goto(`/r/${ROOM}`);
 		await expect(board(page)).toBeVisible();
@@ -680,5 +675,91 @@ test.describe('a timed Room', () => {
 		await page.getByRole('link', { name: 'Go to Home' }).click();
 		await expect(page.getByRole('heading', { name: 'Invite a friend' })).toBeVisible();
 		await expect(resume).toHaveCount(0);
+	});
+});
+
+test.describe('a player away', () => {
+	const players = { X: HOST, O: JOINER };
+	const spoken = (page: Page) => page.locator('[data-spoken]');
+	const away = (page: Page) => page.locator('[data-away]');
+	const card = (page: Page) => page.getByRole('region', { name: 'Claim' });
+
+	test('the other player leaving shows in their bar, and their coming back', async ({ page }) => {
+		const room = await fakeRoom(page, { you: 'X', players, moves: top.slice(0, 2) });
+		await page.goto(`/r/${ROOM}`);
+		await expect(board(page)).toBeVisible();
+		room.say({ type: 'Presence', player: 'O', away: awayNow() });
+		await expect(away(page)).toHaveText(/^Away 0:0\d$/);
+		await expect(spoken(page)).toHaveText(new RegExp(`${JOINER} left the game\\.$`));
+		await expect(page.locator('[data-notice]')).toHaveText(`${JOINER} left the game.`);
+		await expect(card(page), 'not before the Claim is due').toHaveCount(0);
+
+		room.say({ type: 'Presence', player: 'O', away: null });
+		await expect(away(page)).toHaveCount(0);
+		await expect(spoken(page)).toHaveText(new RegExp(`${JOINER} is back\\.$`));
+	});
+
+	test('a Claim comes due, and claims the win', async ({ page }) => {
+		const room = await fakeRoom(page, { you: 'X', players, moves: top.slice(0, 2) });
+		await page.goto(`/r/${ROOM}`);
+		await expect(board(page)).toBeVisible();
+		room.say({ type: 'Presence', player: 'O', away: awayNow(0, 1_000) });
+		await expect(card(page)).toBeVisible();
+		await expect(spoken(page)).toHaveText(/You can claim the win or a draw, or keep waiting\.$/);
+		await expect(page.locator('[data-notice]'), 'the card says it').toHaveCount(0);
+
+		await card(page).getByRole('button', { name: 'Claim the win' }).click();
+		await expect.poll(() => room.said.at(-1)).toEqual({ type: 'Claim', as: 'Win' });
+		room.say({ type: 'Ended', result: '1-0', termination: 'claim' });
+		const won = 'O left the game. X claimed the win.';
+		await expect(page.getByRole('heading', { name: won })).toBeVisible();
+		await expect(spoken(page)).toHaveText(won);
+		await expect(card(page)).toHaveCount(0);
+		await expect(page.locator('main h1')).toBeFocused();
+		await expect(away(page), 'no one is kept waiting once it’s over').toHaveCount(0);
+		expect(room.hellos(), 'the end agreed with the engine').toBe(1);
+	});
+
+	test('a page that comes back after a while can claim at once, and claims a draw', async ({
+		page
+	}) => {
+		const room = await fakeRoom(page, {
+			you: 'O',
+			players,
+			moves: top.slice(0, 3),
+			snapshot: { presence: { X: awayNow(65_000, 0), O: null } }
+		});
+		await page.goto(`/r/${ROOM}`);
+		await expect(away(page)).toHaveText(/^Away 1:0\d$/);
+		await card(page).getByRole('button', { name: 'Claim a draw' }).click();
+		await expect.poll(() => room.said.at(-1)).toEqual({ type: 'Claim', as: 'Draw' });
+		room.say({ type: 'Ended', result: '1/2-1/2', termination: 'claim' });
+		await expect(page.getByRole('heading', { name: 'Draw claimed' })).toBeVisible();
+		await expect(page.locator('[data-disc]')).toHaveText('=');
+	});
+
+	test('a game both players left is abandoned, and Home lists it as finished', async ({ page }) => {
+		const state: FakeRoom = { you: 'X', players, moves: top.slice(0, 2) };
+		await fakeRoom(page, state);
+		await page.goto(`/r/${ROOM}`);
+		await expect(marked(page)).toHaveCount(2);
+		await expect.poll(async () => (await keptGame(page, ROOM))?.result).toBeNull();
+		await page.goto('/');
+		const listed = (result: string) =>
+			page.getByRole('link', { name: new RegExp(`vs ${JOINER} ?, Standard ?, ${result}$`) });
+		await expect(listed('Unfinished · Resume')).toBeVisible();
+
+		state.snapshot = { end: { result: null, termination: 'abandoned' } };
+		await page.getByRole('link', { name: new RegExp(`^Resume ?, vs ${JOINER}$`) }).click();
+		await expect(page.getByRole('heading', { name: 'Game abandoned' })).toBeVisible();
+		await expect(page.locator('[data-disc]')).toHaveText('–');
+		await expect(spoken(page)).toHaveText('Game abandoned.');
+		await expect.poll(async () => (await keptGame(page, ROOM))?.result).toBe('Game abandoned');
+
+		await page.goto('/');
+		await expect(page.getByRole('link', { name: /^Resume/ }), 'nothing to continue').toHaveCount(0);
+		await listed('Game abandoned · Replay').click();
+		await expect(page).toHaveURL(`/replay?game=${ROOM}`);
+		await expect(page.getByRole('heading', { name: 'Game abandoned' })).toBeVisible();
 	});
 });

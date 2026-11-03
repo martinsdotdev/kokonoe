@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { INTO_A_WON_BOARD, TOP_ROW, cells } from '../lib/game/games.fixtures.js';
-import { HOST, JOINER, ROOM, clocksNow, fakeRoom } from './room.fixtures.js';
+import { HOST, JOINER, ROOM, awayNow, clocksNow, fakeRoom } from './room.fixtures.js';
 import { focusBoard, play, typeMoves } from './steps.js';
 
 /** WCAG 2.2 AA (spec §7.7), with the A and AA rules of every version before it. */
@@ -169,6 +169,39 @@ for (const colorScheme of ['light', 'dark'] as const) {
 			aborting.say({ type: 'Aborted', reason: 'FirstMoveTimeout' });
 			await expect(page.getByRole('heading', { name: 'Game aborted' })).toBeVisible();
 			await scan(page, 'the game aborted');
+		});
+
+		test('a Room with the other player away: the Claim, and the ends it leads to', async ({
+			page
+		}) => {
+			const top = cells(TOP_ROW);
+			const players = { X: HOST, O: JOINER };
+			const room = await fakeRoom(page, {
+				you: 'X',
+				players,
+				moves: top.slice(0, 2),
+				snapshot: { presence: { X: null, O: awayNow(65_000, 0) } }
+			});
+			await page.goto(`/r/${ROOM}`);
+			await expect(page.getByRole('region', { name: 'Claim' })).toBeVisible();
+			await expect(page.locator('[data-away]')).toBeVisible();
+			await scan(page, 'a Claim due, and the player away');
+			room.say({ type: 'Ended', result: '1-0', termination: 'claim' });
+			await expect(
+				page.getByRole('heading', { name: 'O left the game. X claimed the win.' })
+			).toBeVisible();
+			await scan(page, 'a claimed win');
+
+			await page.unrouteAll();
+			await fakeRoom(page, {
+				you: 'X',
+				players,
+				moves: top.slice(0, 2),
+				snapshot: { end: { result: null, termination: 'abandoned' } }
+			});
+			await page.goto(`/r/${ROOM}`);
+			await expect(page.getByRole('heading', { name: 'Game abandoned' })).toBeVisible();
+			await scan(page, 'an abandoned game');
 		});
 
 		test('the game screen in Deep', async ({ page }) => {

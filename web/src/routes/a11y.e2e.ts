@@ -127,8 +127,9 @@ for (const colorScheme of ['light', 'dark'] as const) {
 			await page.getByRole('button', { name: 'Watch' }).click();
 			await expect(page.locator('[data-unseated]')).toBeVisible();
 			await scan(page, 'a watched Room’s wait for a second player');
-			room.join(JOINER);
-			await expect(page.locator('[data-watching]')).toBeVisible();
+			room.join('guest-0007');
+			await expect(page.locator('[data-unseated]')).toHaveCount(0);
+			await expect(page.getByRole('region', { name: 'Turn' })).toBeVisible();
 			await scan(page, 'the watched game');
 		});
 

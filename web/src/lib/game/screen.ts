@@ -70,6 +70,12 @@ export interface GameSession {
 	readonly rematch?: Action;
 	/** The Room this game's rematch made, to follow. */
 	readonly rematchRoom: string | null;
+	/** This page watches a Room as a Spectator, and takes no part in its game (spec §10.2). */
+	readonly watching?: boolean;
+	/** How many Accounts watch a Room as Spectators. */
+	readonly spectators?: number;
+	/** Both of a Room's seats are taken, so its game can begin. */
+	readonly seated?: boolean;
 }
 
 /** Something a player can do, now or not. */

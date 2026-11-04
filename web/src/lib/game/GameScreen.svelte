@@ -10,6 +10,11 @@
 	live line, mounted for the whole game, says each move, where the next goes, and the result, and
 	in a timed Room this page's first-move window and its clock running low. In a Room it says the
 	other player leaving and coming back, and the Claim once it's due.
+
+	A Spectator's page (spec §10.2) shows the game read-only: its board takes no moves, as a
+	Replay's, and it has no controls, answers no offer, and claims nothing. Everyone in a Room sees
+	how many watch, as plain text the live line doesn't say, so no one coming and going interrupts
+	it.
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
@@ -25,7 +30,7 @@
 	import OfferCard from './OfferCard.svelte';
 	import { offerText } from './offers.js';
 	import PlayerBar from './PlayerBar.svelte';
-	import { claimText } from './presence.js';
+	import { claimText, UNSEATED, watchingText } from './presence.js';
 	import ResultBanner from './ResultBanner.svelte';
 	import RulesCard from './RulesCard.svelte';
 	import Scoreboard from './Scoreboard.svelte';
@@ -50,6 +55,13 @@
 	const variant = $derived(session.variant);
 	const against = $derived(session.against);
 	const frozen = $derived(session.frozen);
+	/** This page watches a Room as a Spectator: its board only shows the game. */
+	const watching = $derived(session.watching === true);
+	/** A Room this page watches still waits for its second player. */
+	const unseated = $derived(watching && session.seated === false);
+	/** The header's way out, and how the page names itself. */
+	const exit = $derived(watching ? 'Stop watching' : 'Leave game');
+	const title = $derived(watching ? `Watching ${against}` : variant.name);
 	/** One Board at a time: on a phone, and at depth 3 everywhere. */
 	const stepped = $derived(phone.current || variant.ruleset.depth === 3);
 
@@ -164,6 +176,7 @@
 	 */
 	const spoken = $derived.by(() => {
 		if (session.trouble) return session.trouble.message;
+		if (unseated) return UNSEATED;
 		return cue ?? (after ? `${said} ${after}`.trim() : said);
 	});
 
@@ -227,15 +240,17 @@
 </script>
 
 <svelte:head>
-	<title>{variant.name} · Kokonoe</title>
+	<title>{title} · Kokonoe</title>
 </svelte:head>
 
 <div class="min-h-svh">
-	<ScreenHeader variant={variant.name} {against} exit="Leave game" />
+	<ScreenHeader variant={variant.name} {against} {exit} />
 
 	<main class="mx-auto flex max-w-[1320px] flex-col gap-4 p-4 sm:gap-6 sm:p-7">
 		<!-- Focusable, so a page that swaps a game in can move focus to it. -->
-		<h1 class="sr-only" tabindex="-1" bind:this={heading}>{variant.name}, {against}</h1>
+		<h1 class="sr-only" tabindex="-1" bind:this={heading}>
+			{watching ? 'Watching ' : ''}{variant.name}, {against}
+		</h1>
 		<p class="sr-only" aria-live="polite" data-spoken>{spoken}</p>
 		{#if session.end}
 			<ResultBanner
@@ -245,12 +260,16 @@
 				game={session.replay}
 				file={session.file}
 				onrestart={session.restart && (() => session.restart?.())}
-				rematch={session.rematch && {
-					offer: session.rematch,
-					waiting: offer?.kind === 'Rematch' ? offer : null,
-					onanswer: answer,
-					room: session.rematchRoom
-				}}
+				rematch={session.rematch
+					? {
+							offer: session.rematch,
+							waiting: offer?.kind === 'Rematch' ? offer : null,
+							onanswer: answer,
+							room: session.rematchRoom
+						}
+					: watching
+						? { waiting: offer?.kind === 'Rematch' ? offer : null, room: session.rematchRoom }
+						: undefined}
 			/>
 		{/if}
 		{#if phone.current}
@@ -304,14 +323,14 @@
 			refusal={session.refusal}
 			disabled={frozen}
 			replied={session.replied}
-			onplay={(cell) => session.play(cell)}
+			onplay={watching ? undefined : (cell) => session.play(cell)}
 		/>
 	{:else}
 		<Board
 			view={session.view}
 			flash={session.flash}
 			disabled={frozen}
-			onplay={(cell) => session.play(cell)}
+			onplay={watching ? undefined : (cell) => session.play(cell)}
 		/>
 	{/if}
 {/snippet}
@@ -328,6 +347,11 @@
 			away={since === null ? null : Math.max(0, instant - since)}
 		/>
 	{/each}
+	{#if watching || session.spectators}
+		<p class="m-0 text-sm text-muted-foreground" data-watching>
+			{watchingText(session.spectators ?? 0, watching)}
+		</p>
+	{/if}
 	{#if session.trouble}
 		{@const { message, retry } = session.trouble}
 		<p class="m-0 flex flex-wrap items-center gap-3 text-sm" data-trouble>
@@ -349,7 +373,7 @@
 {/snippet}
 
 {#snippet turnCard()}
-	{#if now && session.toMove}
+	{#if now && session.toMove && !unseated}
 		<TurnCard
 			player={session.toMove}
 			turn={now}
@@ -364,7 +388,10 @@
 		<ClaimCard claim={due} />
 	{/if}
 	{#if offer && offer.kind !== 'Rematch'}
-		<OfferCard {offer} onanswer={answer} />
+		<OfferCard {offer} onanswer={watching ? undefined : answer} />
+	{/if}
+	{#if unseated}
+		<p class="m-0 text-sm" data-unseated>{UNSEATED}</p>
 	{/if}
 	{#if notice}
 		<p class="m-0 text-sm" data-notice>{notice}</p>

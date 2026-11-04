@@ -19,6 +19,20 @@ export const leftText = (other: string): string => `${other} left the game.`;
 
 export const backText = (other: string): string => `${other} is back.`;
 
+/**
+ * How many watch a Room as Spectators (spec §10.2), as its players read it, a count and never
+ * names, or as a Spectator does, who is one of them.
+ */
+export const watchingText = (count: number, watching: boolean): string => {
+	if (!watching) return `${count} watching`;
+	const others = Math.max(0, count - 1);
+	if (others === 0) return 'You’re watching';
+	return `You’re watching, with ${others} ${others === 1 ? 'other' : 'others'}`;
+};
+
+/** What a Spectator's page says while a Room waits for its second player. */
+export const UNSEATED = 'Waiting for a second player.';
+
 /** What the Claim is, once it's due. */
 export const claimText = (other: string): string =>
 	`${leftText(other)} You can claim the win or a draw, or keep waiting.`;

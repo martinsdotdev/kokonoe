@@ -1,6 +1,7 @@
 <!--
 	The result in words once the game ends, and, when given, the ways on: its Replay, a new game or
-	a Room's rematch, and the game as a file.
+	a Room's rematch, and the game as a file. A Spectator's rematch offers nothing: it shows the
+	players' offer, and once they agree, the way to watch the Room it made.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -22,11 +23,14 @@
 		onrestart?: () => void;
 		/** The game as a file, to export. */
 		file?: GameFile;
-		/** A Room's rematch: offering it, the other player's offer, and the Room it made. */
+		/**
+		 * A Room's rematch: offering it, the other player's offer, and the Room it made. A
+		 * Spectator's has no offer to make or answer.
+		 */
 		rematch?: {
-			offer: Action;
+			offer?: Action;
 			waiting: PendingOffer | null;
-			onanswer: (accept: boolean) => void;
+			onanswer?: (accept: boolean) => void;
 			room: string | null;
 		};
 	}
@@ -63,7 +67,7 @@
 			<p class="mt-1 mb-0 text-muted-foreground">{detail}</p>
 		</div>
 	</div>
-	{#if game || onrestart || rematch}
+	{#if game || onrestart || rematch?.offer || rematch?.room}
 		<div class="flex flex-wrap gap-3">
 			{#if game}
 				<a
@@ -87,9 +91,9 @@
 					href={resolve('/r/[room]', { room: rematch.room })}
 					class="inline-flex min-h-12 items-center rounded-md bg-primary px-5 font-semibold text-primary-foreground no-underline"
 				>
-					Play the rematch
+					{rematch.offer ? 'Play the rematch' : 'Watch the rematch'}
 				</a>
-			{:else if rematch}
+			{:else if rematch?.offer}
 				{@const { offer } = rematch}
 				<button
 					type="button"

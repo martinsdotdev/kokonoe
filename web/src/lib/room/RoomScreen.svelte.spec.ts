@@ -235,3 +235,92 @@ describe('a Room’s page with the other player away', () => {
 		await expect.poll(() => document.activeElement?.tagName).toBe('H1');
 	});
 });
+
+describe('a watched Room’s page', () => {
+	const top = cells(TOP_ROW);
+	const players = { X: 'guest-4821', O: 'guest-1066' };
+
+	/** A server whose Room `players` play can be watched, by a page holding no seat. */
+	const watchable =
+		(seats: typeof players | { X: string; O: null }) => async (url: string | URL | Request) =>
+			String(url) === '/api/session'
+				? json({ handle: 'guest-0007' })
+				: json({
+						host: 'guest-4821',
+						variant: 'Standard',
+						rules: 'std',
+						players: seats,
+						you: null,
+						takebacks: false,
+						clock: null,
+						spectators: true
+					});
+
+	it('shows the game read-only, and how many watch', async () => {
+		const fake = sockets();
+		const screen = render(RoomScreen, {
+			room: ROOM,
+			options: { fetch: watchable(players), open: fake.open, store: new FakeStore() }
+		});
+		await expect.poll(() => fake.opened.length).toBe(1);
+		fake.last().accept();
+		expect(fake.last().sent[0]).toMatchObject({ type: 'Hello', role: 'Spectator' });
+		fake.last().say(welcome(null, players, top.slice(0, 2), { watching: 2 }));
+		await expect
+			.element(screen.getByRole('heading', { name: 'Watching Standard, guest-4821 vs guest-1066' }))
+			.toBeInTheDocument();
+		await expect.element(screen.getByText('You’re watching, with 1 other')).toBeVisible();
+		await expect.element(screen.getByRole('link', { name: 'Stop watching' })).toBeVisible();
+		expect(screen.getByRole('button', { name: 'Resign' }).all(), 'no controls').toHaveLength(0);
+		expect(document.title).toBe('Watching guest-4821 vs guest-1066 · Kokonoe');
+		// Its Cells read, as a Replay's do, and none plays.
+		await expect.element(screen.getByRole('img', { name: /^Cell / }).first()).toBeVisible();
+		expect(screen.getByRole('button', { name: /^Cell / }).all()).toHaveLength(0);
+
+		fake.last().say({ type: 'Offer', kind: 'Draw', by: 'X', lapses_in: null });
+		await expect
+			.element(screen.getByText('guest-4821 offers a draw.', { exact: true }))
+			.toBeVisible();
+		expect(screen.getByRole('button', { name: 'Accept' }).all()).toHaveLength(0);
+		fake.last().say({ type: 'Watching', count: 1 });
+		await expect.element(screen.getByText('You’re watching', { exact: true })).toBeVisible();
+	});
+
+	it('offers to watch a Room with a seat free, which then waits for its second player', async () => {
+		const fake = sockets();
+		const seats = { X: 'guest-4821', O: null };
+		const screen = render(RoomScreen, {
+			room: ROOM,
+			options: { fetch: watchable(seats), open: fake.open, store: new FakeStore() }
+		});
+		await expect.element(screen.getByText('Spectators allowed')).toBeVisible();
+		await screen.getByRole('button', { name: 'Watch' }).click();
+		await expect.poll(() => fake.opened.length).toBe(1);
+		fake.last().accept();
+		expect(fake.last().sent[0]).toMatchObject({ type: 'Hello', role: 'Spectator' });
+		fake.last().say(welcome(null, seats, [], { watching: 1 }));
+		await expect
+			.poll(() => document.querySelector('[data-unseated]')?.textContent)
+			.toBe('Waiting for a second player.');
+		await expect
+			.poll(() => document.querySelector('[data-spoken]')?.textContent)
+			.toBe('Waiting for a second player.');
+		expect(screen.getByText('Waiting for your friend').all(), 'not the host’s wait').toHaveLength(
+			0
+		);
+	});
+
+	it('shows players how many watch them, as a count', async () => {
+		const fake = sockets();
+		const screen = render(RoomScreen, {
+			room: ROOM,
+			options: { fetch: seated, open: fake.open, store: new FakeStore() }
+		});
+		await expect.poll(() => fake.opened.length).toBe(1);
+		fake.last().say(welcome('X', players, [], { watching: 0 }));
+		await expect.element(screen.getByRole('link', { name: 'Leave game' })).toBeVisible();
+		expect(screen.getByText(/watching/).all(), 'no one yet').toHaveLength(0);
+		fake.last().say({ type: 'Watching', count: 3 });
+		await expect.element(screen.getByText('3 watching')).toBeVisible();
+	});
+});

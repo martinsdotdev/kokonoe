@@ -1,6 +1,7 @@
 <!--
 	What a Room's link shows before its holder joins (spec §10.1): who invites them to what, under
-	which rules, and Accept or Decline.
+	which rules, whether it can be watched, and Accept or Decline, or Watch instead in a Room that
+	can be (spec §10.2).
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -11,9 +12,11 @@
 	interface Props {
 		card: RoomCard;
 		onaccept: () => void;
+		/** Watches the game instead, as a Spectator. */
+		onwatch?: () => void;
 	}
 
-	let { card, onaccept }: Props = $props();
+	let { card, onaccept, onwatch }: Props = $props();
 
 	const preset = $derived(presetByCode(card.rules));
 	const chip = 'rounded-full border-[1.5px] border-foreground px-3 py-1 font-mono text-sm';
@@ -35,6 +38,9 @@
 		<li class={chip} data-takebacks={card.takebacks}>
 			{card.takebacks ? 'Takebacks allowed' : 'No takebacks'}
 		</li>
+		<li class={chip} data-spectators={card.spectators}>
+			{card.spectators ? 'Spectators allowed' : 'No spectators'}
+		</li>
 	</ul>
 	{#if preset}
 		<RulesCard variant={{ name: preset.name, ruleset: preset.ruleset }} />
@@ -47,6 +53,15 @@
 		>
 			Accept
 		</button>
+		{#if onwatch && card.spectators}
+			<button
+				type="button"
+				class="min-h-13 flex-1 rounded-md border-[1.5px] border-foreground bg-card px-6 font-semibold text-foreground"
+				onclick={onwatch}
+			>
+				Watch
+			</button>
+		{/if}
 		<a
 			href={resolve('/')}
 			class="inline-flex min-h-13 flex-1 items-center justify-center rounded-md border-[1.5px] border-foreground px-6 font-semibold text-foreground no-underline"

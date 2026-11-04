@@ -190,7 +190,7 @@ test('a joiner reads the card, and joins on Accept or leaves on Decline', async 
 	).toBeVisible();
 	await expect(page).toHaveTitle(`${HOST} invites you · Kokonoe`);
 	const chips = page.getByRole('list', { name: 'The game' }).getByRole('listitem');
-	await expect(chips).toHaveText(['Preset', 'Casual', 'Untimed', 'No takebacks']);
+	await expect(chips).toHaveText(['Preset', 'Casual', 'Untimed', 'No takebacks', 'No spectators']);
 	expect(room.hellos(), 'no socket before Accept').toBe(0);
 	await page.getByRole('link', { name: 'Decline' }).click();
 	await expect(page).toHaveURL('/');
@@ -250,7 +250,9 @@ test('a Room that isn’t there, or is full, says so', async ({ page }) => {
 	});
 	await page.goto(`/r/${ROOM}`);
 	await expect(page.getByRole('heading', { name: 'This game is full' })).toBeVisible();
-	await expect(page.getByText(`${HOST} and guest-0007 are playing it.`)).toBeVisible();
+	await expect(
+		page.getByText(`${HOST} and guest-0007 are playing it, and its host didn’t let anyone watch.`)
+	).toBeVisible();
 	expect(room.hellos()).toBe(0);
 });
 
@@ -581,7 +583,13 @@ test.describe('a timed Room', () => {
 		});
 		await page.goto(`/r/${ROOM}`);
 		const chips = page.getByRole('list', { name: 'The game' }).getByRole('listitem');
-		await expect(chips).toHaveText(['Preset', 'Casual', '3+2 clock', 'No takebacks']);
+		await expect(chips).toHaveText([
+			'Preset',
+			'Casual',
+			'3+2 clock',
+			'No takebacks',
+			'No spectators'
+		]);
 	});
 
 	test('the clocks wait for each first move, then run, and show time running low', async ({

@@ -74,7 +74,7 @@
 			case 'full':
 				return {
 					heading: 'This game is full',
-					text: `${phase.players.X} and ${phase.players.O} are playing it.`
+					text: `${phase.players.X} and ${phase.players.O} are playing it, and its host didn’t let anyone watch.`
 				};
 			case 'update':
 				return {
@@ -111,7 +111,7 @@
 		</header>
 		<main class="mx-auto flex max-w-xl flex-col gap-4 px-4 pb-12" data-room={phase.kind}>
 			{#if phase.kind === 'join'}
-				<JoinCard card={phase.card} onaccept={() => visit.accept()} />
+				<JoinCard card={phase.card} onaccept={() => visit.accept()} onwatch={() => visit.watch()} />
 			{:else if waiting}
 				<WaitingCard
 					link={`${location.origin}${resolve('/r/[room]', { room })}`}

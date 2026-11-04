@@ -77,3 +77,18 @@ it('shows the other player’s rematch offer, and the rematch once made', async 
 		.toHaveAttribute('href', `/r/${room}`);
 	expect(screen.getByRole('button', { name: 'Rematch' }).all()).toHaveLength(0);
 });
+
+it('shows a Spectator the players’ rematch offer, and where to watch it once made', async () => {
+	const waiting = { kind: 'Rematch', mine: false, other: 'guest-1066', lapses: null } as const;
+	const screen = await render(ResultBanner, { ...banner, rematch: { waiting, room: null } });
+	await expect.element(screen.getByText('guest-1066 offers a rematch.')).toBeVisible();
+	expect(screen.getByRole('button', { name: 'Accept' }).all(), 'not theirs to answer').toHaveLength(
+		0
+	);
+	expect(screen.getByRole('button', { name: 'Rematch' }).all()).toHaveLength(0);
+	const room = 'b'.repeat(20);
+	await screen.rerender({ ...banner, rematch: { waiting: null, room } });
+	await expect
+		.element(screen.getByRole('link', { name: 'Watch the rematch' }))
+		.toHaveAttribute('href', `/r/${room}`);
+});

@@ -51,6 +51,8 @@
 	const seat = $derived(seats[seatOf]);
 	/** An invite Room lets its players take back a move, off unless chosen (spec §10.2). */
 	let takebacks = $state(false);
+	/** Whether Spectators may watch an invite Room, off unless chosen (spec §10.1). */
+	let spectators = $state(false);
 	/** An invite Room's time control, untimed unless chosen (spec §10.1). */
 	let clock: TimeControl | null = $state(null);
 	/** "3 minutes each, plus 2 seconds a move". */
@@ -88,6 +90,10 @@
 					{
 						label: 'Takebacks',
 						value: takebacks ? 'Allowed, if the other player agrees' : 'Not allowed'
+					},
+					{
+						label: 'Spectators',
+						value: spectators ? 'Allowed: the players see how many, not who' : 'Not allowed'
 					}
 				]
 			: []),
@@ -106,7 +112,7 @@
 				seat,
 				takebacks,
 				clock,
-				spectators: false
+				spectators
 			}));
 		// Still creating while the page goes to the Room, so a second press makes no second Room.
 		if (room) return goto(resolve('/r/[room]', { room }));
@@ -206,6 +212,10 @@
 							<label class="flex min-h-11 cursor-pointer items-center gap-3 text-sm font-medium">
 								<input type="checkbox" bind:checked={takebacks} class="size-5 accent-foreground" />
 								Allow takebacks
+							</label>
+							<label class="flex min-h-11 cursor-pointer items-center gap-3 text-sm font-medium">
+								<input type="checkbox" bind:checked={spectators} class="size-5 accent-foreground" />
+								Allow spectators
 							</label>
 							<fieldset class="m-0 flex flex-wrap items-center gap-2 border-0 p-0">
 								<legend class="float-left mr-3 p-0 text-sm font-medium">

@@ -392,6 +392,16 @@
 	{/if}
 	{#if unseated}
 		<p class="m-0 text-sm" data-unseated>{UNSEATED}</p>
+		{#if session.take}
+			{@const take = session.take}
+			<button
+				type="button"
+				class="min-h-11 self-start rounded-md bg-primary px-5 font-semibold text-primary-foreground"
+				onclick={() => take()}
+			>
+				Take the seat
+			</button>
+		{/if}
 	{/if}
 	{#if notice}
 		<p class="m-0 text-sm" data-notice>{notice}</p>

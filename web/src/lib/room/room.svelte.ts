@@ -42,8 +42,8 @@ export interface RoomOptions {
 	saved?: SavedGame;
 	/** Goes to the Room a rematch made, once both players agreed to it. */
 	onrematch?: (room: string) => void;
-	/** What the page says as the game opens: why it watches, when it meant to play. */
-	notice?: string;
+	/** Takes the free seat of the Room this page watches. */
+	ontake?: () => void;
 }
 
 /** What a Room's game needs of its socket. */
@@ -174,6 +174,7 @@ export class RoomGame implements GameSession {
 	/** This page sent a Claim, which the server hasn't answered yet. */
 	#claimed = $state.raw(false);
 	#onrematch: ((room: string) => void) | undefined;
+	#ontake: (() => void) | undefined;
 	#connected = $state.raw(true);
 	#pending: { ply: number; cell: Cell } | null = $state.raw(null);
 	#refused = new Refusals();
@@ -210,8 +211,8 @@ export class RoomGame implements GameSession {
 		this.view = $state.raw(boardView(game));
 		this.status = $state.raw(game.status());
 		this.won = $state.raw(this.#counts());
+		this.#ontake = options.ontake;
 		this.#take(welcome.snapshot);
-		this.notice = options.notice ?? null;
 		this.#save();
 	}
 
@@ -301,6 +302,12 @@ export class RoomGame implements GameSession {
 	/** This page watches the Room as a Spectator, read-only. */
 	get watching(): boolean {
 		return this.you === null;
+	}
+
+	/** Takes the free seat, while this page watches a Room that has one. */
+	get take(): (() => void) | undefined {
+		if (!this.watching || this.seated) return undefined;
+		return this.#ontake;
 	}
 
 	/** The Claim against the other player while they're away and the game goes on. */

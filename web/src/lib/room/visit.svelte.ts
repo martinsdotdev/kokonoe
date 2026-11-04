@@ -14,7 +14,7 @@ import { updateNow } from '#lib/update.js';
 import { full, isRoomId, roomCard } from './api.js';
 import { Link, type LinkOptions } from './link.js';
 import { hello } from './protocol.js';
-import { RoomGame } from './room.svelte.js';
+import { RoomGame, type RoomLink } from './room.svelte.js';
 
 /** How long the page waits to read its saved copy of the game before it goes on without. */
 const SAVED_MS = 1500;
@@ -60,7 +60,8 @@ export interface VisitOptions {
  * Following a Room's link (spec §10.1): a session, then the Room's card, then, once the visitor
  * has a seat or accepts a free one, the socket and the game. A visitor with no seat in a Room
  * that can be watched may watch it instead, as a Spectator (spec §10.2): at once if both seats are
- * taken, or by choice if one is free. Offline, it waits to be back online.
+ * taken, or by choice if one is free, which they may still take while they watch. Offline, it
+ * waits to be back online.
  */
 export class RoomVisit {
 	phase: Phase = $state.raw({ kind: 'loading' });
@@ -74,6 +75,13 @@ export class RoomVisit {
 	#role: Role = 'Player';
 	/** The free seat this page asked for was taken first, so it watches: it falls back once. */
 	#fellBack = false;
+	/** What the game says once the next `Welcome` opens it: why the page watches. */
+	#why: string | null = null;
+	/** The socket the game sends on: whichever the page holds now, as a reconnect replaces it. */
+	#relay: RoomLink = {
+		send: (message) => this.#link?.send(message) ?? false,
+		resync: () => this.#link?.resync()
+	};
 	/** The game as this page last saved it, if it played here before. */
 	#saved: Promise<SavedGame | undefined>;
 	/** The game as this page last saved it, read before the socket opens. */
@@ -101,6 +109,19 @@ export class RoomVisit {
 	/** Watches the game the card offers instead of taking its free seat. */
 	watch() {
 		if (this.phase.kind === 'join' && this.phase.card.spectators) this.#connect('Spectator');
+	}
+
+	/**
+	 * Takes the free seat of the Room this page watches, on a new socket that comes as a player:
+	 * the game goes on showing until its `Welcome` names the seat. Someone else's taking it first
+	 * is a refusal, after which the page watches again.
+	 */
+	take() {
+		const game = this.#game;
+		if (this.phase.kind !== 'playing' || this.#role !== 'Spectator') return;
+		if (!game?.watching || game.seated) return;
+		this.#link?.dispose();
+		this.#open('Player');
 	}
 
 	/** Tries again after the server couldn't be reached. */
@@ -147,6 +168,12 @@ export class RoomVisit {
 		// Read before the socket opens, so every message finds the game it's for.
 		this.#kept = await this.#saved;
 		if (this.#disposed) return;
+		this.#open(role);
+	}
+
+	/** Opens the socket, which comes to the Room as `role`. */
+	#open(role: Role) {
+		this.#role = role;
 		const events = {
 			message: (message: ServerMsg) => this.#heard(message),
 			dropped: () => this.#game?.dropped(),
@@ -168,9 +195,13 @@ export class RoomVisit {
 					store: this.#store,
 					saved: this.#kept,
 					onrematch: this.#options.follow,
-					notice: this.#fellBack ? TAKEN : undefined
+					ontake: () => this.take()
 				};
-				this.#game = new RoomGame(message, link, options);
+				this.#game = new RoomGame(message, this.#relay, options);
+			}
+			if (this.#why) {
+				this.#game.notice = this.#why;
+				this.#why = null;
 			}
 		} catch (error) {
 			link.dispose();
@@ -212,6 +243,7 @@ export class RoomVisit {
 			this.#role === 'Player' && card && card !== 'missing' && !card.you && full(card.players);
 		if (taken && card.spectators && !this.#fellBack) {
 			this.#fellBack = true;
+			this.#why = TAKEN;
 			return this.#connect('Spectator');
 		}
 		this.phase = taken

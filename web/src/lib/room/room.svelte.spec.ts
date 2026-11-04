@@ -4,7 +4,6 @@ import { TOP_ROW, cells } from '#lib/game/games.fixtures.js';
 import { UnplayableGame } from '#lib/game/record.js';
 import { RoomGame } from './room.svelte.js';
 import { FakeStore, ROOM, record, welcome } from './room.fixtures.js';
-import { TAKEN } from './visit.svelte.js';
 
 beforeAll(() => loadEngine());
 
@@ -682,10 +681,16 @@ describe('a Spectator’s view of a Room', () => {
 		expect(late.room.rematch).toBeUndefined();
 	});
 
-	it('says why it watches, when it meant to play', () => {
+	it('may take the free seat while it watches, and only then', () => {
 		const link = { send: vi.fn(() => true), resync: vi.fn() };
-		const options = { room: ROOM, store: new FakeStore(), notice: TAKEN };
-		const room = new RoomGame(welcome(null, players), link, options);
-		expect(room.notice).toBe(TAKEN);
+		const ontake = vi.fn();
+		const options = { room: ROOM, store: new FakeStore(), ontake };
+		const free = new RoomGame(welcome(null, { X: 'guest-4821', O: null }), link, options);
+		free.take?.();
+		expect(ontake).toHaveBeenCalledOnce();
+		free.welcome(welcome(null, players));
+		expect(free.take, 'both seats taken').toBeUndefined();
+		const playing = new RoomGame(welcome('X', { X: 'guest-4821', O: null }), link, options);
+		expect(playing.take, 'a player’s own wait').toBeUndefined();
 	});
 });

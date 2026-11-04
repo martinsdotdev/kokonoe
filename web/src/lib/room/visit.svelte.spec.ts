@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { CloseCode, loadEngine, type RoomCard } from '#lib/engine.js';
+import { TOP_ROW, cells } from '#lib/game/games.fixtures.js';
 import { FakeStore, ROOM, sockets, welcome } from './room.fixtures.js';
 import { RoomVisit, TAKEN } from './visit.svelte.js';
 
@@ -114,6 +115,56 @@ describe('following a Room’s link', () => {
 		refused.fake.last().end(CloseCode.Forbidden);
 		await phase(refused.visit).toBe('problem');
 		expect(refused.fake.opened).toHaveLength(1);
+	});
+
+	it('takes the free seat it watched, or watches on if someone else took it first', async () => {
+		const free = { ...card({ X: 'a', O: null }), spectators: true };
+		const { visit: made, fake } = visit(server(free));
+		await phase(made).toBe('join');
+		made.watch();
+		await expect.poll(() => fake.opened.length).toBe(1);
+		const watching = fake.last();
+		watching.accept();
+		watching.say(welcome(null, { X: 'a', O: null }));
+		await phase(made).toBe('playing');
+		if (made.phase.kind !== 'playing') return;
+		const { game } = made.phase;
+		expect(game.take).toBeDefined();
+
+		game.take?.();
+		expect(fake.opened).toHaveLength(2);
+		expect(watching.closed, 'the watching socket goes').toBe(true);
+		const playing = fake.last();
+		playing.accept();
+		expect(playing.sent).toMatchObject([{ type: 'Hello', role: 'Player' }]);
+		const top = cells(TOP_ROW);
+		playing.say(welcome('O', { X: 'a', O: 'guest-1066' }, top.slice(0, 1)));
+		expect(game.you).toBe('O');
+		expect(game.take).toBeUndefined();
+		// The game sends on the socket that's open now.
+		game.play(top[1]);
+		expect(playing.sent.at(-1)).toEqual({ type: 'Move', ply: 1, cell: top[1] });
+		expect(made.phase.kind).toBe('playing');
+
+		const late = visit(server(free, { ...card({ X: 'a', O: 'b' }), spectators: true }));
+		await phase(late.visit).toBe('join');
+		late.visit.watch();
+		await expect.poll(() => late.fake.opened.length).toBe(1);
+		late.fake.last().accept();
+		late.fake.last().say(welcome(null, { X: 'a', O: null }));
+		await phase(late.visit).toBe('playing');
+		if (late.visit.phase.kind !== 'playing') return;
+		const watched = late.visit.phase.game;
+		watched.take?.();
+		late.fake.last().accept();
+		late.fake.last().end(CloseCode.Forbidden);
+		await expect.poll(() => late.fake.opened.length).toBe(3);
+		late.fake.last().accept();
+		expect(late.fake.last().sent).toMatchObject([{ type: 'Hello', role: 'Spectator' }]);
+		late.fake.last().say(welcome(null, { X: 'a', O: 'b' }));
+		await phase(late.visit).toBe('playing');
+		expect(watched.notice).toBe(TAKEN);
+		expect(watched.take).toBeUndefined();
 	});
 
 	it('says so when the game is full or missing', async () => {

@@ -852,14 +852,12 @@ test.describe('watching a Room', () => {
 		expect(room.said.at(-1)).toMatchObject({ type: 'Hello', room: NEXT, role: 'Spectator' });
 	});
 
-	test('a joiner may watch instead of taking the free seat', async ({ page }) => {
+	test('a joiner may watch instead of taking the free seat, and take it after', async ({
+		page
+	}) => {
 		const seats = { X: HOST, O: null };
-		const room = await fakeRoom(page, {
-			you: null,
-			players: seats,
-			moves: [],
-			card: watchable(seats)
-		});
+		const state: FakeRoom = { you: null, players: seats, moves: [], card: watchable(seats) };
+		const room = await fakeRoom(page, state);
 		await page.goto(`/r/${ROOM}`);
 		await expect(page.getByText('Spectators allowed')).toBeVisible();
 		await page.getByRole('button', { name: 'Watch' }).click();
@@ -868,8 +866,33 @@ test.describe('watching a Room', () => {
 		await expect(page.locator('[data-unseated]')).toHaveText('Waiting for a second player.');
 		await expect(page.getByRole('banner').getByText(`${HOST} vs a free seat`)).toBeVisible();
 
+		// The server seats whoever asks for the free seat first: here, this page.
+		state.you = 'O';
+		state.players = { X: HOST, O: JOINER };
+		await page.getByRole('button', { name: 'Take the seat' }).click();
+		await expect(page.getByRole('button', { name: 'Resign' })).toBeVisible();
+		expect(room.said.at(-1)).toMatchObject({ type: 'Hello', role: 'Player' });
+		await expect(page.locator('[data-unseated]')).toHaveCount(0);
+		await expect(page.getByRole('banner').getByText(`vs ${HOST}`)).toBeVisible();
+		await expect(page).toHaveTitle('Standard · Kokonoe');
+	});
+
+	test('a Spectator sees the free seat taken by someone else, and the game begin', async ({
+		page
+	}) => {
+		const seats = { X: HOST, O: null };
+		const room = await fakeRoom(page, {
+			you: null,
+			players: seats,
+			moves: [],
+			card: watchable(seats)
+		});
+		await page.goto(`/r/${ROOM}`);
+		await page.getByRole('button', { name: 'Watch' }).click();
+		await expect(page.locator('[data-unseated]')).toBeVisible();
 		room.join('guest-0007');
 		await expect(page.locator('[data-unseated]')).toHaveCount(0);
+		await expect(page.getByRole('button', { name: 'Take the seat' })).toHaveCount(0);
 		await expect(turnLine(page, 'X: play anywhere.')).toBeVisible();
 	});
 

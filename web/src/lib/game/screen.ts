@@ -76,6 +76,8 @@ export interface GameSession {
 	readonly spectators?: number;
 	/** Both of a Room's seats are taken, so its game can begin. */
 	readonly seated?: boolean;
+	/** Takes the free seat of a Room this page watches, while it has one. */
+	readonly take?: () => void;
 }
 
 /** Something a player can do, now or not. */

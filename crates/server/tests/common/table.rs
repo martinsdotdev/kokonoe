@@ -121,6 +121,20 @@ impl World {
         let (_, snapshot) = welcome(&mut socket).await;
         (socket, snapshot)
     }
+
+    /// A socket that has said `Hello` to `room` as a Spectator.
+    pub async fn spectate(&self, token: &str, room: &str) -> Socket {
+        let mut socket = open(self.server.address, token).await;
+        say(&mut socket, &hello_as(room, Role::Spectator)).await;
+        socket
+    }
+
+    /// A socket of `token`'s watching `room`, and the Room as its `Welcome` tells it.
+    pub async fn watch(&self, token: &str, room: &str) -> (Socket, Snapshot) {
+        let mut socket = self.spectate(token, room).await;
+        let snapshot = watched(&mut socket).await;
+        (socket, snapshot)
+    }
 }
 
 pub struct Answer {
@@ -219,11 +233,16 @@ pub async fn games(pool: &PgPool, room: &str) -> i64 {
 }
 
 pub fn hello(room: &str) -> ClientMsg {
+    hello_as(room, Role::Player)
+}
+
+/// The `Hello` of a socket coming to `room` as `role`.
+pub fn hello_as(room: &str, role: Role) -> ClientMsg {
     ClientMsg::Hello {
         protocol: PROTOCOL,
         rules_version: RULES_VERSION,
         room: room.to_owned(),
-        role: Role::Player,
+        role,
     }
 }
 
@@ -236,6 +255,17 @@ pub async fn welcome(socket: &mut Socket) -> (Player, Snapshot) {
     match hear(socket).await {
         ServerMsg::Welcome { you, snapshot } => (you.expect("a seated socket's Welcome"), snapshot),
         other => panic!("not a Welcome: {other:?}"),
+    }
+}
+
+/// The `Welcome` a Spectator's socket hears next, which names no seat: the Room as it stands.
+pub async fn watched(socket: &mut Socket) -> Snapshot {
+    match hear(socket).await {
+        ServerMsg::Welcome {
+            you: None,
+            snapshot,
+        } => snapshot,
+        other => panic!("not a Spectator's Welcome: {other:?}"),
     }
 }
 

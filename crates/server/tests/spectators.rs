@@ -8,7 +8,7 @@ mod common;
 use std::time::Duration;
 
 use common::table::*;
-use common::{Socket, TIMING, closed, guest, hear, next, say};
+use common::{Socket, TIMING, closed, guest, hear, say};
 use kokonoe_engine::Player;
 use kokonoe_protocol::{
     Abort, Away, ClaimKind, ClientMsg, CloseCode, GameEnd, GameResult, OfferKind, Presence,
@@ -361,38 +361,51 @@ async fn a_late_spectator_hears_everything_its_delay_after_the_players() {
         assert_eq!(hear(socket).await, watching(1), "the players hear it live");
     }
 
-    // Timers never fire early, so nothing can reach the Spectator sooner than its delay after
-    // the move was sent.
+    // The Spectator is read as the moves are played, so the time its first frame came is its
+    // own, however long the players take. A move is stored and told only after it's sent, and
+    // timers never fire early, so that's never sooner than its delay after the move was sent.
     let moves = cells(TOP_ROW);
     let sent = Instant::now();
-    play(&mut table, 0, &moves[..2]).await;
-    let early =
-        tokio::time::timeout_at(sent + LATE - Duration::from_millis(50), next(&mut watcher));
-    assert!(early.await.is_err(), "nothing yet");
-    assert_eq!(hear(&mut watcher).await, moved(0, moves[0]));
-    assert!(sent.elapsed() >= LATE);
+    let ((), (first, came)) = tokio::join!(play(&mut table, 0, &moves[..2]), async {
+        let first = hear(&mut watcher).await;
+        (first, Instant::now())
+    });
+    assert_eq!(first, moved(0, moves[0]));
+    assert!(came >= sent + LATE, "nothing before its delay");
     assert_eq!(hear(&mut watcher).await, moved(1, moves[1]), "in order");
     let (_, snapshot) = world.rejoin(&table.host, &table.room).await;
     assert_eq!(snapshot.delay_ms, 0, "a player hears the Room live");
 
-    // What the Room says before it closes a late Spectator's socket still reaches it, late.
-    let made = Instant::now();
-    let mut timed = world
-        .table_with(r#"{"rules":"std","seat":"X","clock":"3+2","spectators":true}"#)
-        .await;
-    let mut watcher = world.spectate(&stranger, &timed.room).await;
+    // What the Room says before it closes a late Spectator's socket still reaches it, late. The
+    // Spectator watches before the second seat fills, as no turn runs yet, so the first move's
+    // window can't close before it's here.
+    let (host, joiner) = (guest(&world.app).await, guest(&world.app).await);
+    let body = r#"{"rules":"std","seat":"X","clock":"3+2","spectators":true}"#;
+    let room = create(&world.app, Some(&host), body).await.json["room"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut x = world.enter(&host, &room).await;
+    welcomed(&mut x).await;
+    let mut watcher = world.spectate(&stranger, &room).await;
     watched(&mut watcher).await;
-    for socket in [&mut timed.x, &mut timed.o] {
-        assert_eq!(hear(socket).await, watching(1));
-    }
+    assert_eq!(hear(&mut x).await, watching(1));
+    let began = Instant::now();
+    let mut o = world.enter(&joiner, &room).await;
+    welcomed(&mut o).await;
+    welcomed(&mut x).await;
+    assert_eq!(
+        watched(&mut watcher).await.players.o,
+        Some(handle(&world.pool, &joiner).await)
+    );
     let aborted = ServerMsg::Aborted {
         reason: Abort::FirstMoveTimeout,
     };
-    for socket in [&mut timed.x, &mut timed.o] {
+    for socket in [&mut x, &mut o] {
         assert_eq!(hear(socket).await, aborted);
     }
     assert_eq!(hear(&mut watcher).await, aborted);
-    // The first move's window opened after `made`, and the abort came its delay after it closed.
-    assert!(made.elapsed() >= TIMING.abort + LATE);
+    // The window opened once O sat, after `began`, and the abort came its delay after it closed.
+    assert!(began.elapsed() >= TIMING.abort + LATE);
     assert_eq!(closed(&mut watcher).await, 1011, "the Room is gone");
 }

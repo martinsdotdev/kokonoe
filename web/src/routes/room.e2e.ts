@@ -777,3 +777,110 @@ test.describe('a player away', () => {
 		await expect(page.getByRole('heading', { name: 'Game abandoned' })).toBeVisible();
 	});
 });
+
+test.describe('watching a Room', () => {
+	const players = { X: HOST, O: 'guest-0007' };
+	/** The card of a Room Spectators may watch, for a page that holds no seat in it. */
+	const watchable = (seats: { X: string; O: string | null }) => ({
+		host: HOST,
+		variant: 'Standard',
+		rules: 'std',
+		players: seats,
+		you: null,
+		takebacks: false,
+		clock: null,
+		spectators: true
+	});
+	/** The marked Cells of a board that's only to read, as a Spectator's is. */
+	const read = (page: Page) => page.getByRole('img', { name: /^Cell \S+, [XO]$/ });
+
+	test('a host lets Spectators watch from the sheet', async ({ page }) => {
+		const room = await fakeRoom(page, { you: 'X', players: { X: HOST, O: null }, moves: [] });
+		await page.goto('/new-game?vs=friend');
+		const allow = page.getByRole('checkbox', { name: 'Allow spectators' });
+		await expect(allow).not.toBeChecked();
+		await allow.check();
+		await expect(page.getByText('Allowed: the players see how many, not who')).toBeVisible();
+		await page.getByRole('button', { name: 'Create invite Room' }).click();
+		await expect
+			.poll(() => room.created)
+			.toEqual([{ rules: 'std', seat: 'Random', takebacks: false, clock: null, spectators: true }]);
+	});
+
+	test('a full Room’s link watches its game: moves land, and none can be made', async ({
+		page
+	}) => {
+		const room = await fakeRoom(page, {
+			you: null,
+			players,
+			moves: top.slice(0, 2),
+			card: watchable(players),
+			snapshot: { watching: 1 }
+		});
+		await page.goto(`/r/${ROOM}`);
+		await expect(board(page)).toBeVisible();
+		expect(room.said[0]).toEqual({
+			type: 'Hello',
+			protocol: 4,
+			rules_version: 1,
+			room: ROOM,
+			role: 'Spectator'
+		});
+		await expect(page).toHaveTitle(`Watching ${HOST} vs guest-0007 · Kokonoe`);
+		await expect(page.getByText('You’re watching', { exact: true })).toBeVisible();
+		await expect(page.getByRole('link', { name: 'Stop watching' })).toBeVisible();
+		await expect(read(page)).toHaveCount(2);
+		await expect(page.getByRole('button', { name: /^Cell / })).toHaveCount(0);
+		await expect(page.getByRole('button', { name: 'Resign' })).toHaveCount(0);
+
+		room.moved(2, top[2]);
+		await expect(read(page)).toHaveCount(3);
+		room.say({ type: 'Watching', count: 3 });
+		await expect(page.getByText('You’re watching, with 2 others')).toBeVisible();
+		room.say({ type: 'Offer', kind: 'Draw', by: 'O', lapses_in: null });
+		await expect(page.getByText('guest-0007 offers a draw.', { exact: true })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Accept' })).toHaveCount(0);
+		room.say({ type: 'Ended', result: '1-0', termination: 'resign' });
+		await expect(page.getByRole('region', { name: 'Result' })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Rematch' })).toHaveCount(0);
+		expect(room.said.filter((message) => message.type !== 'Hello')).toEqual([]);
+
+		// The players agree to a rematch, and the Spectator goes to watch it.
+		room.say({ type: 'RematchRoom', room: NEXT });
+		await expect(page).toHaveURL(`/r/${NEXT}`);
+		await expect.poll(() => room.hellos()).toBe(2);
+		expect(room.said.at(-1)).toMatchObject({ type: 'Hello', room: NEXT, role: 'Spectator' });
+	});
+
+	test('a joiner may watch instead of taking the free seat', async ({ page }) => {
+		const seats = { X: HOST, O: null };
+		const room = await fakeRoom(page, {
+			you: null,
+			players: seats,
+			moves: [],
+			card: watchable(seats)
+		});
+		await page.goto(`/r/${ROOM}`);
+		await expect(page.getByText('Spectators allowed')).toBeVisible();
+		await page.getByRole('button', { name: 'Watch' }).click();
+		await expect(board(page)).toBeVisible();
+		expect(room.said[0]).toMatchObject({ type: 'Hello', role: 'Spectator' });
+		await expect(page.locator('[data-unseated]')).toHaveText('Waiting for a second player.');
+		await expect(page.getByRole('banner').getByText(`${HOST} vs a free seat`)).toBeVisible();
+
+		room.join('guest-0007');
+		await expect(page.locator('[data-unseated]')).toHaveCount(0);
+		await expect(turnLine(page, 'X: play anywhere.')).toBeVisible();
+	});
+
+	test('a player sees how many watch, a count and never who', async ({ page }) => {
+		const room = await fakeRoom(page, { you: 'X', players, moves: [] });
+		await page.goto(`/r/${ROOM}`);
+		await expect(board(page)).toBeVisible();
+		await expect(page.locator('[data-watching]')).toHaveCount(0);
+		room.say({ type: 'Watching', count: 2 });
+		await expect(page.locator('[data-watching]')).toHaveText('2 watching');
+		room.say({ type: 'Watching', count: 0 });
+		await expect(page.locator('[data-watching]')).toHaveCount(0);
+	});
+});

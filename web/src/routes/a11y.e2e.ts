@@ -101,6 +101,37 @@ for (const colorScheme of ['light', 'dark'] as const) {
 			await scan(page, 'the host’s wait');
 		});
 
+		test('a watched Room: the card’s Watch, the wait for a second player, and the game', async ({
+			page
+		}) => {
+			const seats = { X: HOST, O: null };
+			const room = await fakeRoom(page, {
+				you: null,
+				players: seats,
+				moves: [],
+				card: {
+					host: HOST,
+					variant: 'Standard',
+					rules: 'std',
+					players: seats,
+					you: null,
+					takebacks: false,
+					clock: null,
+					spectators: true
+				},
+				snapshot: { watching: 2 }
+			});
+			await page.goto(`/r/${ROOM}`);
+			await expect(page.getByRole('button', { name: 'Watch' })).toBeVisible();
+			await scan(page, 'the joiner’s card, with Watch');
+			await page.getByRole('button', { name: 'Watch' }).click();
+			await expect(page.locator('[data-unseated]')).toBeVisible();
+			await scan(page, 'a watched Room’s wait for a second player');
+			room.join(JOINER);
+			await expect(page.locator('[data-watching]')).toBeVisible();
+			await scan(page, 'the watched game');
+		});
+
 		test('a Room’s offers, and its rematch', async ({ page }) => {
 			const top = cells(TOP_ROW);
 			const players = { X: HOST, O: JOINER };

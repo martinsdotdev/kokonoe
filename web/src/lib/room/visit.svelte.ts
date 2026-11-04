@@ -1,4 +1,11 @@
-import { CloseCode, loadEngine, type Players, type RoomCard, type ServerMsg } from '#lib/engine.js';
+import {
+	CloseCode,
+	loadEngine,
+	type Players,
+	type Role,
+	type RoomCard,
+	type ServerMsg
+} from '#lib/engine.js';
 import { startSession } from '#lib/account.js';
 import { ENGINE } from '#lib/game/problem.js';
 import { UnplayableGame } from '#lib/game/record.js';
@@ -12,17 +19,21 @@ import { RoomGame } from './room.svelte.js';
 /** How long the page waits to read its saved copy of the game before it goes on without. */
 const SAVED_MS = 1500;
 
+/** Why a page that asked for the free seat watches instead. */
+export const TAKEN = 'Someone else took the seat first, so you’re watching.';
+
 /** Where a visit to a Room's link stands. */
 export type Phase =
 	| { kind: 'loading' }
 	/** The server can't be reached, and a Room is played on it: the game as this page last saw it. */
 	| { kind: 'offline'; saved: SavedGame | undefined }
 	| { kind: 'missing' }
+	/** Both seats are taken, and the Room can't be watched. */
 	| { kind: 'full'; players: Players }
-	/** A seat is free: the joiner's card, until they accept. */
+	/** A seat is free: the joiner's card, until they accept it or watch. */
 	| { kind: 'join'; card: RoomCard }
 	| { kind: 'connecting' }
-	/** Welcomed: waiting for the other player, playing, or reconnecting. */
+	/** Welcomed: waiting for the other player, playing, watching, or reconnecting. */
 	| { kind: 'playing'; game: RoomGame }
 	/**
 	 * Nobody made a first move in time, and the server forgot the game: `late` didn't, "You" or the
@@ -47,7 +58,9 @@ export interface VisitOptions {
 
 /**
  * Following a Room's link (spec §10.1): a session, then the Room's card, then, once the visitor
- * has a seat or accepts a free one, the socket and the game. Offline, it waits to be back online.
+ * has a seat or accepts a free one, the socket and the game. A visitor with no seat in a Room
+ * that can be watched may watch it instead, as a Spectator (spec §10.2): at once if both seats are
+ * taken, or by choice if one is free. Offline, it waits to be back online.
  */
 export class RoomVisit {
 	phase: Phase = $state.raw({ kind: 'loading' });
@@ -57,6 +70,10 @@ export class RoomVisit {
 	#window: Window;
 	#link: Link | null = null;
 	#game: RoomGame | null = null;
+	/** What this page's socket comes to the Room as. */
+	#role: Role = 'Player';
+	/** The free seat this page asked for was taken first, so it watches: it falls back once. */
+	#fellBack = false;
 	/** The game as this page last saved it, if it played here before. */
 	#saved: Promise<SavedGame | undefined>;
 	/** The game as this page last saved it, read before the socket opens. */
@@ -78,7 +95,12 @@ export class RoomVisit {
 
 	/** Takes the free seat the card offers. */
 	accept() {
-		if (this.phase.kind === 'join') this.#connect();
+		if (this.phase.kind === 'join') this.#connect('Player');
+	}
+
+	/** Watches the game the card offers instead of taking its free seat. */
+	watch() {
+		if (this.phase.kind === 'join' && this.phase.card.spectators) this.#connect('Spectator');
 	}
 
 	/** Tries again after the server couldn't be reached. */
@@ -106,12 +128,14 @@ export class RoomVisit {
 		if (this.#disposed) return;
 		if (card === undefined) this.phase = { kind: 'offline', saved: await this.#saved };
 		else if (card === 'missing') await this.#missing();
-		else if (card.you) this.#connect();
-		else if (full(card.players)) this.phase = { kind: 'full', players: card.players };
-		else this.phase = { kind: 'join', card };
+		else if (card.you) this.#connect('Player');
+		else if (!full(card.players)) this.phase = { kind: 'join', card };
+		else if (card.spectators) this.#connect('Spectator');
+		else this.phase = { kind: 'full', players: card.players };
 	}
 
-	async #connect() {
+	async #connect(role: Role) {
+		this.#role = role;
 		this.phase = { kind: 'connecting' };
 		try {
 			await loadEngine();
@@ -128,7 +152,7 @@ export class RoomVisit {
 			dropped: () => this.#game?.dropped(),
 			ended: (code: number) => this.#ended(code)
 		};
-		this.#link = new Link(hello(this.room), events, { open: this.#options.open });
+		this.#link = new Link(hello(this.room, role), events, { open: this.#options.open });
 	}
 
 	#heard(message: ServerMsg) {
@@ -143,7 +167,8 @@ export class RoomVisit {
 					room: this.room,
 					store: this.#store,
 					saved: this.#kept,
-					onrematch: this.#options.follow
+					onrematch: this.#options.follow,
+					notice: this.#fellBack ? TAKEN : undefined
 				};
 				this.#game = new RoomGame(message, link, options);
 			}
@@ -175,14 +200,23 @@ export class RoomVisit {
 		}
 	}
 
-	/** The server didn't let the socket in: someone else took the seat first, most likely. */
+	/**
+	 * The server didn't let the socket in. A player was most likely beaten to the seat, and then
+	 * watches if the Room can be watched, once; a Spectator's refusal has no such reason, and
+	 * shows as a problem, so neither can loop.
+	 */
 	async #refused() {
 		const card = await roomCard(this.room, this.#options.fetch);
 		if (this.#disposed) return;
-		this.phase =
-			card && card !== 'missing' && !card.you && full(card.players)
-				? { kind: 'full', players: card.players }
-				: { kind: 'problem', message: 'Kokonoe’s server didn’t let this page into the game.' };
+		const taken =
+			this.#role === 'Player' && card && card !== 'missing' && !card.you && full(card.players);
+		if (taken && card.spectators && !this.#fellBack) {
+			this.#fellBack = true;
+			return this.#connect('Spectator');
+		}
+		this.phase = taken
+			? { kind: 'full', players: card.players }
+			: { kind: 'problem', message: 'Kokonoe’s server didn’t let this page into the game.' };
 	}
 
 	/**

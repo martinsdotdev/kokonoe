@@ -5,19 +5,23 @@ import {
 	type ClientMsg,
 	type GameResult,
 	type OfferKind,
+	type Role,
 	type ServerMsg,
 	type Termination
 } from '#lib/engine.js';
 import { isClock } from '#lib/game/rules.js';
 import { field, isPlayer, isRoomId, readPlayers } from './api.js';
 
-/** The `Hello` that opens every socket, naming this build. Needs the engine loaded. */
-export const hello = (room: string): ClientMsg => ({
+/**
+ * The `Hello` that opens every socket, naming this build and what it comes as: a player, or a
+ * Spectator, who watches. Needs the engine loaded.
+ */
+export const hello = (room: string, role: Role = 'Player'): ClientMsg => ({
 	type: 'Hello',
 	protocol: protocolVersion(),
 	rules_version: rulesVersion(),
 	room,
-	role: 'Player'
+	role
 });
 
 /**

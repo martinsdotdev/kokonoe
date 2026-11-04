@@ -42,6 +42,8 @@ export interface RoomOptions {
 	saved?: SavedGame;
 	/** Goes to the Room a rematch made, once both players agreed to it. */
 	onrematch?: (room: string) => void;
+	/** What the page says as the game opens: why it watches, when it meant to play. */
+	notice?: string;
 }
 
 /** What a Room's game needs of its socket. */
@@ -127,6 +129,10 @@ const replay = (record: GameRecord): { game: Game; moves: Move[] } => {
  * absent player's time away with every `Welcome` and `Presence`, stamped in the server's Unix
  * milliseconds, which a few `Ping`s after each `Welcome` measure against the page's (spec §10.3).
  * Once the other player has been away long enough, this page may Claim the game.
+ *
+ * A Spectator's page (spec §10.2) has no seat: it shows the game and does nothing in it. It hears
+ * the Room as late as its `Welcome` says, so every server time it hears is that old, and the page
+ * shows them that much later. Everyone hears how many watch.
  */
 export class RoomGame implements GameSession {
 	readonly variant: Variant;
@@ -150,6 +156,10 @@ export class RoomGame implements GameSession {
 	#clocks: Clocks | null = $state.raw(null);
 	/** The server's clock less the page's, in milliseconds. */
 	#offset = $state.raw(0);
+	/** How late this page hears the Room, in milliseconds: 0 but for a Spectator's of a Rated game. */
+	#delay = $state.raw(0);
+	/** How many Accounts watch, as Spectators. */
+	#spectators = $state.raw(0);
 	/** The round trip `#offset` was measured over: none yet, until a `Pong`. */
 	#rtt = Infinity;
 	/** How many `Pong`s came since the last `Welcome`. */
@@ -201,6 +211,7 @@ export class RoomGame implements GameSession {
 		this.status = $state.raw(game.status());
 		this.won = $state.raw(this.#counts());
 		this.#take(welcome.snapshot);
+		this.notice = options.notice ?? null;
 		this.#save();
 	}
 
@@ -244,6 +255,9 @@ export class RoomGame implements GameSession {
 				return this.#presence(message.player, message.away);
 			case 'Pong':
 				return this.#pong(message.t, message.server_ms);
+			case 'Watching':
+				this.#spectators = message.count;
+				return;
 			case 'RematchRoom':
 				this.#rematch = message.room;
 				this.#onrematch?.(message.room);
@@ -254,16 +268,21 @@ export class RoomGame implements GameSession {
 		return this.#connected;
 	}
 
+	/** How many Accounts watch the Room, as Spectators. */
+	get spectators(): number {
+		return this.#spectators;
+	}
+
 	/** A timed Room's clocks, in this page's time. */
 	get clocks(): ClockView | null {
 		const clocks = this.#clocks;
-		const offset = this.#offset;
+		const shift = this.#shift;
 		return (
 			clocks && {
 				ms: { X: clocks.x_ms, O: clocks.o_ms },
 				running: clocks.running,
-				at: clocks.at - offset,
-				aborts: clocks.aborts_at === null ? null : clocks.aborts_at - offset
+				at: clocks.at - shift,
+				aborts: clocks.aborts_at === null ? null : clocks.aborts_at - shift
 			}
 		);
 	}
@@ -274,7 +293,7 @@ export class RoomGame implements GameSession {
 			const away = this.#away[player];
 			// Once the game is over no one is kept waiting, however long ago they left.
 			if (player === this.you || !away || this.end !== null) return null;
-			return away.since - this.#offset;
+			return away.since - this.#shift;
 		};
 		return { X: since('X'), O: since('O') };
 	}
@@ -494,6 +513,14 @@ export class RoomGame implements GameSession {
 		return this.seated && this.#connected;
 	}
 
+	/**
+	 * A server time as this page shows it is that time less this: the server's clock less the
+	 * page's, less how late the page hears the Room, since what it hears is that old.
+	 */
+	get #shift(): number {
+		return this.#offset - this.#delay;
+	}
+
 	/** `player`'s Handle, or how the page names a seat still empty. */
 	#name(player: Player): string {
 		return this.players[player] ?? (this.you ? 'your friend' : 'a player');
@@ -559,7 +586,7 @@ export class RoomGame implements GameSession {
 		if (!clocks) return;
 		const now = Date.now();
 		const ms = (player: Player) => (player === flagged ? 0 : left(clocks, player, now));
-		const at = clocks.at + this.#offset;
+		const at = clocks.at + this.#shift;
 		this.#clocks = { x_ms: ms('X'), o_ms: ms('O'), running: null, at, aborts_at: null };
 	}
 
@@ -593,6 +620,8 @@ export class RoomGame implements GameSession {
 
 	/** What a `Welcome` says of the Room beyond its game's moves. */
 	#take(snapshot: Snapshot) {
+		this.#delay = snapshot.delay_ms;
+		this.#spectators = snapshot.watching;
 		this.#takebacks = snapshot.takebacks;
 		this.#draws = snapshot.draws;
 		this.#offer = snapshot.offer && waiting(snapshot.offer);
@@ -603,8 +632,10 @@ export class RoomGame implements GameSession {
 		this.#claimed = false;
 		this.#clocks = snapshot.clocks;
 		// Until a `Pong` measures it, the time a timed Room's clocks were read stands for the
-		// server's now.
-		if (snapshot.clocks && this.#rtt === Infinity) this.#offset = snapshot.clocks.at - Date.now();
+		// server's now, less the delay this page hears it with.
+		if (snapshot.clocks && this.#rtt === Infinity) {
+			this.#offset = snapshot.clocks.at + this.#delay - Date.now();
+		}
 		this.#pongs = 0;
 		this.#ping();
 	}

@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { CloseCode, loadEngine, type RoomCard } from '#lib/engine.js';
 import { FakeStore, ROOM, sockets, welcome } from './room.fixtures.js';
-import { RoomVisit } from './visit.svelte.js';
+import { RoomVisit, TAKEN } from './visit.svelte.js';
 
 beforeAll(() => loadEngine());
 
@@ -63,6 +63,57 @@ describe('following a Room’s link', () => {
 		await phase(made).toBe('playing');
 		if (made.phase.kind !== 'playing') return;
 		expect(made.phase.game.seated).toBe(false);
+	});
+
+	it('watches a full Room that can be watched, or one with a seat free if asked', async () => {
+		const full = visit(server({ ...card({ X: 'a', O: 'b' }), spectators: true }));
+		await expect.poll(() => full.fake.opened.length).toBe(1);
+		full.fake.last().accept();
+		expect(full.fake.last().sent).toEqual([
+			{ type: 'Hello', protocol: 4, rules_version: 1, room: ROOM, role: 'Spectator' }
+		]);
+		full.fake.last().say(welcome(null, { X: 'a', O: 'b' }));
+		await phase(full.visit).toBe('playing');
+		if (full.visit.phase.kind !== 'playing') return;
+		expect(full.visit.phase.game.watching).toBe(true);
+		expect(full.visit.phase.game.notice).toBeNull();
+
+		const free = visit(server({ ...card({ X: 'a', O: null }), spectators: true }));
+		await phase(free.visit).toBe('join');
+		free.visit.watch();
+		await expect.poll(() => free.fake.opened.length).toBe(1);
+		free.fake.last().accept();
+		expect(free.fake.last().sent).toMatchObject([{ type: 'Hello', role: 'Spectator' }]);
+
+		const closed = visit(server(card({ X: 'a', O: null })));
+		await phase(closed.visit).toBe('join');
+		closed.visit.watch();
+		expect(closed.visit.phase.kind, 'a Room that can’t be watched').toBe('join');
+		expect(closed.fake.opened).toEqual([]);
+	});
+
+	it('watches once someone else took the seat it asked for, and never asks again', async () => {
+		const free = { ...card({ X: 'a', O: null }), spectators: true };
+		const taken = { ...card({ X: 'a', O: 'b' }), spectators: true };
+		const beaten = visit(server(free, taken));
+		await phase(beaten.visit).toBe('join');
+		beaten.visit.accept();
+		await expect.poll(() => beaten.fake.opened.length).toBe(1);
+		beaten.fake.last().end(CloseCode.Forbidden);
+		await expect.poll(() => beaten.fake.opened.length).toBe(2);
+		beaten.fake.last().accept();
+		expect(beaten.fake.last().sent).toMatchObject([{ type: 'Hello', role: 'Spectator' }]);
+		beaten.fake.last().say(welcome(null, { X: 'a', O: 'b' }));
+		await phase(beaten.visit).toBe('playing');
+		if (beaten.visit.phase.kind !== 'playing') return;
+		expect(beaten.visit.phase.game.notice).toBe(TAKEN);
+
+		// The server's refusal of a Spectator is a problem, which nothing asks again.
+		const refused = visit(server(taken));
+		await expect.poll(() => refused.fake.opened.length).toBe(1);
+		refused.fake.last().end(CloseCode.Forbidden);
+		await phase(refused.visit).toBe('problem');
+		expect(refused.fake.opened).toHaveLength(1);
 	});
 
 	it('says so when the game is full or missing', async () => {

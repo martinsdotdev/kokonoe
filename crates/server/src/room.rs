@@ -11,15 +11,19 @@
 //! And it keeps who is in it (spec §10.3 and §11): a seated player with no socket here is away,
 //! which the table holds and the other player hears. Once they've been away long enough the other
 //! may Claim the game, and a game both players left ends Abandoned a day on.
+//!
+//! Spectators watch it too (spec §10.2), in a Room that can be watched. A Spectator's socket holds
+//! no seat: it hears what the players hear, and everyone hears how many watch, but nothing it asks
+//! is done, and it never keeps a player here.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::Duration;
 
 use kokonoe_engine::{Cell, Game, PlayError, Played, Player, Ply, Seed, Status};
 use kokonoe_protocol::{
     Abort, Away, ClaimKind, ClientMsg, Clocks, Draws, GameEnd, GameResult, Offer, OfferKind,
-    Presence, Rejection, ServerMsg, Snapshot, Termination,
+    Presence, Rejection, Role, ServerMsg, Snapshot, Termination,
 };
 use sqlx::PgPool;
 use tokio::sync::{mpsc, oneshot};
@@ -40,9 +44,9 @@ const COMMANDS: usize = 64;
 /// How long things take in a Room: how long an offer waits for its answer (spec §10.2), which the
 /// players hear as each `Offer`'s `lapses_in`; a timed Room's first-move window and the units of
 /// its time controls, how long a player is away before a Claim and before an empty Room is
-/// abandoned (spec §11); and how often the server looks for such Rooms and pings a socket. Tests
-/// shorten them. A draw offer has no deadline: it stands until it's answered or the offerer
-/// moves.
+/// abandoned (spec §11); how often the server looks for such Rooms and pings a socket; and how
+/// late Spectators hear a game, and how often they hear how many watch (spec §10.2). Tests shorten
+/// them. A draw offer has no deadline: it stands until it's answered or the offerer moves.
 #[derive(Clone, Copy, Debug)]
 pub struct Timing {
     /// How long a takeback waits for its answer.
@@ -64,6 +68,15 @@ pub struct Timing {
     /// How often the server pings an open socket; one that answers neither of two in a row is
     /// closed. Not zero.
     pub keepalive: Duration,
+    /// How late Spectators hear a Casual game: live. Tests delay it, to watch a delayed Room
+    /// before any Room is Rated.
+    pub casual_delay: Duration,
+    /// How late Spectators hear a Rated game, so no one watching can pass a player an engine's
+    /// moves in time (spec §15).
+    pub rated_delay: Duration,
+    /// How often at most everyone hears how many watch, so Spectators coming and going can't fill
+    /// the players' queues.
+    pub count: Duration,
 }
 
 impl Default for Timing {
@@ -78,6 +91,9 @@ impl Default for Timing {
             abandon: Duration::from_secs(24 * 60 * 60),
             sweep: Duration::from_secs(60),
             keepalive: Duration::from_secs(30),
+            casual_delay: Duration::ZERO,
+            rated_delay: Duration::from_secs(10),
+            count: Duration::from_secs(1),
         }
     }
 }
@@ -125,7 +141,7 @@ pub enum Command {
     Wake,
 }
 
-/// What a seated socket asks of the Room.
+/// What a socket asks of the Room: only a seated one's is done, and a Spectator's is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Act {
     Move { ply: u16, cell: u16 },
@@ -154,14 +170,33 @@ impl Act {
     }
 }
 
-/// A socket asking for a seat: the one its Account holds, or an empty one.
+/// A socket coming to the Room: to the seat its Account holds, whatever its role; else to an
+/// empty one, or to watch.
 pub struct Join {
     pub account: AccountId,
     pub handle: String,
+    /// What its `Hello` asked to come as.
+    pub role: Role,
     /// Where the Room's messages for this socket go.
     pub out: mpsc::Sender<ServerMsg>,
-    /// The socket's place, or nothing when both seats are someone else's.
-    pub reply: oneshot::Sender<Option<Conn>>,
+    /// The socket's place, or why it has none.
+    pub reply: oneshot::Sender<Result<Entered, Turned>>,
+}
+
+/// A socket's place in the Room, and how late it hears it: 0 but for a Spectator of a game
+/// Spectators hear late.
+pub struct Entered {
+    pub conn: Conn,
+    pub delay: Duration,
+}
+
+/// Why a socket has no place in the Room.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Turned {
+    /// It asked for a seat, and both are someone else's.
+    Full,
+    /// It asked to watch a Room that can't be watched.
+    NoSpectators,
 }
 
 /// A write didn't do what the Room expected, so it stops.
@@ -206,6 +241,13 @@ struct Room {
     absent: Absent,
     /// The game was aborted, and its row is gone.
     gone: bool,
+    /// Whether the host let Spectators watch.
+    spectators: bool,
+    /// Whether the game is Rated: none is until Ratings (KOK-62), so every Room's Spectators
+    /// watch it live.
+    rated: bool,
+    /// When everyone was last told how many watch.
+    counted: Option<Instant>,
 }
 
 /// Since when each seated player has had no socket in the Room, in the server's Unix ms: None while
@@ -251,8 +293,12 @@ impl Pending {
 }
 
 struct Socket {
-    player: Player,
+    /// The seat it plays, or None for a Spectator's.
+    seat: Option<Player>,
+    account: AccountId,
     out: mpsc::Sender<ServerMsg>,
+    /// How many watch, as this socket last heard it.
+    heard: u32,
 }
 
 /// Starts the Room `id` from what was stored, its game opened from it, and gives the way to reach
@@ -312,6 +358,9 @@ pub fn spawn(
         next: 0,
         absent,
         gone: false,
+        spectators: stored.spectators,
+        rated: false,
+        counted: None,
     };
     tokio::spawn(room.run(inbox));
     commands
@@ -328,7 +377,7 @@ impl Room {
     async fn serve(&mut self, mut inbox: mpsc::Receiver<Command>) -> Result<(), Broken> {
         // A Room just loaded has no one in it, though the table may hold someone here: a task an
         // earlier write stopped left them so.
-        self.present().await?;
+        self.people().await?;
         loop {
             // A Room loaded long after a deadline or its wait settles it before the message that
             // loaded it, which a timer for a moment already past wouldn't.
@@ -339,6 +388,7 @@ impl Room {
             }
             let due = self.due();
             let lapses = self.offer.as_ref().and_then(|pending| pending.lapses);
+            let recount = self.recount_due();
             tokio::select! {
                 // A turn past its deadline or a game left past its wait, then an offer past its
                 // lapse, is settled before any message that came after it.
@@ -354,9 +404,11 @@ impl Room {
                     Some(Command::Wake) => {}
                     None => return Ok(()),
                 },
+                // How many watch, told below once it may be again.
+                () = until(recount) => {}
             }
             // Whoever came or went, written and told, before the Room waits again.
-            self.present().await?;
+            self.people().await?;
             if self.sockets.is_empty() {
                 return Ok(());
             }
@@ -367,22 +419,32 @@ impl Room {
         let Join {
             account,
             handle,
+            role,
             out,
             reply,
         } = join;
-        let (player, seated) = match self.seats.of(account) {
-            Some(player) => (player, false),
-            None => {
+        let (seat, seated) = match (self.seats.of(account), role) {
+            (Some(player), _) => (Some(player), false),
+            (None, Role::Player) => {
                 let Some(player) = self.seats.empty() else {
-                    let _ = reply.send(None);
+                    let _ = reply.send(Err(Turned::Full));
                     return Ok(());
                 };
                 write(games::seat(&self.pool, &self.id, player, account)).await?;
                 self.seats.set(player, Seat { account, handle });
-                (player, true)
+                // Its sockets that watched until now go, and their pages come back as its player.
+                self.sockets.retain(|_, socket| socket.account != account);
+                (Some(player), true)
+            }
+            (None, Role::Spectator) => {
+                if !self.watchable() {
+                    let _ = reply.send(Err(Turned::NoSpectators));
+                    return Ok(());
+                }
+                (None, false)
             }
         };
-        if seated && self.seats.full() {
+        if let Some(player) = seat.filter(|_| seated && self.seats.full()) {
             // The game begins, and with it the first turn. A player gone before it began is gone
             // from it only from now, as the table has it.
             self.since = Instant::now();
@@ -393,23 +455,48 @@ impl Room {
         }
         let conn = Conn(self.next);
         self.next += 1;
-        self.sockets.insert(conn, Socket { player, out });
-        let _ = reply.send(Some(conn));
+        let socket = Socket {
+            seat,
+            account,
+            out,
+            heard: 0,
+        };
+        self.sockets.insert(conn, socket);
+        let delay = if seat.is_some() {
+            Duration::ZERO
+        } else {
+            self.delay()
+        };
+        let _ = reply.send(Ok(Entered { conn, delay }));
         // A seat that fills tells everyone, so whoever was waiting learns who joined.
         let snapshot = self.snapshot();
+        let late = ms(self.delay());
         self.tell(|other, socket| {
-            (seated || other == conn).then(|| ServerMsg::Welcome {
-                you: Some(socket.player),
-                snapshot: snapshot.clone(),
+            if !seated && other != conn {
+                return None;
+            }
+            socket.heard = snapshot.watching;
+            let delay_ms = if socket.seat.is_some() { 0 } else { late };
+            Some(ServerMsg::Welcome {
+                you: socket.seat,
+                snapshot: Snapshot {
+                    delay_ms,
+                    ..snapshot.clone()
+                },
             })
         });
         Ok(())
     }
 
-    /// Does what a seated socket asked, or tells it why not.
+    /// Does what a seated socket asked, or tells it why not. A Spectator's every act is refused.
     async fn act(&mut self, conn: Conn, act: Act) -> Result<(), Broken> {
         self.expire().await?;
-        let Some(player) = self.sockets.get(&conn).map(|socket| socket.player) else {
+        let Some(seat) = self.sockets.get(&conn).map(|socket| socket.seat) else {
+            return Ok(());
+        };
+        let Some(player) = seat else {
+            let reason = Rejection::NotAllowed;
+            self.send(conn, ServerMsg::Rejected { reason });
             return Ok(());
         };
         let allowed = match act {
@@ -674,11 +761,13 @@ impl Room {
     }
 
     /// Settles what has come due: a turn past its deadline, which aborts the game or loses it on
-    /// time, or a game both players left past its wait, which ends Abandoned.
+    /// time, or a game both players left past its wait, which ends Abandoned. Only Spectators can
+    /// be here to hear that.
     async fn settle(&mut self) -> Result<(), Broken> {
         self.expire().await?;
         if self.abandons().is_some_and(|at| at <= Instant::now()) {
             self.stop(GameEnd::ABANDONED).await?;
+            self.announce(ServerMsg::Ended(GameEnd::ABANDONED));
         }
         Ok(())
     }
@@ -690,9 +779,9 @@ impl Room {
     }
 
     /// When a game both players are away from ends Abandoned: the Room's wait after the later one
-    /// left.
+    /// left. Spectators watching don't keep it going.
     fn abandons(&self) -> Option<Instant> {
-        if !self.turn() || !self.sockets.is_empty() {
+        if !self.turn() || self.here(Player::X) || self.here(Player::O) {
             return None;
         }
         abandons_at(self.absent.x, self.absent.o, self.timing.abandon).map(instant)
@@ -700,7 +789,75 @@ impl Room {
 
     /// Whether `player` has a socket here.
     fn here(&self, player: Player) -> bool {
-        self.sockets.values().any(|socket| socket.player == player)
+        self.sockets
+            .values()
+            .any(|socket| socket.seat == Some(player))
+    }
+
+    /// How many Accounts watch: Spectators, counted once however many sockets each has.
+    fn watching(&self) -> u32 {
+        let accounts: HashSet<AccountId> = self
+            .sockets
+            .values()
+            .filter(|socket| socket.seat.is_none())
+            .map(|socket| socket.account)
+            .collect();
+        u32::try_from(accounts.len()).unwrap_or(u32::MAX)
+    }
+
+    /// How late Spectators hear the game.
+    fn delay(&self) -> Duration {
+        spectator_delay(self.rated, &self.timing)
+    }
+
+    /// Whether Spectators may watch: a public game always, and an invite Room its host let them
+    /// watch (spec §10.2).
+    fn watchable(&self) -> bool {
+        self.rated || self.spectators
+    }
+
+    /// Writes and tells whoever came or went, and how many watch, until no one changes: either
+    /// telling can drop a socket the other must hear of.
+    async fn people(&mut self) -> Result<(), Broken> {
+        loop {
+            self.present().await?;
+            if !self.recount() {
+                return Ok(());
+            }
+        }
+    }
+
+    /// When the sockets that heard another count than how many watch now may hear it: at once,
+    /// unless everyone was told less than `Timing::count` ago.
+    fn recount_due(&self) -> Option<Instant> {
+        let count = self.watching();
+        let stale = self.sockets.values().any(|socket| socket.heard != count);
+        stale.then(|| {
+            self.counted
+                .map_or_else(Instant::now, |at| at + self.timing.count)
+        })
+    }
+
+    /// Tells how many watch to each socket that heard another count, once it may: true if it told
+    /// anyone, which can drop a socket.
+    fn recount(&mut self) -> bool {
+        let Some(due) = self.recount_due() else {
+            return false;
+        };
+        // After the due time is read, so a count due at once is.
+        let now = Instant::now();
+        if due > now {
+            return false;
+        }
+        let count = self.watching();
+        self.tell(|_, socket| {
+            (socket.heard != count).then(|| {
+                socket.heard = count;
+                ServerMsg::Watching { count }
+            })
+        });
+        self.counted = Some(now);
+        true
     }
 
     /// `player`'s absence as the other player hears it at `now`, while they have no socket here.
@@ -714,7 +871,7 @@ impl Room {
 
     /// Writes and tells whoever came or went: a seated player whose first socket arrived, or whose
     /// last went, by a `Leave`, a dropped queue or an abort. Telling can drop a socket, so it looks
-    /// again until no one changes.
+    /// again until no one changes. The other player and every Spectator hear it.
     async fn present(&mut self) -> Result<(), Broken> {
         // An aborted game's row is gone, and so is everyone in it.
         if self.gone {
@@ -734,7 +891,7 @@ impl Room {
             self.absent.set(player, left.then_some(now));
             let away = self.away(player, now);
             self.tell(|_, socket| {
-                (socket.player != player).then_some(ServerMsg::Presence { player, away })
+                (socket.seat != Some(player)).then_some(ServerMsg::Presence { player, away })
             });
         }
     }
@@ -828,7 +985,8 @@ impl Room {
                 x: self.away(Player::X, now),
                 o: self.away(Player::O, now),
             },
-            watching: 0,
+            watching: self.watching(),
+            // Each socket's own, which `join` says.
             delay_ms: 0,
         }
     }
@@ -841,7 +999,7 @@ impl Room {
     /// Queues each socket the message `to` gives it, if any. A socket that's gone, or so far
     /// behind that its queue is full, is dropped: dropping its queue closes it, and its page
     /// reconnects for a fresh `Welcome`.
-    fn tell(&mut self, to: impl Fn(Conn, &Socket) -> Option<ServerMsg>) {
+    fn tell(&mut self, mut to: impl FnMut(Conn, &mut Socket) -> Option<ServerMsg>) {
         self.sockets.retain(|&conn, socket| match to(conn, socket) {
             Some(message) => socket.out.try_send(message).is_ok(),
             None => true,
@@ -854,6 +1012,16 @@ impl Room {
         {
             self.sockets.remove(&conn);
         }
+    }
+}
+
+/// How late Spectators hear a game (spec §10.2): `Timing::rated_delay` if it's Rated, and
+/// `Timing::casual_delay`, live, if it isn't.
+fn spectator_delay(rated: bool, timing: &Timing) -> Duration {
+    if rated {
+        timing.rated_delay
+    } else {
+        timing.casual_delay
     }
 }
 
@@ -910,7 +1078,7 @@ fn ply(index: usize) -> Ply {
 }
 
 /// Resolves at `at`, or never without one.
-async fn until(at: Option<Instant>) {
+pub(crate) async fn until(at: Option<Instant>) {
     match at {
         Some(at) => tokio::time::sleep_until(at).await,
         None => std::future::pending().await,
@@ -992,6 +1160,19 @@ mod tests {
         let timing = Timing::default();
         assert_eq!(timing.takeback, Duration::from_secs(15));
         assert_eq!(timing.rematch, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn spectators_watch_as_spec_10_2_says() {
+        let timing = Timing::default();
+        assert_eq!(spectator_delay(false, &timing), Duration::ZERO, "live");
+        assert_eq!(spectator_delay(true, &timing), Duration::from_secs(10));
+        assert_eq!(timing.count, Duration::from_secs(1));
+        let late = Timing {
+            casual_delay: Duration::from_millis(300),
+            ..timing
+        };
+        assert_eq!(spectator_delay(false, &late), Duration::from_millis(300));
     }
 
     #[test]

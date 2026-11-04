@@ -3,19 +3,20 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use kokonoe_engine::{Game, Player, Preset, Ruleset, Seed};
-use kokonoe_protocol::{CreatedRoom, NewRoom, RoomCard, SeatChoice, ServerMsg};
+use kokonoe_protocol::{CreatedRoom, NewRoom, Role, RoomCard, SeatChoice, ServerMsg};
 use sqlx::PgPool;
 use tokio::sync::{OnceCell, mpsc, oneshot};
 use tokio::time::{Instant, MissedTickBehavior};
 
 use crate::random::bytes;
-use crate::room::{self, Command, Conn, Join, RoomId, Timing};
+use crate::room::{self, Command, Conn, Entered, Join, RoomId, Timing, Turned};
 use crate::session::{self, AccountId};
 use crate::{AppState, Unavailable, games};
 
@@ -38,10 +39,11 @@ pub struct Rooms {
     recovered: Arc<OnceCell<()>>,
 }
 
-/// A socket's place in a Room.
+/// A socket's place in a Room, and how late it hears it.
 pub struct Joined {
     pub conn: Conn,
     pub room: mpsc::Sender<Command>,
+    pub delay: Duration,
 }
 
 /// Why a socket has no place in a Room.
@@ -49,6 +51,8 @@ pub struct Joined {
 pub enum Refused {
     NoRoom,
     Full,
+    /// It asked to watch a Room that can't be watched.
+    NoSpectators,
     /// The database didn't answer, or holds a game this build can't open.
     Unavailable,
 }
@@ -112,13 +116,15 @@ impl Rooms {
         Ok(())
     }
 
-    /// Seats `account` in the Room `id`: the seat it already holds, or an empty one. Its messages
-    /// go to `out`. A Room whose task stops before answering is loaded again.
+    /// Brings `account` into the Room `id`: to the seat it already holds, else as `role` asks, to an
+    /// empty one or to watch. Its messages go to `out`. A Room whose task stops before answering
+    /// is loaded again.
     pub async fn join(
         &self,
         id: &RoomId,
         account: AccountId,
         handle: &str,
+        role: Role,
         out: mpsc::Sender<ServerMsg>,
     ) -> Result<Joined, Refused> {
         for _ in 0..ATTEMPTS {
@@ -127,6 +133,7 @@ impl Rooms {
             let join = Join {
                 account,
                 handle: handle.to_owned(),
+                role,
                 out: out.clone(),
                 reply,
             };
@@ -134,8 +141,9 @@ impl Rooms {
                 continue;
             }
             match answer.await {
-                Ok(Some(conn)) => return Ok(Joined { conn, room }),
-                Ok(None) => return Err(Refused::Full),
+                Ok(Ok(Entered { conn, delay })) => return Ok(Joined { conn, room, delay }),
+                Ok(Err(Turned::Full)) => return Err(Refused::Full),
+                Ok(Err(Turned::NoSpectators)) => return Err(Refused::NoSpectators),
                 Err(_) => continue,
             }
         }
@@ -214,6 +222,7 @@ pub async fn create(
         seat,
         takebacks: asked.takebacks,
         clock: asked.clock,
+        spectators: asked.spectators,
     };
     games::insert(&state.pool, &room, game).await?;
     let link = [(header::LOCATION, format!("/r/{room}"))];
@@ -246,8 +255,8 @@ pub async fn card(
         takebacks: stored.takebacks,
         clock: stored.clock,
         players: stored.seats.players(),
+        spectators: stored.watchable(),
         host: stored.host,
-        spectators: false,
     };
     Ok((no_store, Json(card)).into_response())
 }

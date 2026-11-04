@@ -72,6 +72,8 @@ pub struct Stored {
     pub host: String,
     pub seats: Seats,
     pub takebacks: bool,
+    /// Whether the host let Spectators watch.
+    pub spectators: bool,
     pub draws: Draws,
     /// Null for a game that goes on, or one that ended before Terminations were kept, which the
     /// rules can end again. An Abandoned game's has no Result.
@@ -95,6 +97,12 @@ impl Stored {
     pub fn variant(&self) -> &'static str {
         Preset::of(&self.record.ruleset).map_or("Custom variant", Preset::name)
     }
+
+    /// Whether Spectators may watch: as its host chose, since every Room is Casual until Ratings
+    /// (KOK-62), and a Rated one could always be watched.
+    pub fn watchable(&self) -> bool {
+        self.spectators
+    }
 }
 
 /// What a host makes a Room with.
@@ -105,6 +113,7 @@ pub struct NewGame {
     pub seat: Player,
     pub takebacks: bool,
     pub clock: Option<TimeControl>,
+    pub spectators: bool,
 }
 
 /// Makes the Room `room`, with the host in their seat but not yet in the Room, the other seat
@@ -117,13 +126,14 @@ pub async fn insert(pool: &PgPool, room: &RoomId, game: NewGame) -> Result<(), s
         seat,
         takebacks,
         clock,
+        spectators,
     } = game;
     let json = serde_json::to_string(&ruleset).expect("a Ruleset is always JSON");
     sqlx::query(
         "INSERT INTO games
              (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id, takebacks,
-              clock, x_away, o_away)
-         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10,
+              clock, spectators, x_away, o_away)
+         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11,
                  CASE WHEN $7::bigint IS NULL THEN NULL ELSE now() END,
                  CASE WHEN $8::bigint IS NULL THEN NULL ELSE now() END)",
     )
@@ -137,6 +147,7 @@ pub async fn insert(pool: &PgPool, room: &RoomId, game: NewGame) -> Result<(), s
     .bind((seat == Player::O).then_some(host))
     .bind(takebacks)
     .bind(clock.map(|clock| clock.to_string()))
+    .bind(spectators)
     .execute(pool)
     .await?;
     Ok(())
@@ -299,9 +310,9 @@ pub async fn rematch(
         "WITH made AS (
              INSERT INTO games
                  (room, rules_version, ruleset, ruleset_code, seed, host_id, x_id, o_id, takebacks,
-                  clock, turn_since, x_away, o_away)
-             SELECT $2, $3, ruleset, ruleset_code, $4, host_id, o_id, x_id, takebacks, clock, now(),
-                    now(), now()
+                  clock, spectators, turn_since, x_away, o_away)
+             SELECT $2, $3, ruleset, ruleset_code, $4, host_id, o_id, x_id, takebacks, clock,
+                    spectators, now(), now(), now()
              FROM games
              WHERE room = $1 AND (result IS NOT NULL OR termination IS NOT NULL)
                AND rematch IS NULL
@@ -388,6 +399,7 @@ struct StoredRow {
     o_id: Option<AccountId>,
     o: Option<String>,
     takebacks: bool,
+    spectators: bool,
     x_draw_offers: i16,
     o_draw_offers: i16,
     result: Option<String>,
@@ -407,7 +419,8 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
         "SELECT json_build_object('rules_version', g.rules_version, 'ruleset', g.ruleset,
                                   'seed', g.seed, 'moves', g.moves)::text AS record,
                 h.handle::text AS host, g.x_id, x.handle::text AS x, g.o_id, o.handle::text AS o,
-                g.takebacks, g.x_draw_offers, g.o_draw_offers, g.result, g.termination, g.rematch,
+                g.takebacks, g.spectators, g.x_draw_offers, g.o_draw_offers, g.result,
+                g.termination, g.rematch,
                 g.clock, g.clocks,
                 COALESCE((extract(epoch FROM now() - g.turn_since) * 1000)::bigint, 0) AS turn_ms,
                 (extract(epoch FROM now() - g.x_away) * 1000)::bigint AS x_away_ms,
@@ -456,6 +469,7 @@ pub async fn load(pool: &PgPool, room: &RoomId) -> Result<Option<Stored>, sqlx::
             o: seat(found.o_id, found.o),
         },
         takebacks: found.takebacks,
+        spectators: found.spectators,
         draws: Draws {
             x: draws(found.x_draw_offers),
             o: draws(found.o_draw_offers),

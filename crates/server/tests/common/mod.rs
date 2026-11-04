@@ -114,7 +114,8 @@ pub async fn guest(app: &Router) -> String {
 /// 3+2's bank, so an absent player's missing first move aborts and a 3+2 clock runs out before
 /// one comes due, while 15+5's 3 s bank lets it. A game both players left ends Abandoned 1.5 s on,
 /// longer than any restart here takes, and the sweep looks every 100 ms. Sockets are pinged as a
-/// deployed server pings them, so none a test leaves unread is closed.
+/// deployed server pings them, so none a test leaves unread is closed. Spectators watch a Casual
+/// Room live, as a deployed server's do, and hear how many watch at most every 100 ms.
 pub const TIMING: Timing = Timing {
     takeback: Duration::from_millis(400),
     rematch: Duration::from_millis(900),
@@ -125,6 +126,9 @@ pub const TIMING: Timing = Timing {
     abandon: Duration::from_millis(1_500),
     sweep: Duration::from_millis(100),
     keepalive: Duration::from_secs(30),
+    casual_delay: Duration::ZERO,
+    rated_delay: Duration::from_secs(10),
+    count: Duration::from_millis(100),
 };
 
 /// The server, listening on its own runtime as a deployed one would, so [`Server::kill`] can stop

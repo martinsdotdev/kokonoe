@@ -60,10 +60,15 @@ export const keptGame = (page: Page, id: string): Promise<SavedGame | undefined>
 	);
 
 export interface FakeRoom {
-	/** The page's seat, its Room's players, and the moves the Room holds: what a Welcome says. */
-	you: 'X' | 'O';
+	/**
+	 * The page's seat, null for a Spectator, its Room's players, and the moves the Room holds: what
+	 * a Welcome says.
+	 */
+	you: 'X' | 'O' | null;
 	players: Players;
 	moves: number[];
+	/** Whether the Room can be watched, as its card says: not unless the test says so. */
+	spectators?: boolean;
 	/** What `GET /api/rooms/<id>` answers. */
 	card?: RoomCard;
 	/** The rest of what a Welcome says of the Room: its option, an offer waiting, how it ended. */
@@ -82,7 +87,8 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 			players: room.players,
 			you: room.you,
 			takebacks: false,
-			clock: null
+			clock: null,
+			spectators: room.spectators ?? false
 		};
 	const welcome = (): ServerMsg => ({
 		type: 'Welcome',
@@ -103,6 +109,8 @@ export const fakeRoom = async (page: Page, room: FakeRoom) => {
 			clock: null,
 			clocks: null,
 			presence: { X: null, O: null },
+			watching: 0,
+			delay_ms: 0,
 			...room.snapshot
 		}
 	});

@@ -29,8 +29,15 @@
 	onDestroy(() => visit.dispose());
 
 	const phase = $derived(visit.phase);
-	/** The host's game before a friend takes the other seat. */
-	const waiting = $derived(phase.kind === 'playing' && !phase.game.seated ? phase.game : null);
+	/**
+	 * The host's game, and their seat, before a friend takes the other seat. A Spectator watches
+	 * the game screen instead.
+	 */
+	const waiting = $derived.by(() => {
+		if (phase.kind !== 'playing' || phase.game.seated) return null;
+		const { game } = phase;
+		return game.you ? { game, you: game.you } : null;
+	});
 	/** Which view the page shows. */
 	const view = $derived(phase.kind === 'playing' ? (waiting ? 'waiting' : 'game') : phase.kind);
 
@@ -108,10 +115,10 @@
 			{:else if waiting}
 				<WaitingCard
 					link={`${location.origin}${resolve('/r/[room]', { room })}`}
-					variant={waiting.variant.name}
+					variant={waiting.game.variant.name}
 					you={waiting.you}
-					clock={waiting.clock}
-					trouble={waiting.trouble?.message ?? null}
+					clock={waiting.game.clock}
+					trouble={waiting.game.trouble?.message ?? null}
 				/>
 			{:else if notice}
 				<h1 class="m-0 font-display text-3xl font-semibold" tabindex="-1">{notice.heading}</h1>

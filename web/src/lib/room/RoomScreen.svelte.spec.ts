@@ -23,7 +23,8 @@ const seated = async (url: string | URL | Request) =>
 				players: { X: 'guest-4821', O: null },
 				you: 'X',
 				takebacks: false,
-				clock: null
+				clock: null,
+				spectators: false
 			});
 
 const offline = async (): Promise<Response> => {

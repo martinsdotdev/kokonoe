@@ -399,7 +399,7 @@ impl Room {
         let snapshot = self.snapshot();
         self.tell(|other, socket| {
             (seated || other == conn).then(|| ServerMsg::Welcome {
-                you: socket.player,
+                you: Some(socket.player),
                 snapshot: snapshot.clone(),
             })
         });
@@ -828,6 +828,8 @@ impl Room {
                 x: self.away(Player::X, now),
                 o: self.away(Player::O, now),
             },
+            watching: 0,
+            delay_ms: 0,
         }
     }
 

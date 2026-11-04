@@ -15,7 +15,8 @@ const card = (players: RoomCard['players'], you: RoomCard['you'] = null): RoomCa
 	players,
 	you,
 	takebacks: false,
-	clock: null
+	clock: null,
+	spectators: false
 });
 
 /** A server answering the session with a Guest and the card with `cards`, one per ask. */
@@ -49,7 +50,7 @@ describe('following a Room’s link', () => {
 		await expect.poll(() => fake.opened.length).toBe(1);
 		fake.last().accept();
 		expect(fake.last().sent).toEqual([
-			{ type: 'Hello', protocol: 3, rules_version: 1, room: ROOM, role: 'Player' }
+			{ type: 'Hello', protocol: 4, rules_version: 1, room: ROOM, role: 'Player' }
 		]);
 		fake.last().say(welcome('O'));
 		await phase(made).toBe('playing');

@@ -101,7 +101,13 @@
 		failure = null;
 		const room =
 			(await startSession()) &&
-			(await createRoom({ rules: rulesetCode(preset.ruleset), seat, takebacks, clock }));
+			(await createRoom({
+				rules: rulesetCode(preset.ruleset),
+				seat,
+				takebacks,
+				clock,
+				spectators: false
+			}));
 		// Still creating while the page goes to the Room, so a second press makes no second Room.
 		if (room) return goto(resolve('/r/[room]', { room }));
 		creating = false;

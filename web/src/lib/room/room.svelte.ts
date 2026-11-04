@@ -130,8 +130,8 @@ const replay = (record: GameRecord): { game: Game; moves: Move[] } => {
  */
 export class RoomGame implements GameSession {
 	readonly variant: Variant;
-	/** The seat this page plays. */
-	you: Player;
+	/** The seat this page plays, or null while it watches as a Spectator (spec §10.2). */
+	you: Player | null;
 	/** Who holds each seat, by Handle. */
 	players: Players;
 	view: BoardView;
@@ -279,13 +279,21 @@ export class RoomGame implements GameSession {
 		return { X: since('X'), O: since('O') };
 	}
 
+	/** This page watches the Room as a Spectator, read-only. */
+	get watching(): boolean {
+		return this.you === null;
+	}
+
 	/** The Claim against the other player while they're away and the game goes on. */
 	get claim(): Claim | null {
-		const away = this.#away[opponent(this.you)];
+		const you = this.you;
+		if (!you) return null;
+		const other = opponent(you);
+		const away = this.#away[other];
 		if (!away || !this.seated || this.end !== null) return null;
 		const enabled = this.#connected && !this.#claimed;
 		return {
-			other: this.#other,
+			other: this.#name(other),
 			due: away.claims,
 			enabled,
 			run: (kind) => {
@@ -309,11 +317,23 @@ export class RoomGame implements GameSession {
 	}
 
 	get seats(): Record<Player, Seat> {
-		return seats(this.#opponent('Waiting…'));
+		if (!this.you) {
+			const seat = (player: Player): Seat => ({
+				name: this.players[player] ?? 'Waiting…',
+				detail: null,
+				yours: false
+			});
+			return { X: seat('X'), O: seat('O') };
+		}
+		return seats(this.#opponent(this.you, 'Waiting…'));
 	}
 
 	get against(): string {
-		return againstLabel(this.#opponent('a friend'));
+		if (!this.you) {
+			const { X, O } = this.players;
+			return `${X ?? 'a free seat'} vs ${O ?? 'a free seat'}`;
+		}
+		return againstLabel(this.#opponent(this.you, 'a friend'));
 	}
 
 	/** The saved game's id once it's kept, for the Replay. */
@@ -335,55 +355,71 @@ export class RoomGame implements GameSession {
 	}
 
 	get frozen(): boolean {
-		return !this.#live || this.end !== null || this.#pending !== null || this.toMove !== this.you;
+		return (
+			this.watching ||
+			!this.#live ||
+			this.end !== null ||
+			this.#pending !== null ||
+			this.toMove !== this.you
+		);
 	}
 
 	doing(): string | null {
 		return null;
 	}
 
-	/** Resign and the offers while the game goes on, takebacks only if the Room allows them. */
-	get controls(): Controls {
+	/**
+	 * Resign and the offers while the game goes on, takebacks only if the Room allows them. A
+	 * Spectator has none.
+	 */
+	get controls(): Controls | null {
+		const you = this.you;
+		if (!you) return null;
 		const playing = this.#live && this.end === null;
 		const free = playing && this.#offer === null;
 		const controls: Controls = {
-			resigner: playing ? this.you : null,
+			resigner: playing ? you : null,
 			resign: () => this.#link.send({ type: 'Resign' }),
 			offerDraw: {
-				enabled: free && this.#draws[this.you] < drawOffers(),
+				enabled: free && this.#draws[you] < drawOffers(),
 				run: () => this.#make('Draw')
 			}
 		};
 		if (!this.#takebacks) return controls;
 		// The server takes the game back to before this player's last move, so they need one.
-		const moved = this.moves.some((move) => !move.dealt && move.player === this.you);
+		const moved = this.moves.some((move) => !move.dealt && move.player === you);
 		return {
 			...controls,
 			askTakeback: { enabled: free && moved, run: () => this.#make('Takeback') }
 		};
 	}
 
-	/** The offer waiting for an answer, this page's or the other player's. */
+	/**
+	 * The offer waiting for an answer, this page's or the other player's: `other` names whoever
+	 * didn't make it, or for a Spectator, whoever did.
+	 */
 	get offer(): PendingOffer | null {
 		const offer = this.#offer;
 		if (!offer) return null;
+		const mine = offer.by === this.you;
 		return {
 			kind: offer.kind,
-			mine: offer.by === this.you,
-			other: this.#other,
+			mine,
+			other: this.#name(mine ? opponent(offer.by) : offer.by),
 			lapses: offer.lapses
 		};
 	}
 
-	/** Answers the other player's offer. */
+	/** Answers the other player's offer. A Spectator answers none. */
 	answer(accept: boolean) {
 		const offer = this.#offer;
-		if (!offer || offer.by === this.you) return;
+		if (!offer || !this.you || offer.by === this.you) return;
 		if (this.#link.send({ type: ANSWER[offer.kind], accept })) this.#offer = null;
 	}
 
-	/** A rematch, once the game is over, while nothing waits and none was made. */
-	get rematch(): Action {
+	/** A rematch, once the game is over, while nothing waits and none was made: not a Spectator's. */
+	get rematch(): Action | undefined {
+		if (!this.you) return undefined;
 		const over = this.#live && this.end !== null;
 		return {
 			enabled: over && this.#offer === null && this.#rematch === null,
@@ -458,9 +494,9 @@ export class RoomGame implements GameSession {
 		return this.seated && this.#connected;
 	}
 
-	/** The other player's Handle. */
-	get #other(): string {
-		return this.players[opponent(this.you)] ?? 'your friend';
+	/** `player`'s Handle, or how the page names a seat still empty. */
+	#name(player: Player): string {
+		return this.players[player] ?? (this.you ? 'your friend' : 'a player');
 	}
 
 	/** How the game ended, by the server's word: a stop, or the rules' end the engine reached. */
@@ -489,8 +525,8 @@ export class RoomGame implements GameSession {
 		const was = this.#away[player];
 		this.#away = { ...this.#away, [player]: gone(away) };
 		if (this.end !== null) return;
-		if (away) this.notice = leftText(this.#other);
-		else if (was) this.notice = backText(this.#other);
+		if (away) this.notice = leftText(this.#name(player));
+		else if (was) this.notice = backText(this.#name(player));
 	}
 
 	#offered(offer: Offer) {
@@ -509,7 +545,9 @@ export class RoomGame implements GameSession {
 		const offer = this.#offer;
 		if (offer?.kind !== kind) return;
 		this.#offer = null;
-		if (!accepted && offer.by === this.you) this.notice = unansweredText(kind, this.#other);
+		if (!accepted && offer.by === this.you) {
+			this.notice = unansweredText(kind, this.#name(opponent(offer.by)));
+		}
 	}
 
 	/**
@@ -547,8 +585,9 @@ export class RoomGame implements GameSession {
 
 	/** Offers `kind` to the other player. */
 	#make(kind: OfferKind) {
-		if (!this.#link.send({ type: OFFER[kind] })) return;
-		this.#offer = { kind, by: this.you, lapses: null };
+		const you = this.you;
+		if (!you || !this.#link.send({ type: OFFER[kind] })) return;
+		this.#offer = { kind, by: you, lapses: null };
 		this.notice = null;
 	}
 
@@ -588,13 +627,13 @@ export class RoomGame implements GameSession {
 		this.#link.send({ type: 'Ping', t: Date.now() });
 	}
 
-	/** The Room as a saved game's opponent, naming an empty seat `empty`. */
-	#opponent(empty: string): RoomOpponent {
+	/** The Room as a saved game's opponent, `you` its player, naming an empty seat `empty`. */
+	#opponent(you: Player, empty: string): RoomOpponent {
 		const { X, O } = this.players;
 		return {
 			kind: 'room',
 			room: this.#room,
-			you: this.you,
+			you,
 			players: { X: X ?? empty, O: O ?? empty }
 		};
 	}
@@ -602,16 +641,17 @@ export class RoomGame implements GameSession {
 	/**
 	 * Keeps the game once both seats are filled and someone has moved, unless what's kept already
 	 * holds it, and again after a takeback even to before every move. A failed save costs play
-	 * nothing.
+	 * nothing. A Spectator keeps nothing: an invite Room's game is its two players' (spec §14).
 	 */
 	#save() {
+		const you = this.you;
 		const unplayed = this.moves.every((move) => move.dealt);
-		if (!this.seated || (unplayed && this.#kept === null)) return;
+		if (!you || !this.seated || (unplayed && this.#kept === null)) return;
 		const saved = savedGame({
 			id: this.#room,
 			record: this.#game.record(),
 			variant: this.variant,
-			opponent: this.#opponent(''),
+			opponent: this.#opponent(you, ''),
 			started: this.#started,
 			view: this.view,
 			toMove: this.toMove,

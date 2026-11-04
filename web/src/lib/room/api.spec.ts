@@ -19,19 +19,23 @@ const CARD = {
 	players: { X: 'guest-4821', O: null },
 	you: null,
 	takebacks: false,
-	clock: null
+	clock: null,
+	spectators: false
 };
 
 describe('making a Room', () => {
 	it('posts the host’s choice and gives the Room’s id', async () => {
 		const fetch = vi.fn(async () => json({ room: ROOM }, 201));
 		expect(
-			await createRoom({ rules: 'std', seat: 'Random', takebacks: false, clock: null }, fetch)
+			await createRoom(
+				{ rules: 'std', seat: 'Random', takebacks: false, clock: null, spectators: false },
+				fetch
+			)
 		).toBe(ROOM);
 		expect(fetch).toHaveBeenCalledWith('/api/rooms', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: '{"rules":"std","seat":"Random","takebacks":false,"clock":null}'
+			body: '{"rules":"std","seat":"Random","takebacks":false,"clock":null,"spectators":false}'
 		});
 	});
 
@@ -42,7 +46,10 @@ describe('making a Room', () => {
 		['an id of another shape', async () => json({ room: '../oops' }, 201)]
 	])('gives nothing %s', async (_, fetch) => {
 		expect(
-			await createRoom({ rules: 'std', seat: 'X', takebacks: false, clock: null }, fetch)
+			await createRoom(
+				{ rules: 'std', seat: 'X', takebacks: false, clock: null, spectators: false },
+				fetch
+			)
 		).toBeUndefined();
 	});
 });
@@ -52,6 +59,8 @@ describe('reading a Room’s card', () => {
 		const fetch = vi.fn(async () => json(CARD));
 		expect(await roomCard(ROOM, fetch)).toEqual(CARD);
 		expect(fetch).toHaveBeenCalledWith(`/api/rooms/${ROOM}`);
+		const watched = { ...CARD, spectators: true };
+		expect(await roomCard(ROOM, async () => json(watched))).toEqual(watched);
 	});
 
 	it('knows a Room is missing from its id alone, or from the server', async () => {
@@ -72,7 +81,11 @@ describe('reading a Room’s card', () => {
 		],
 		['the database down', async () => json(CARD, 503)],
 		['a card without its players', async () => json({ ...CARD, players: null })],
-		['a seat that isn’t a Player', async () => json({ ...CARD, you: 'Z' })]
+		['a seat that isn’t a Player', async () => json({ ...CARD, you: 'Z' })],
+		[
+			'a card that doesn’t say if it can be watched',
+			async () => json({ ...CARD, spectators: undefined })
+		]
 	])('gives nothing for %s', async (_, fetch) => {
 		expect(await roomCard(ROOM, fetch)).toBeUndefined();
 	});

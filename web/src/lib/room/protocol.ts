@@ -42,8 +42,9 @@ export const readServerMsg = (data: unknown): ServerMsg | null => {
 				const rematch = field(snapshot, 'rematch');
 				const draws = field(snapshot, 'draws');
 				const presence = field(snapshot, 'presence');
+				const you = field(body, 'you');
 				return (
-					isPlayer(field(body, 'you')) &&
+					(you === null || isPlayer(you)) &&
 					readPlayers(field(snapshot, 'players')) !== undefined &&
 					typeof record === 'object' &&
 					record !== null &&
@@ -56,7 +57,9 @@ export const readServerMsg = (data: unknown): ServerMsg | null => {
 					nullOr(isClock, field(snapshot, 'clock')) &&
 					nullOr(isClocks, field(snapshot, 'clocks')) &&
 					nullOr(isAway, field(presence, 'X')) &&
-					nullOr(isAway, field(presence, 'O'))
+					nullOr(isAway, field(presence, 'O')) &&
+					count(field(snapshot, 'watching')) &&
+					count(field(snapshot, 'delay_ms'))
 				);
 			}
 			case 'Moved':
@@ -83,6 +86,8 @@ export const readServerMsg = (data: unknown): ServerMsg | null => {
 				return count(field(body, 't')) && count(field(body, 'server_ms'));
 			case 'Presence':
 				return isPlayer(field(body, 'player')) && nullOr(isAway, field(body, 'away'));
+			case 'Watching':
+				return count(field(body, 'count'));
 			default:
 				return false;
 		}

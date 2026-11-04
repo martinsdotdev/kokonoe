@@ -45,7 +45,7 @@ describe('a Room’s game', () => {
 		expect(room.toMove).toBe('O');
 		expect(room.frozen).toBe(false);
 		expect(room.controls).toMatchObject({ resigner: 'O', offerDraw: { enabled: true } });
-		expect(room.controls.askTakeback, 'a Room without takebacks').toBeUndefined();
+		expect(room.controls?.askTakeback, 'a Room without takebacks').toBeUndefined();
 		expect(room.offer).toBeNull();
 	});
 
@@ -111,12 +111,12 @@ describe('a Room’s game', () => {
 
 	it('resigns, and keeps the resignation', async () => {
 		const { room, sent, store } = game('X', undefined, top.slice(0, 2));
-		room.controls.resign();
+		room.controls?.resign();
 		expect(sent).toEqual([{ type: 'Resign' }]);
 		room.receive({ type: 'Ended', result: '0-1', termination: 'resign' });
 		expect(room.end).toEqual({ resigned: 'X' });
 		expect(room.frozen).toBe(true);
-		expect(room.controls.resigner).toBeNull();
+		expect(room.controls?.resigner).toBeNull();
 		expect(room.file.end).toEqual({ resigned: 'X' });
 		await expect.poll(() => store.last?.result).toBe('X resigned. O wins.');
 		expect(store.last?.resigned).toBe('X');
@@ -124,10 +124,10 @@ describe('a Room’s game', () => {
 
 	it('offers a draw, shows it at once, and hears when it isn’t accepted', () => {
 		const { room, sent } = game('X', undefined, top.slice(0, 2));
-		room.controls.offerDraw?.run();
+		room.controls?.offerDraw?.run();
 		expect(sent).toEqual([{ type: 'OfferDraw' }]);
 		expect(room.offer).toEqual({ kind: 'Draw', mine: true, other: 'guest-1066', lapses: null });
-		expect(room.controls.offerDraw?.enabled, 'one offer at a time').toBe(false);
+		expect(room.controls?.offerDraw?.enabled, 'one offer at a time').toBe(false);
 		room.receive({ type: 'Offer', kind: 'Draw', by: 'X', lapses_in: null });
 		room.receive({ type: 'OfferAnswered', kind: 'Draw', accepted: false });
 		expect(room.offer).toBeNull();
@@ -155,7 +155,7 @@ describe('a Room’s game', () => {
 		const { room } = game('X', undefined, top.slice(0, 2), { draws: { X: 2, O: 3 } });
 		room.receive({ type: 'Offer', kind: 'Draw', by: 'X', lapses_in: null });
 		room.receive({ type: 'OfferAnswered', kind: 'Draw', accepted: false });
-		expect(room.controls.offerDraw?.enabled).toBe(false);
+		expect(room.controls?.offerDraw?.enabled).toBe(false);
 	});
 
 	it('drops an offer a move withdraws, as the server does', () => {
@@ -180,8 +180,8 @@ describe('a Room’s game', () => {
 
 	it('asks a takeback where the Room allows them, and takes the game back', async () => {
 		const { room, sent, store } = game('O', undefined, top.slice(0, 2), { takebacks: true });
-		expect(room.controls.askTakeback?.enabled).toBe(true);
-		room.controls.askTakeback?.run();
+		expect(room.controls?.askTakeback?.enabled).toBe(true);
+		room.controls?.askTakeback?.run();
 		expect(sent).toEqual([{ type: 'AskTakeback' }]);
 		const heard = Date.now();
 		room.receive({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
@@ -205,7 +205,7 @@ describe('a Room’s game', () => {
 
 	it('needs a move of this player’s own to ask a takeback', () => {
 		const { room } = game('O', undefined, top.slice(0, 1), { takebacks: true });
-		expect(room.controls.askTakeback?.enabled).toBe(false);
+		expect(room.controls?.askTakeback?.enabled).toBe(false);
 	});
 
 	it('keeps a takeback to before every move, so nothing shows the move taken back', async () => {
@@ -223,12 +223,12 @@ describe('a Room’s game', () => {
 
 	it('says when its takeback lapsed, and lets it be asked again', () => {
 		const { room } = game('O', undefined, top.slice(0, 2), { takebacks: true });
-		room.controls.askTakeback?.run();
+		room.controls?.askTakeback?.run();
 		room.receive({ type: 'Offer', kind: 'Takeback', by: 'O', lapses_in: 15_000 });
-		expect(room.controls.askTakeback?.enabled).toBe(false);
+		expect(room.controls?.askTakeback?.enabled).toBe(false);
 		room.receive({ type: 'OfferAnswered', kind: 'Takeback', accepted: false });
 		expect(room.notice).toBe('guest-4821 didn’t accept the takeback.');
-		expect(room.controls.askTakeback?.enabled).toBe(true);
+		expect(room.controls?.askTakeback?.enabled).toBe(true);
 	});
 
 	it('resyncs on a takeback past what it holds', () => {
@@ -239,16 +239,16 @@ describe('a Room’s game', () => {
 
 	it('offers a rematch once the game is over, and follows it', () => {
 		const { room, sent, onrematch } = game('O', undefined, top);
-		expect(room.rematch.enabled).toBe(true);
-		room.rematch.run();
+		expect(room.rematch?.enabled).toBe(true);
+		room.rematch?.run();
 		expect(sent).toEqual([{ type: 'OfferRematch' }]);
-		expect(room.rematch.enabled).toBe(false);
+		expect(room.rematch?.enabled).toBe(false);
 		room.receive({ type: 'Offer', kind: 'Rematch', by: 'O', lapses_in: 60_000 });
 		room.receive({ type: 'OfferAnswered', kind: 'Rematch', accepted: true });
 		room.receive({ type: 'RematchRoom', room: NEXT });
 		expect(onrematch).toHaveBeenCalledWith(NEXT);
 		expect(room.rematchRoom).toBe(NEXT);
-		expect(room.rematch.enabled).toBe(false);
+		expect(room.rematch?.enabled).toBe(false);
 	});
 
 	it('takes the Room’s end, offer and rematch from a Welcome', () => {
@@ -561,6 +561,6 @@ describe('a player away from the Room', () => {
 		await expect.poll(() => store.last?.result).toBe('Game abandoned');
 		expect(store.last).toMatchObject({ abandoned: true, toMove: null });
 		expect(room.file.end).toEqual({ abandoned: true });
-		expect(room.rematch.enabled, 'both may still play again').toBe(true);
+		expect(room.rematch?.enabled, 'both may still play again').toBe(true);
 	});
 });

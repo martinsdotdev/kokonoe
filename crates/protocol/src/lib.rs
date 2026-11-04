@@ -21,4 +21,4 @@ pub use socket::{
 
 /// The version of the socket's messages, sent in every `Hello`. Bumped whenever a message changes
 /// shape, so a client on another version is closed with 4001 and reloads rather than misreading.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;

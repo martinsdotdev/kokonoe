@@ -54,10 +54,12 @@ export const readCard = (body: unknown): RoomCard | undefined => {
 	const you = field(body, 'you');
 	const takebacks = field(body, 'takebacks');
 	const clock = field(body, 'clock');
+	const spectators = field(body, 'spectators');
 	const strings = [host, variant, rules].every((value) => typeof value === 'string');
 	if (!strings || !players || !(you === null || isPlayer(you))) return undefined;
 	if (typeof takebacks !== 'boolean' || !(clock === null || isClock(clock))) return undefined;
-	return { host, variant, rules, players, you, takebacks, clock } as RoomCard;
+	if (typeof spectators !== 'boolean') return undefined;
+	return { host, variant, rules, players, you, takebacks, clock, spectators } as RoomCard;
 };
 
 export const readPlayers = (body: unknown): Players | undefined => {

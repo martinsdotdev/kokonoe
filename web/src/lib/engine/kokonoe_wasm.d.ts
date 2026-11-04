@@ -26,7 +26,9 @@ export type TimeControl = "3+2" | "5+3" | "10+5" | "15+5";
 /**
  * A Room as it stands. `end` says how a finished game ended, which a Record can't for a
  * resignation; `offer` is the one waiting for an answer; `rematch` is the Room an accepted
- * rematch made; `clock` and `clocks` are a timed Room's; `presence` says who is away.
+ * rematch made; `clock` and `clocks` are a timed Room's; `presence` says who is away;
+ * `watching` is how many Accounts watch as Spectators; and `delay_ms` is how late this socket
+ * hears the Room, 0 but for a Spectator of a Rated game.
  */
 export interface Snapshot {
     record: Record;
@@ -39,6 +41,8 @@ export interface Snapshot {
     clock: TimeControl | null;
     clocks: Clocks | null;
     presence: Presence;
+    watching: number;
+    delay_ms: number;
 }
 
 /**
@@ -152,7 +156,7 @@ export interface Ruleset {
 
 /**
  * What `GET /api/rooms/<room>` answers: the host's Handle, the Variant's name and Ruleset code,
- * who sits where, and the seat the asker already holds.
+ * who sits where, the seat the asker already holds, and whether the Room can be watched.
  */
 export interface RoomCard {
     host: string;
@@ -162,6 +166,7 @@ export interface RoomCard {
     you: Player | null;
     takebacks: boolean;
     clock: TimeControl | null;
+    spectators: boolean;
 }
 
 /**
@@ -188,6 +193,11 @@ export type ClientMsg = { type: "Hello"; protocol: number; rules_version: number
 export type ClaimKind = "Win" | "Draw";
 
 /**
+ * What a socket comes to a Room as: a player, or a Spectator, who watches read-only.
+ */
+export type Role = "Player" | "Spectator";
+
+/**
  * What one search from a root found: a move the tactics force, or the visits of every root move
  * it could play, in ascending Cell index.
  */
@@ -195,9 +205,10 @@ export type Searched = { Forced: Cell } | { Visits: Visit[] };
 
 /**
  * What the server says on a Room's socket. A `Welcome` comes after `Hello`, and again to every
- * socket when a seat fills; it replaces everything the page knew.
+ * socket when a seat fills; it replaces everything the page knew. Its `you` is `null` for a
+ * Spectator.
  */
-export type ServerMsg = { type: "Welcome"; you: Player; snapshot: Snapshot } | { type: "Moved"; ply: Ply; cell: Cell; clocks: Clocks | null } | { type: "Rejected"; reason: Rejection } | ({ type: "Ended" } & GameEnd) | ({ type: "Offer" } & Offer) | { type: "OfferAnswered"; kind: OfferKind; accepted: boolean } | { type: "TookBack"; to_ply: Ply; clocks: Clocks | null } | { type: "RematchRoom"; room: string } | { type: "Aborted"; reason: Abort } | { type: "Pong"; t: number; server_ms: number } | { type: "Presence"; player: Player; away: Away | null };
+export type ServerMsg = { type: "Welcome"; you: Player | null; snapshot: Snapshot } | { type: "Moved"; ply: Ply; cell: Cell; clocks: Clocks | null } | { type: "Rejected"; reason: Rejection } | ({ type: "Ended" } & GameEnd) | ({ type: "Offer" } & Offer) | { type: "OfferAnswered"; kind: OfferKind; accepted: boolean } | { type: "TookBack"; to_ply: Ply; clocks: Clocks | null } | { type: "RematchRoom"; room: string } | { type: "Aborted"; reason: Abort } | { type: "Pong"; t: number; server_ms: number } | { type: "Presence"; player: Player; away: Away | null } | { type: "Watching"; count: number };
 
 /**
  * Who holds each seat, by Handle: `null` while it waits for someone.
@@ -224,13 +235,14 @@ export type Objective = "Line" | { FirstTo: number };
 
 /**
  * `POST /api/rooms`: a Preset by its Ruleset code, the host's seat, whether takebacks are
- * allowed, and the time control, `null` for untimed.
+ * allowed, the time control, `null` for untimed, and whether Spectators may watch.
  */
 export interface NewRoom {
     rules: string;
     seat: SeatChoice;
     takebacks: boolean;
     clock: TimeControl | null;
+    spectators: boolean;
 }
 
 /**
@@ -264,8 +276,6 @@ export type OfferKind = "Draw" | "Takeback" | "Rematch";
 export type Outcome = { Objective: Player } | { MostWon: Player } | "Draw";
 
 export type Player = "X" | "O";
-
-export type Role = "Player";
 
 export type SeatChoice = "X" | "O" | "Random";
 

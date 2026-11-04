@@ -7,8 +7,8 @@ use kokonoe_engine::Player;
 
 use crate::{Players, TimeControl};
 
-/// What the host chose: a Preset, by its Ruleset code, a seat, whether takebacks are allowed, and
-/// the time control, untimed unless one is sent.
+/// What the host chose: a Preset, by its Ruleset code, a seat, whether takebacks are allowed, the
+/// time control, untimed unless one is sent, and whether Spectators may watch (spec §10.1).
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewRoom {
@@ -17,6 +17,9 @@ pub struct NewRoom {
     #[cfg_attr(feature = "serde", serde(default))]
     pub takebacks: bool,
     pub clock: Option<TimeControl>,
+    /// Off unless asked for: an invite Room's game is its two players' (spec §14).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub spectators: bool,
 }
 
 /// The seat the host takes. `Random` is drawn when the Room is made.
@@ -53,6 +56,9 @@ pub struct RoomCard {
     pub takebacks: bool,
     /// The time control, or None for an untimed Room.
     pub clock: Option<TimeControl>,
+    /// Whether the Room can be watched, so a link's holder who has no seat may watch it as a
+    /// Spectator (spec §10.2).
+    pub spectators: bool,
 }
 
 #[cfg(test)]
@@ -70,13 +76,18 @@ mod tests {
                 rules: "std".to_string(),
                 seat: SeatChoice::Random,
                 takebacks: false,
-                clock: None
+                clock: None,
+                spectators: false,
             },
-            "takebacks are off and the Room untimed unless asked for"
+            "takebacks and Spectators are off and the Room untimed unless asked for"
         );
         let timed: NewRoom =
             serde_json::from_str(r#"{"rules":"std","seat":"X","clock":"5+3"}"#).unwrap();
         assert_eq!(timed.clock, TimeControl::parse("5+3"));
+        let watched: NewRoom =
+            serde_json::from_str(r#"{"rules":"std","seat":"X","clock":null,"spectators":true}"#)
+                .unwrap();
+        assert!(watched.spectators);
         assert!(
             serde_json::from_str::<NewRoom>(r#"{"rules":"std","seat":"X","clock":"4+4"}"#).is_err(),
             "only the four controls"
@@ -92,10 +103,15 @@ mod tests {
             you: None,
             takebacks: true,
             clock: TimeControl::parse("10+5"),
+            spectators: true,
         };
         assert_eq!(
             serde_json::to_string(&card).unwrap(),
-            r#"{"host":"guest-4821","variant":"Standard","rules":"std","players":{"X":"guest-4821","O":null},"you":null,"takebacks":true,"clock":"10+5"}"#
+            concat!(
+                r#"{"host":"guest-4821","variant":"Standard","rules":"std","#,
+                r#""players":{"X":"guest-4821","O":null},"you":null,"takebacks":true,"#,
+                r#""clock":"10+5","spectators":true}"#
+            )
         );
         let untimed = RoomCard {
             clock: None,
@@ -104,7 +120,7 @@ mod tests {
         assert!(
             serde_json::to_string(&untimed)
                 .unwrap()
-                .ends_with(r#""takebacks":true,"clock":null}"#)
+                .ends_with(r#""takebacks":true,"clock":null,"spectators":true}"#)
         );
     }
 }

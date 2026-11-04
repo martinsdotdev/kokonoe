@@ -111,6 +111,7 @@ async fn the_card_tells_a_joiner_what_they_join() {
             "you": null,
             "takebacks": false,
             "clock": null,
+            "spectators": false,
         })
     );
     assert_eq!(card(&world.app, Some(&host), &room).await.json["you"], "O");

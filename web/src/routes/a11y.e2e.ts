@@ -80,7 +80,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
 					players: { X: HOST, O: null },
 					you: null,
 					takebacks: false,
-					clock: null
+					clock: null,
+					spectators: false
 				}
 			});
 			await page.goto(`/r/${ROOM}`);

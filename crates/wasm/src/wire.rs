@@ -53,20 +53,24 @@ pub enum ClaimKind {
     Draw,
 }
 
+/// What a socket comes to a Room as: a player, or a Spectator, who watches read-only.
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub enum Role {
     Player,
+    Spectator,
 }
 
 /// What the server says on a Room's socket. A `Welcome` comes after `Hello`, and again to every
-/// socket when a seat fills; it replaces everything the page knew.
+/// socket when a seat fills; it replaces everything the page knew. Its `you` is `null` for a
+/// Spectator.
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 #[serde(tag = "type")]
 pub enum ServerMsg {
     Welcome {
-        you: Player,
+        #[tsify(type = "Player | null")]
+        you: Option<Player>,
         /// Boxed, being far larger than every other message.
         snapshot: Box<Snapshot>,
     },
@@ -105,11 +109,16 @@ pub enum ServerMsg {
         #[tsify(type = "Away | null")]
         away: Option<Away>,
     },
+    Watching {
+        count: u32,
+    },
 }
 
 /// A Room as it stands. `end` says how a finished game ended, which a Record can't for a
 /// resignation; `offer` is the one waiting for an answer; `rematch` is the Room an accepted
-/// rematch made; `clock` and `clocks` are a timed Room's; `presence` says who is away.
+/// rematch made; `clock` and `clocks` are a timed Room's; `presence` says who is away;
+/// `watching` is how many Accounts watch as Spectators; and `delay_ms` is how late this socket
+/// hears the Room, 0 but for a Spectator of a Rated game.
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub struct Snapshot {
@@ -128,6 +137,8 @@ pub struct Snapshot {
     #[tsify(type = "Clocks | null")]
     pub clocks: Option<Clocks>,
     pub presence: Presence,
+    pub watching: u32,
+    pub delay_ms: u32,
 }
 
 /// A player with no socket in the Room: since when, in the server's Unix ms, and the ms left, as
@@ -278,7 +289,7 @@ pub enum Rejection {
 }
 
 /// `POST /api/rooms`: a Preset by its Ruleset code, the host's seat, whether takebacks are
-/// allowed, and the time control, `null` for untimed.
+/// allowed, the time control, `null` for untimed, and whether Spectators may watch.
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub struct NewRoom {
@@ -287,6 +298,7 @@ pub struct NewRoom {
     pub takebacks: bool,
     #[tsify(type = "TimeControl | null")]
     pub clock: Option<TimeControl>,
+    pub spectators: bool,
 }
 
 #[derive(Tsify, Clone, Copy, Debug, PartialEq, Eq)]
@@ -305,7 +317,7 @@ pub struct CreatedRoom {
 }
 
 /// What `GET /api/rooms/<room>` answers: the host's Handle, the Variant's name and Ruleset code,
-/// who sits where, and the seat the asker already holds.
+/// who sits where, the seat the asker already holds, and whether the Room can be watched.
 #[derive(Tsify, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub struct RoomCard {
@@ -318,4 +330,5 @@ pub struct RoomCard {
     pub takebacks: bool,
     #[tsify(type = "TimeControl | null")]
     pub clock: Option<TimeControl>,
+    pub spectators: bool,
 }

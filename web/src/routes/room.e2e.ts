@@ -39,7 +39,9 @@ test('a host invites a friend from Home, and plays once they join', async ({ con
 	await page.getByRole('button', { name: 'Create invite Room' }).click();
 
 	await expect(page).toHaveURL(`/r/${ROOM}`);
-	expect(room.created).toEqual([{ rules: 'std', seat: 'Random', takebacks: false, clock: null }]);
+	expect(room.created).toEqual([
+		{ rules: 'std', seat: 'Random', takebacks: false, clock: null, spectators: false }
+	]);
 	await expect(page.getByRole('heading', { name: 'Waiting for your friend' })).toBeVisible();
 	await expect(page).toHaveTitle('Waiting for your friend · Kokonoe');
 	const link = `${new URL(page.url()).origin}/r/${ROOM}`;
@@ -178,7 +180,8 @@ test('a joiner reads the card, and joins on Accept or leaves on Decline', async 
 			players: { X: HOST, O: null },
 			you: null,
 			takebacks: false,
-			clock: null
+			clock: null,
+			spectators: false
 		}
 	});
 	await page.goto(`/r/${ROOM}`);
@@ -198,7 +201,7 @@ test('a joiner reads the card, and joins on Accept or leaves on Decline', async 
 	await expect(page.locator('main h1'), 'focus follows the page into the game').toBeFocused();
 	expect(room.said[0]).toEqual({
 		type: 'Hello',
-		protocol: 3,
+		protocol: 4,
 		rules_version: 1,
 		room: ROOM,
 		role: 'Player'
@@ -241,7 +244,8 @@ test('a Room that isn’t there, or is full, says so', async ({ page }) => {
 			players: { X: HOST, O: 'guest-0007' },
 			you: null,
 			takebacks: false,
-			clock: null
+			clock: null,
+			spectators: false
 		}
 	});
 	await page.goto(`/r/${ROOM}`);
@@ -359,7 +363,8 @@ test.describe('a Room’s endings', () => {
 				players: { X: HOST, O: null },
 				you: null,
 				takebacks: true,
-				clock: null
+				clock: null,
+				spectators: false
 			}
 		});
 		await page.goto('/new-game?vs=friend');
@@ -368,7 +373,7 @@ test.describe('a Room’s endings', () => {
 		await page.getByRole('button', { name: 'Create invite Room' }).click();
 		await expect
 			.poll(() => room.created)
-			.toEqual([{ rules: 'std', seat: 'Random', takebacks: true, clock: null }]);
+			.toEqual([{ rules: 'std', seat: 'Random', takebacks: true, clock: null, spectators: false }]);
 		await expect(page.getByText('Takebacks allowed')).toBeVisible();
 	});
 
@@ -555,7 +560,7 @@ test.describe('a timed Room', () => {
 		await page.getByRole('button', { name: 'Create invite Room' }).click();
 		await expect(page).toHaveURL(`/r/${ROOM}`);
 		expect(room.created).toEqual([
-			{ rules: 'std', seat: 'Random', takebacks: false, clock: '5+3' }
+			{ rules: 'std', seat: 'Random', takebacks: false, clock: '5+3', spectators: false }
 		]);
 
 		await page.unrouteAll();
@@ -570,7 +575,8 @@ test.describe('a timed Room', () => {
 				players: { X: HOST, O: null },
 				you: null,
 				takebacks: false,
-				clock: '3+2'
+				clock: '3+2',
+				spectators: false
 			}
 		});
 		await page.goto(`/r/${ROOM}`);

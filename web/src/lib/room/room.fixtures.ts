@@ -14,9 +14,9 @@ export const record = (moves: number[] = []): Record => ({
 
 type Welcome = Extract<ServerMsg, { type: 'Welcome' }>;
 
-/** A `Welcome` to `you`, with whatever else of the Room's snapshot the test says. */
+/** A `Welcome` to `you`, null for a Spectator, with whatever else of the Room's snapshot the test says. */
 export const welcome = (
-	you: 'X' | 'O',
+	you: 'X' | 'O' | null,
 	players: Players = { X: 'guest-4821', O: 'guest-1066' },
 	moves: number[] = [],
 	snapshot: Partial<Welcome['snapshot']> = {}
@@ -34,6 +34,8 @@ export const welcome = (
 		clock: null,
 		clocks: null,
 		presence: { X: null, O: null },
+		watching: 0,
+		delay_ms: 0,
 		...snapshot
 	}
 });

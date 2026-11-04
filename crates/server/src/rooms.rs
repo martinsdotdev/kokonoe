@@ -247,6 +247,7 @@ pub async fn card(
         clock: stored.clock,
         players: stored.seats.players(),
         host: stored.host,
+        spectators: false,
     };
     Ok((no_store, Json(card)).into_response())
 }

@@ -234,7 +234,7 @@ pub async fn step(socket: &mut Socket, ply: u16, cell: u16) {
 /// The `Welcome` a socket hears next: its seat, and the Room as it stands.
 pub async fn welcome(socket: &mut Socket) -> (Player, Snapshot) {
     match hear(socket).await {
-        ServerMsg::Welcome { you, snapshot } => (you, snapshot),
+        ServerMsg::Welcome { you, snapshot } => (you.expect("a seated socket's Welcome"), snapshot),
         other => panic!("not a Welcome: {other:?}"),
     }
 }

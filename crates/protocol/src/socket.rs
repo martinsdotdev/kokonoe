@@ -63,11 +63,17 @@ pub enum ClaimKind {
     Draw,
 }
 
-/// What a socket comes to a Room as. Spectators join it with KOK-61.
+/// What a socket comes to a Room as (spec §10.2). An Account that holds a seat always comes as
+/// its player, whatever its `Hello` says: the role only matters to one that holds none.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
+    /// Takes the seat its Account holds, or an empty one, or is closed with 4003 if both are
+    /// someone else's.
     Player,
+    /// Watches, read-only, in a Room that can be watched, and is closed with 4003 in one that
+    /// can't. It never takes a seat, and every game action it sends is `NotAllowed`.
+    Spectator,
 }
 
 /// What the server says.
@@ -78,10 +84,14 @@ pub enum Role {
 )]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServerMsg {
-    /// The whole game as it stands, and the seat this socket plays. Sent after `Hello`, and again
-    /// to every socket when a seat fills, so whoever was waiting learns who joined. A client
-    /// replaces everything it knew with it.
-    Welcome { you: Player, snapshot: Snapshot },
+    /// The whole game as it stands, and the seat this socket plays: null for a Spectator, spec
+    /// §10.3's `Seat | Spectator`. Sent after `Hello`, and again to every socket when a seat
+    /// fills, so whoever was waiting learns who joined. A client replaces everything it knew with
+    /// it.
+    Welcome {
+        you: Option<Player>,
+        snapshot: Snapshot,
+    },
     /// A move was played and stored, and in a timed Room, the clocks after it.
     Moved {
         ply: u16,
@@ -101,15 +111,19 @@ pub enum ServerMsg {
     /// An accepted takeback: the game, and in a timed Room its clocks, as they were after
     /// `to_ply` plies.
     TookBack { to_ply: u16, clocks: Option<Clocks> },
-    /// An accepted rematch: the new Room, where both players already have their seats.
+    /// An accepted rematch: the new Room, where both players already have their seats, and which
+    /// its Spectators can watch if this one's could.
     RematchRoom { room: String },
     /// The game ended without a result, and isn't kept: the Room is gone.
     Aborted { reason: Abort },
     /// The answer to a `Ping`: its `t`, and the server's Unix time in ms.
     Pong { t: u64, server_ms: u64 },
-    /// A seated player's last socket left the Room (`away`), or their first came back (null). Only
-    /// the other player hears it; a seat filling is a `Welcome` instead.
+    /// A seated player's last socket left the Room (`away`), or their first came back (null). The
+    /// other player and every Spectator hear it; a seat filling is a `Welcome` instead.
     Presence { player: Player, away: Option<Away> },
+    /// How many Accounts are watching now, as Spectators (spec §10.2): everyone in the Room hears
+    /// it as they come and go, players a count and never names.
+    Watching { count: u32 },
 }
 
 /// A Room as it stands.
@@ -136,6 +150,12 @@ pub struct Snapshot {
     pub clocks: Option<Clocks>,
     /// Which players are away, and how long the other still waits to Claim the game.
     pub presence: Presence,
+    /// How many Accounts are watching, as Spectators.
+    pub watching: u32,
+    /// How late this socket hears the Room, in ms: 0 for a seat, and for a Spectator of a Casual
+    /// Room, which watches live (spec §10.2). Every message to it comes that late, this one
+    /// included, so the server times in them are that old.
+    pub delay_ms: u32,
 }
 
 /// A player with no socket in the Room.
@@ -375,8 +395,8 @@ pub enum Rejection {
     /// is behind, and reconnects for a fresh `Welcome`.
     OutOfOrder { want: u16 },
     /// It isn't this socket's to do now: the other seat's turn, the other seat still empty, a
-    /// finished game, an offer already waiting, no such offer to answer, or a Claim before the
-    /// other player has been away long enough.
+    /// finished game, an offer already waiting, no such offer to answer, a Claim before the other
+    /// player has been away long enough, or any game action from a Spectator.
     NotAllowed,
 }
 
@@ -412,6 +432,16 @@ mod tests {
         pinned(
             &ClientMsg::Move { ply: 0, cell: 40 },
             r#"{"type":"Move","ply":0,"cell":40}"#,
+        );
+        let watch = ClientMsg::Hello {
+            protocol: 1,
+            rules_version: 1,
+            room: "6f1c0a9b3e2d4c5a7b8e".to_string(),
+            role: Role::Spectator,
+        };
+        pinned(
+            &watch,
+            r#"{"type":"Hello","protocol":1,"rules_version":1,"room":"6f1c0a9b3e2d4c5a7b8e","role":"Spectator"}"#,
         );
     }
 
@@ -454,6 +484,8 @@ mod tests {
                     claims_in: 50_000,
                 }),
             },
+            watching: 2,
+            delay_ms: 0,
         };
         let untimed = Snapshot {
             clock: None,
@@ -467,8 +499,8 @@ mod tests {
             "an untimed Room's are null"
         );
         let welcome = ServerMsg::Welcome {
-            you: Player::O,
-            snapshot,
+            you: Some(Player::O),
+            snapshot: snapshot.clone(),
         };
         pinned(
             &welcome,
@@ -481,8 +513,26 @@ mod tests {
                 r#""offer":{"kind":"Draw","by":"X","lapses_in":null},"draws":{"X":1,"O":0},"end":null,"rematch":null,"#,
                 r#""clock":"3+2","clocks":{"x_ms":180000,"o_ms":180000,"running":null,"#,
                 r#""at":1793600000000,"aborts_at":1793600030000},"#,
-                r#""presence":{"X":null,"O":{"since":1793599990000,"claims_in":50000}}}}"#
+                r#""presence":{"X":null,"O":{"since":1793599990000,"claims_in":50000}},"#,
+                r#""watching":2,"delay_ms":0}}"#
             ),
+        );
+        let watched = serde_json::to_value(ServerMsg::Welcome {
+            you: None,
+            snapshot: Snapshot {
+                delay_ms: 10_000,
+                ..snapshot
+            },
+        })
+        .unwrap();
+        assert_eq!(
+            (&watched["you"], &watched["snapshot"]["delay_ms"]),
+            (&serde_json::Value::Null, &serde_json::json!(10_000)),
+            "a Spectator has no seat, and hears the Room as late as it says"
+        );
+        pinned(
+            &ServerMsg::Watching { count: 3 },
+            r#"{"type":"Watching","count":3}"#,
         );
         pinned(
             &ServerMsg::Moved {
@@ -716,6 +766,7 @@ mod tests {
             r#"{"type":"Move","ply":-1,"cell":40}"#,
             r#"{"type":"Claim"}"#,
             r#"{"type":"Claim","as":"Loss"}"#,
+            r#"{"type":"Hello","protocol":4,"rules_version":1,"room":"6f1c0a9b3e2d4c5a7b8e","role":"Referee"}"#,
         ] {
             assert!(serde_json::from_str::<ClientMsg>(json).is_err(), "{json}");
         }

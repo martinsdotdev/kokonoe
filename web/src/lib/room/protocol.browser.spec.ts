@@ -46,7 +46,10 @@ it('reads every message the server sends', () => {
 		{ type: 'Presence', player: 'X', away: null },
 		{ type: 'Ended', result: '1-0', termination: 'claim' },
 		{ type: 'Ended', result: '1/2-1/2', termination: 'claim' },
-		{ type: 'Ended', result: null, termination: 'abandoned' }
+		{ type: 'Ended', result: null, termination: 'abandoned' },
+		welcome(null, undefined, [], { watching: 2, delay_ms: 10_000 }),
+		{ type: 'Watching', count: 0 },
+		{ type: 'Watching', count: 3 }
 	];
 	for (const message of messages) expect(read(message)).toEqual(message);
 });
@@ -92,7 +95,16 @@ it('reads a message of the wrong shape as nothing', () => {
 		{ type: 'Presence', player: 'X' },
 		{ type: 'Presence', player: 'X', away: { since: 1_793_600_000_000 } },
 		{ type: 'Ended', result: null, termination: 'resign' },
-		{ type: 'Claim' }
+		{ type: 'Claim' },
+		{ ...welcome('X'), you: 'Spectator' },
+		{ ...welcome('X'), you: undefined },
+		{ ...welcome(null), snapshot: { ...snapshot, watching: undefined } },
+		{ ...welcome(null), snapshot: { ...snapshot, watching: -1 } },
+		{ ...welcome(null), snapshot: { ...snapshot, delay_ms: undefined } },
+		{ ...welcome(null), snapshot: { ...snapshot, delay_ms: 0.5 } },
+		{ type: 'Watching' },
+		{ type: 'Watching', count: 'two' },
+		{ type: 'Watching', count: -1 }
 	];
 	for (const message of wrong) expect(read(message), JSON.stringify(message)).toBeNull();
 });

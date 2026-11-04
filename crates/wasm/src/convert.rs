@@ -397,6 +397,7 @@ mod wire {
         fn from(role: protocol::Role) -> Role {
             match role {
                 protocol::Role::Player => Role::Player,
+                protocol::Role::Spectator => Role::Spectator,
             }
         }
     }
@@ -405,7 +406,7 @@ mod wire {
         fn from(message: protocol::ServerMsg) -> ServerMsg {
             match message {
                 protocol::ServerMsg::Welcome { you, snapshot } => ServerMsg::Welcome {
-                    you: you.into(),
+                    you: you.map(Player::from),
                     snapshot: Box::new(snapshot.into()),
                 },
                 protocol::ServerMsg::Moved { ply, cell, clocks } => ServerMsg::Moved {
@@ -435,6 +436,7 @@ mod wire {
                     player: player.into(),
                     away: away.map(Away::from),
                 },
+                protocol::ServerMsg::Watching { count } => ServerMsg::Watching { count },
             }
         }
     }
@@ -470,6 +472,8 @@ mod wire {
                 clock: snapshot.clock.map(TimeControl::from),
                 clocks: snapshot.clocks.map(Clocks::from),
                 presence: snapshot.presence.into(),
+                watching: snapshot.watching,
+                delay_ms: snapshot.delay_ms,
             }
         }
     }
@@ -596,6 +600,7 @@ mod wire {
                 seat: asked.seat.into(),
                 takebacks: asked.takebacks,
                 clock: asked.clock.map(TimeControl::from),
+                spectators: asked.spectators,
             }
         }
     }
@@ -626,6 +631,7 @@ mod wire {
                 you: card.you.map(Player::from),
                 takebacks: card.takebacks,
                 clock: card.clock.map(TimeControl::from),
+                spectators: card.spectators,
             }
         }
     }
@@ -854,6 +860,12 @@ mod tests {
                     room: "6f1c0a9b3e2d4c5a7b8e".into(),
                     role: protocol::Role::Player,
                 },
+                protocol::ClientMsg::Hello {
+                    protocol: protocol::PROTOCOL,
+                    rules_version: engine::RULES_VERSION,
+                    room: "6f1c0a9b3e2d4c5a7b8e".into(),
+                    role: protocol::Role::Spectator,
+                },
                 protocol::ClientMsg::Move { ply: 7, cell: 40 },
                 protocol::ClientMsg::Resign,
                 protocol::ClientMsg::OfferDraw,
@@ -906,7 +918,7 @@ mod tests {
             };
             let server = vec![
                 protocol::ServerMsg::Welcome {
-                    you: engine::Player::O,
+                    you: Some(engine::Player::O),
                     snapshot: protocol::Snapshot {
                         record: game.record(),
                         players: players(Some("guest-4821"), None),
@@ -918,10 +930,29 @@ mod tests {
                         clock: None,
                         clocks: None,
                         presence: protocol::Presence::default(),
+                        watching: 0,
+                        delay_ms: 0,
                     },
                 },
                 protocol::ServerMsg::Welcome {
-                    you: engine::Player::X,
+                    you: None,
+                    snapshot: protocol::Snapshot {
+                        record: game.record(),
+                        players: players(Some("guest-4821"), Some("guest-1066")),
+                        takebacks: false,
+                        offer: None,
+                        draws: protocol::Draws::default(),
+                        end: None,
+                        rematch: None,
+                        clock: protocol::TimeControl::parse("5+3"),
+                        clocks: Some(clocks),
+                        presence: protocol::Presence::default(),
+                        watching: 2,
+                        delay_ms: 10_000,
+                    },
+                },
+                protocol::ServerMsg::Welcome {
+                    you: Some(engine::Player::X),
                     snapshot: protocol::Snapshot {
                         record: game.record(),
                         players: players(Some("guest-4821"), Some("guest-1066")),
@@ -943,6 +974,8 @@ mod tests {
                             x: None,
                             o: Some(away),
                         },
+                        watching: 1,
+                        delay_ms: 0,
                     },
                 },
                 protocol::ServerMsg::Moved {
@@ -1031,6 +1064,7 @@ mod tests {
                     player: engine::Player::X,
                     away: None,
                 },
+                protocol::ServerMsg::Watching { count: 3 },
             ];
             assert_eq!(every::<_, ServerMsg>(server), declared::<ServerMsg>());
         }
@@ -1047,6 +1081,7 @@ mod tests {
                     seat,
                     takebacks: seat == protocol::SeatChoice::Random,
                     clock: None,
+                    spectators: seat == protocol::SeatChoice::O,
                 };
                 holds::<_, NewRoom>(asked);
             }
@@ -1056,6 +1091,7 @@ mod tests {
                     seat: protocol::SeatChoice::X,
                     takebacks: false,
                     clock: Some(clock),
+                    spectators: false,
                 });
             }
             holds::<_, CreatedRoom>(protocol::CreatedRoom {
@@ -1070,6 +1106,7 @@ mod tests {
                     you,
                     takebacks: you.is_some(),
                     clock: you.and(protocol::TimeControl::parse("15+5")),
+                    spectators: you.is_none(),
                 });
             }
         }
